@@ -300,7 +300,9 @@ function normaliseTimeline(raw) {
 function makeProcessor(ai) {
   return async function processJob(job) {
     const d = job.data;
-    const { mediaUrl, creativeId, platform } = d;
+    const { mediaUrl, platform } = d;
+    // let, not const: a collision with a different creative reassigns this below.
+    let creativeId = d.creativeId;
     let videoPath = null;
 
     try {
@@ -364,6 +366,26 @@ function makeProcessor(ai) {
       // Insert the complete row only now. Nothing reaches the database
       // without descriptions, so a failed job leaves no half-creative behind.
       await job.updateProgress({ step: 'saving', pct: 90 });
+      // The upsert below makes a retry of this same job idempotent, which is
+      // what it is for. But if the id has been taken by a *different*
+      // creative since this job was queued, that same upsert would overwrite
+      // someone else's row. Claim a fresh id in that case rather than
+      // destroying it.
+      const { rows: held } = await query(
+        'select ig_link, fb_link, tt_link from creatives where creative_id = $1',
+        [creativeId]);
+      if (held.length) {
+        const mine = [d.ig, d.fb, d.tt].filter(Boolean);
+        const theirs = [held[0].ig_link, held[0].fb_link, held[0].tt_link].filter(Boolean);
+        const sameCreative = mine.some(l => theirs.includes(l));
+        if (!sameCreative) {
+          const suffix = Date.now().toString(36).slice(-6).toUpperCase();
+          const taken = creativeId;
+          creativeId = `${creativeId}_${suffix}`;
+          console.warn(`[worker] ${taken} was claimed by another creative — using ${creativeId}`);
+        }
+      }
+
       await query(
         `insert into creatives
            (creative_id, brand_id, date, campaign, type, is_repurposed,
