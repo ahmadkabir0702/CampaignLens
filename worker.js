@@ -184,19 +184,107 @@ async function streamToFile(url, destPath) {
     fs.unlinkSync(destPath);
     throw new Error('Downloaded file was too small to be a video.');
   }
+
+  // An image post downloads perfectly well and passes the size check, and is
+  // then sent to Gemini labelled video/mp4. Gemini answers with a 500 INTERNAL
+  // that says nothing about the real problem, and all three job attempts burn
+  // identically. Check what the bytes actually are and say so.
+  const kind = sniffMediaType(destPath);
+  if (kind !== 'video') {
+    fs.unlinkSync(destPath);
+    throw new Error(kind === 'image'
+      ? 'That link is a static image post, not a video. Only videos can be analysed.'
+      : `Downloaded file is not a video (detected: ${kind}).`);
+  }
   return destPath;
 }
 
+/**
+ * Identify a file from its magic bytes rather than trusting the extension or
+ * the URL: 'video', 'image', or a short label for anything else.
+ */
+function sniffMediaType(filePath) {
+  const fd = fs.openSync(filePath, 'r');
+  const buf = Buffer.alloc(16);
+  try { fs.readSync(fd, buf, 0, 16, 0); } finally { fs.closeSync(fd); }
+
+  // ISO base media (mp4/mov/m4v): 'ftyp' at offset 4
+  if (buf.slice(4, 8).toString('latin1') === 'ftyp') return 'video';
+  if (buf[0] === 0x1A && buf[1] === 0x45 && buf[2] === 0xDF && buf[3] === 0xA3) return 'video'; // webm/mkv
+  if (buf.slice(0, 3).toString('latin1') === 'FLV') return 'video';
+  if (buf.slice(0, 4).toString('latin1') === 'RIFF' && buf.slice(8, 12).toString('latin1') === 'AVI ') return 'video';
+
+  if (buf[0] === 0xFF && buf[1] === 0xD8 && buf[2] === 0xFF) return 'image';                      // jpeg
+  if (buf.slice(0, 8).equals(Buffer.from([0x89,0x50,0x4E,0x47,0x0D,0x0A,0x1A,0x0A]))) return 'image'; // png
+  if (buf.slice(0, 4).toString('latin1') === 'RIFF' && buf.slice(8, 12).toString('latin1') === 'WEBP') return 'image';
+  if (buf.slice(0, 3).toString('latin1') === 'GIF') return 'image';
+  if (buf.slice(4, 12).toString('latin1') === 'ftypavif') return 'image';
+
+  if (buf.slice(0, 5).toString('latin1') === '<!DOC' || buf.slice(0, 5).toString('latin1') === '<html') return 'an HTML page';
+  return 'unrecognised format';
+}
+
+// ── Gemini call wrapper ───────────────────────────────────────────────────────
+// Google returns 500 INTERNAL / 503 UNAVAILABLE intermittently. Left alone one
+// of those fails the whole job, throwing away a download that succeeded. These
+// retry in place, and the error is labelled so a failure says which call broke.
+const GEMINI_TRANSIENT = /\b(429|500|502|503|504)\b|INTERNAL|UNAVAILABLE|RESOURCE_EXHAUSTED|ECONNRESET|ETIMEDOUT|socket hang up/i;
+
+async function geminiCall(label, fn, { tries = 3, baseMs = 5000 } = {}) {
+  let lastErr;
+  for (let attempt = 1; attempt <= tries; attempt++) {
+    try {
+      return await fn();
+    } catch (err) {
+      lastErr = err;
+      const msg = (err && err.message) ? err.message : String(err);
+      const transient = GEMINI_TRANSIENT.test(msg);
+      if (!transient || attempt === tries) {
+        err.message = `Gemini ${label} failed${transient ? ` after ${tries} attempts` : ''}: ${msg}`;
+        throw err;
+      }
+      const wait = baseMs * Math.pow(2, attempt - 1);
+      console.warn(`[gemini] ${label} transient error (attempt ${attempt}/${tries}), retrying in ${wait / 1000}s: ${msg.slice(0, 180)}`);
+      await new Promise(r => setTimeout(r, wait));
+    }
+  }
+  throw lastErr;
+}
+
+// Videos at or under this size are sent inline with the analysis request
+// instead of through the Files API. Gemini caps a request at 20MB total and
+// base64 inflates by about a third, so 12MB of video is the safe ceiling.
+// This matters because the upload and status-poll calls are where the 500
+// INTERNAL errors have been landing: inline removes both of them.
+// Sending the video inline removes the Files API upload and status calls.
+// Off by default: the Files API path is the one that has been running, and
+// the 500s that prompted this turned out to be image posts rather than a
+// problem with it. Set GEMINI_INLINE_MAX_BYTES to enable (12582912 = 12MB).
+const INLINE_MAX_BYTES = Number(process.env.GEMINI_INLINE_MAX_BYTES || 0);
+
 // ── Steps 3-4: Gemini ─────────────────────────────────────────────────────────
 async function analyseVideo(ai, videoPath, hintDuration) {
-  const geminiFile = await ai.files.upload({ file: videoPath, mimeType: 'video/mp4' });
-  try {
-    let state = await ai.files.get({ name: geminiFile.name });
+  const { size } = fs.statSync(videoPath);
+  const inline = size <= INLINE_MAX_BYTES;
+  let geminiFile = null;
+  let videoPart;
+
+  if (inline) {
+    // No upload, no status poll: the bytes travel with the request.
+    console.log(`[gemini] ${(size / 1048576).toFixed(1)}MB — sending inline (no Files API)`);
+    videoPart = {
+      inlineData: { mimeType: 'video/mp4', data: fs.readFileSync(videoPath).toString('base64') },
+    };
+  } else {
+    console.log(`[gemini] ${(size / 1048576).toFixed(1)}MB — too large for inline, using Files API`);
+    geminiFile = await geminiCall('file upload',
+      () => ai.files.upload({ file: videoPath, mimeType: 'video/mp4' }));
+    let state = await geminiCall('file status', () => ai.files.get({ name: geminiFile.name }));
     const deadline = Date.now() + 5 * 60 * 1000;
     while (state.state === 'PROCESSING') {
       if (Date.now() > deadline) throw new Error('Gemini processing timed out after 5 minutes.');
       await new Promise(r => setTimeout(r, 3000));
-      state = await ai.files.get({ name: geminiFile.name });
+      state = await geminiCall('file status', () => ai.files.get({ name: geminiFile.name }));
     }
     if (state.state === 'FAILED') {
       // Gemini returns a reason on the file object. Without it every failure
@@ -206,16 +294,18 @@ async function analyseVideo(ai, videoPath, hintDuration) {
       const why = e.message || e.reason || (Object.keys(e).length ? JSON.stringify(e) : 'no reason given');
       throw new Error(`Gemini processing failed: ${why}`);
     }
+    videoPart = { fileData: { fileUri: geminiFile.uri, mimeType: 'video/mp4' } };
+  }
 
-    const result = await ai.models.generateContent({
+  if (MEDIA_RESOLUTION) {
+    videoPart.videoMetadata = { mediaResolution: `MEDIA_RESOLUTION_${MEDIA_RESOLUTION.toUpperCase()}` };
+  }
+
+  try {
+    const result = await geminiCall('analysis', () => ai.models.generateContent({
       model: GEMINI_MODEL,
       contents: [{ role: 'user', parts: [
-        {
-          fileData: { fileUri: geminiFile.uri, mimeType: 'video/mp4' },
-          ...(MEDIA_RESOLUTION
-            ? { videoMetadata: { mediaResolution: `MEDIA_RESOLUTION_${MEDIA_RESOLUTION.toUpperCase()}` } }
-            : {}),
-        },
+        videoPart,
         { text: buildPrompt(hintDuration) },
       ]}],
       // A 90s video at 2s granularity is ~45 timeline entries plus the four
@@ -228,7 +318,7 @@ async function analyseVideo(ai, videoPath, hintDuration) {
           ? { thinkingConfig: { thinkingBudget: THINKING_BUDGET } }
           : {}),
       },
-    });
+    }));
     // Log real token usage. Thinking tokens bill at output rates and are the
     // hardest part of the cost to predict, so measure rather than estimate.
     const u = result.usageMetadata || {};
@@ -257,7 +347,10 @@ async function analyseVideo(ai, videoPath, hintDuration) {
     Object.defineProperty(parsed, '_usage', { value: usage, enumerable: false });
     return parsed;
   } finally {
-    try { await ai.files.delete({ name: geminiFile.name }); } catch (e) {}
+    // Only the Files API path leaves anything to clean up.
+    if (geminiFile) {
+      try { await ai.files.delete({ name: geminiFile.name }); } catch (e) {}
+    }
   }
 }
 
@@ -512,7 +605,7 @@ function attachShutdown(worker, connection) {
   process.on('SIGINT',  () => shutdown('SIGINT'));
 }
 
-module.exports = { startWorker, buildPrompt, normaliseTimeline, RESPONSE_SCHEMA };
+module.exports = { startWorker, buildPrompt, normaliseTimeline, RESPONSE_SCHEMA, analyseVideo };
 
 // Standalone mode: node worker.js
 if (require.main === module) {
