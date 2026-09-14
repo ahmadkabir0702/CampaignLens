@@ -1144,6 +1144,7 @@ function acReadForm() {
     };
   });
   return {
+    description: (document.getElementById('ac-description') || {}).value || '',
     campaign: document.getElementById('ac-campaign').value,
     type: document.getElementById('ac-type').value,
     date: document.getElementById('ac-date').value,
@@ -1174,7 +1175,7 @@ function acRenderReview(f) {
   return `<div class="rv">
     <h4>Check before submitting</h4>
     ${line('Date', f.date)}
-    ${(document.getElementById('ac-description') || {}).value ? line('Description', document.getElementById('ac-description').value) : ''}
+    ${f.description ? line('Description', f.description) : ''}
     ${line('Campaign', f.campaign)}
     ${line('Category', f.type)}
     ${f.type === 'Brand Say' ? line('Repurposed', f.repurposed) : ''}
@@ -1218,11 +1219,7 @@ async function submitCreative(e) {
   if (!AC_REVIEWED) {
     const err = acValidate(f);
     if (err) { alert(err); return; }
-    const desc = document.getElementById('ac-description');
-  if (desc) desc.value = '';
-  const idPrev = document.getElementById('ac-id-preview');
-  if (idPrev) idPrev.innerHTML = '';
-  const rv = document.getElementById('ac-review');
+    const rv = document.getElementById('ac-review');
     rv.innerHTML = acRenderReview(f);
     rv.style.display = 'block';
     ['ac-date', 'ac-campaign', 'ac-type', 'ac-repurposed', 'ac-original-id'].forEach(id => {
@@ -1242,7 +1239,7 @@ async function submitCreative(e) {
   const ig = f.plats.ig.on ? f.plats.ig.link : '';
   const fb = f.plats.fb.on ? f.plats.fb.link : '';
   const tt = f.plats.tt.on ? f.plats.tt.link : '';
-  const description = (document.getElementById('ac-description') || {}).value || '';
+  const description = f.description;
   const repurposed = f.repurposed;
   const originalId = f.originalId;
   
@@ -1422,6 +1419,10 @@ function resetAddCreativeForm() {
   });
   const orig = document.getElementById('ac-original-id');
   if (orig) orig.style.display = 'none';
+  const desc = document.getElementById('ac-description');
+  if (desc) desc.value = '';
+  const idPrev = document.getElementById('ac-id-preview');
+  if (idPrev) idPrev.innerHTML = '';
   const rv = document.getElementById('ac-review');
   if (rv) { rv.innerHTML = ''; rv.style.display = 'none'; }
   AC_PLATS.forEach(p => {
