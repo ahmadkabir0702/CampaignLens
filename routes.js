@@ -425,13 +425,34 @@ app.get('/api/brands', async (req, res) => {
       .replace(/[^A-Z0-9]+/g, '')
       .slice(0, DESCRIPTION_MAX);
 
-    let creativeId = slug ? `${prefix}_${slug}` : `${prefix}_${stamp()}`;
+    // Uniqueness has to cover two cases. A row that already exists is the
+    // obvious one. The subtle one: the row is not written until the analysis
+    // finishes minutes later, so two adds with the same description would
+    // both pass a table-only check, and the worker's insert is an upsert —
+    // the second would silently overwrite the first. In-flight jobs are
+    // therefore checked too.
+    const pendingIds = new Set();
+    try {
+      const q = app.get('mediaQueue');
+      if (q && typeof q.getJobs === 'function') {
+        const jobs = await q.getJobs(['waiting', 'active', 'delayed', 'paused']);
+        for (const j of jobs) {
+          const id = j && j.data && j.data.creativeId;
+          if (id) pendingIds.add(id);
+        }
+      }
+    } catch (e) {
+      console.error('[add-creative] could not read pending job ids:', e.message);
+    }
 
-    // Guarantee uniqueness: two "Shanudrie" cuts, or a stamp that wrapped.
-    for (let i = 0; i < 5; i++) {
-      const { rows: clash } = await query(
-        'select 1 from creatives where creative_id = $1', [creativeId]);
-      if (!clash.length) break;
+    const isTaken = async (id) => {
+      if (pendingIds.has(id)) return true;
+      const { rows } = await query('select 1 from creatives where creative_id = $1', [id]);
+      return rows.length > 0;
+    };
+
+    let creativeId = slug ? `${prefix}_${slug}` : `${prefix}_${stamp()}`;
+    for (let i = 0; i < 6 && await isTaken(creativeId); i++) {
       creativeId = slug ? `${prefix}_${slug}_${stamp()}` : `${prefix}_${stamp()}`;
       if (i > 0) creativeId += String(i + 1);
     }
