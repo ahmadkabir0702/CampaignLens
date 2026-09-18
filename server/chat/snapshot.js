@@ -1,11 +1,15 @@
 /**
- * Ask Lens - snapshot generator
+ * Ask Lens - snapshot generator (v2)
  *
- * Builds a compact digest of one brand over one date range. The digest
- * goes into the cached prompt prefix, which is why ~70% of questions
- * never need a tool call.
+ * Reads the dashboard's own per-creative views and applies the same merge
+ * rules as creatives.js, so every number the chat can point at is the
+ * number on the Creative Hub card. Lifetime per creative, one snapshot
+ * per brand, exactly like the Hub.
  *
- * Run from cron after each n8n pipeline run:
+ * Ranking is CQR first, then hook rate, then hold rate. CTR and VTR are
+ * in the record for anyone who asks by name, but never in the digest.
+ *
+ * Cron, after each n8n run:
  *   node -e "require('./server/chat/snapshot').warmAll()"
  */
 
@@ -15,28 +19,25 @@ const { getPool } = require('./db');
 
 const T = S.tables;
 const C = S.creative;
-const M = S.metric;
+const P = S.paidView;
+const O = S.organicView;
+const OR = S.organicRawCols;
 
 const TOP_N = 5;
-const ENGAGEMENT_N = 3;
 
 // ---------------------------------------------------------------
 // Helpers
 // ---------------------------------------------------------------
 
 function assertBrand(brand) {
-  if (!S.brands.includes(brand)) {
-    throw new Error(`Unknown brand: ${brand}`);
-  }
+  if (!S.brands.includes(brand)) throw new Error(`Unknown brand: ${brand}`);
   return brand;
 }
 
-function pct(v, decimals = 2) {
-  if (v === null || v === undefined) return 'n/a';
-  return `${(Number(v) * 100).toFixed(decimals)}%`;
-}
+const num = (v) => (v === null || v === undefined ? 0 : Number(v));
+const r1 = (v) => (v === null || v === undefined ? null : Math.round(Number(v) * 10) / 10);
 
-function num(v) {
+function fmtCount(v) {
   if (v === null || v === undefined) return 'n/a';
   const n = Number(v);
   if (n >= 1_000_000) return `${(n / 1_000_000).toFixed(1)}M`;
@@ -44,461 +45,432 @@ function num(v) {
   return String(Math.round(n));
 }
 
+function fmtPct(v, d = 1) {
+  if (v === null || v === undefined) return 'n/a';
+  return `${Number(v).toFixed(d)}%`;
+}
+
 function money(v) {
   if (v === null || v === undefined) return 'n/a';
-  const n = Number(v);
-  // CPC and CPM are often small. Rounding them to a whole number throws
-  // away the only digits that matter, so keep two decimals under 100.
-  if (Math.abs(n) < 100) return `${n.toFixed(2)} ${S.currency}`;
-  return `${num(n)} ${S.currency}`;
+  return `${fmtCount(v)} ${S.currency}`;
 }
 
-/** Percentage-point delta for rate metrics, percent delta for volume metrics. */
-function delta(current, prior, isRate) {
-  if (current === null || prior === null || prior === undefined || Number(prior) === 0) {
-    return 'n/a';
-  }
-  if (isRate) {
-    const pp = (Number(current) - Number(prior)) * 100;
-    if (Math.abs(pp) < 0.005) return 'flat';
-    return `${pp > 0 ? '+' : ''}${pp.toFixed(2)}pp`;
-  }
-  const p = ((Number(current) - Number(prior)) / Number(prior)) * 100;
-  if (Math.abs(p) < 0.5) return 'flat';
-  return `${p > 0 ? '+' : ''}${p.toFixed(0)}%`;
+/** Same display name the Hub uses. */
+function shortName(id) {
+  const m = String(id).match(/Video(\d+)_(BrandSay|OthersSay)/);
+  if (m) return `Video${m[1]} ${m[2] === 'BrandSay' ? 'Brand Say' : 'Others Say'}`;
+  const parts = String(id).split('_');
+  return parts.length >= 4 ? `${parts[1]} · ${parts[2]} · ${parts[3]}` : String(id);
 }
 
-function dateRange(rangeDays, endDate = new Date()) {
-  const end = new Date(endDate);
-  const start = new Date(end);
-  start.setDate(start.getDate() - (rangeDays - 1));
-  const prevEnd = new Date(start);
-  prevEnd.setDate(prevEnd.getDate() - 1);
-  const prevStart = new Date(prevEnd);
-  prevStart.setDate(prevStart.getDate() - (rangeDays - 1));
-  const iso = (d) => d.toISOString().slice(0, 10);
-  return {
-    start: iso(start),
-    end: iso(end),
-    prevStart: iso(prevStart),
-    prevEnd: iso(prevEnd),
-  };
+function bestCqr(list) {
+  const ranked = list.filter(Boolean).sort((a, b) => (S.cqrRank[a] ?? 9) - (S.cqrRank[b] ?? 9));
+  return ranked[0] || 'Invalid';
+}
+
+function avg(list) {
+  const xs = list.filter((v) => v !== null && v !== undefined);
+  return xs.length ? xs.reduce((s, v) => s + Number(v), 0) / xs.length : null;
+}
+
+/** CQR rank then hook then hold. Higher is better for the rates. */
+function rankCmp(a, b) {
+  const c = (S.cqrRank[a.cqr] ?? 9) - (S.cqrRank[b.cqr] ?? 9);
+  if (c !== 0) return c;
+  const h = num(b.hook_rate) - num(a.hook_rate);
+  if (h !== 0) return h;
+  return num(b.hold_rate) - num(a.hold_rate);
 }
 
 // ---------------------------------------------------------------
 // Queries
 // ---------------------------------------------------------------
 
-/** Brand totals for a period. */
-async function queryTotals(pool, brand, start, end) {
-  const sql = `
-    select
-      coalesce(sum(m.${M.impressions}), 0)  as impressions,
-      coalesce(sum(m.${M.reach}), 0)        as reach,
-      coalesce(sum(m.${M.clicks}), 0)       as clicks,
-      coalesce(sum(m.${M.spend}), 0)        as spend,
-      coalesce(sum(m.${M.engagements}), 0)  as engagements,
-      ${S.derived.ctr}             as ctr,
-      ${S.derived.cpm}             as cpm,
-      ${S.derived.cpc}             as cpc,
-      ${S.derived.engagement_rate} as engagement_rate,
-      count(distinct c.${C.id})    as creative_count
-    from ${T.creatives} c
-    join ${T.metrics} m on m.${M.creativeId} = c.${C.id}
-    where c.${C.brand} = $1
-      and m.${M.date} between $2 and $3
-  `;
-  const { rows } = await pool.query(sql, [brand, start, end]);
-  return rows[0];
-}
-
-/** Spend share and rates by platform. Platform lives on the metrics row. */
-async function queryPlatforms(pool, brand, start, end) {
-  const sql = `
-    select
-      m.${M.platform}                       as platform,
-      coalesce(sum(m.${M.spend}), 0)        as spend,
-      coalesce(sum(m.${M.impressions}), 0)  as impressions,
-      ${S.derived.ctr}                      as ctr,
-      ${S.derived.engagement_rate}          as engagement_rate,
-      count(distinct c.${C.id})             as creative_count
-    from ${T.creatives} c
-    join ${T.metrics} m on m.${M.creativeId} = c.${C.id}
-    where c.${C.brand} = $1
-      and m.${M.date} between $2 and $3
-    group by m.${M.platform}
-    order by spend desc
-  `;
-  const { rows } = await pool.query(sql, [brand, start, end]);
-  return rows;
-}
-
-/** Creative counts and average performance by format. */
-async function queryFormats(pool, brand, start, end) {
-  const sql = `
-    select
-      coalesce(c.${C.format}, 'unclassified') as format,
-      count(distinct c.${C.id})               as creative_count,
-      coalesce(sum(m.${M.impressions}), 0)    as impressions,
-      ${S.derived.ctr}                        as ctr,
-      ${S.derived.engagement_rate}            as engagement_rate
-    from ${T.creatives} c
-    join ${T.metrics} m on m.${M.creativeId} = c.${C.id}
-    where c.${C.brand} = $1
-      and m.${M.date} between $2 and $3
-    group by coalesce(c.${C.format}, 'unclassified')
-    order by creative_count desc
-  `;
-  const { rows } = await pool.query(sql, [brand, start, end]);
-  return rows;
-}
-
-/** Originals vs repurposed, derived from the is_repurposed boolean. */
-async function queryOrigin(pool, brand, start, end) {
-  const sql = `
-    select
-      ${S.creativeExpr.origin}             as origin,
-      count(distinct c.${C.id})            as creative_count,
-      coalesce(sum(m.${M.impressions}), 0) as impressions,
-      ${S.derived.ctr}                     as ctr,
-      ${S.derived.engagement_rate}         as engagement_rate
-    from ${T.creatives} c
-    join ${T.metrics} m on m.${M.creativeId} = c.${C.id}
-    where c.${C.brand} = $1
-      and m.${M.date} between $2 and $3
-    group by ${S.creativeExpr.origin}
-  `;
-  const { rows } = await pool.query(sql, [brand, start, end]);
-  return rows;
-}
-
-/**
- * Per-creative aggregates with the volume floor applied.
- * Returns every creative above the floor plus the count excluded,
- * so the digest can be honest about what it left out.
- */
-async function queryCreatives(pool, brand, start, end, floor) {
-  const sql = `
-    select
-      c.${C.id}            as id,
-      c.${C.name}          as name,
-      c.${C.format}        as format,
-      c.${C.productRole}   as product_role,
-      c.${C.parentId}      as parent_id,
-      ${S.creativeExpr.origin}     as origin,
-      ${S.creativeExpr.platforms}  as platforms,
-      ${S.creativeExpr.permalink}  as permalink,
-      coalesce(sum(m.${M.impressions}), 0) as impressions,
-      coalesce(sum(m.${M.reach}), 0)       as reach,
-      coalesce(sum(m.${M.clicks}), 0)      as clicks,
-      coalesce(sum(m.${M.spend}), 0)       as spend,
-      coalesce(sum(m.${M.engagements}), 0) as engagements,
-      ${S.derived.ctr}             as ctr,
-      ${S.derived.cpm}             as cpm,
-      ${S.derived.cpc}             as cpc,
-      ${S.derived.engagement_rate} as engagement_rate
-    from ${T.creatives} c
-    join ${T.metrics} m on m.${M.creativeId} = c.${C.id}
-    where c.${C.brand} = $1
-      and m.${M.date} between $2 and $3
-    group by c.${C.id}, c.${C.name}, c.${C.format}, c.${C.productRole},
-             c.${C.parentId}, c.${C.isRepurposed}, c.${C.ttLink}, c.${C.igLink}, c.${C.fbLink}
-  `;
-  const { rows } = await pool.query(sql, [brand, start, end]);
-  const eligible = rows.filter((r) => Number(r.impressions) >= floor);
-  return { all: rows, eligible, excluded: rows.length - eligible.length };
-}
-
-/**
- * Earliest date each platform has data for. Used to decide whether a
- * period-over-period delta is honest. If TikTok only started being
- * tracked partway through the prior period, "spend +42%" is partly just
- * a platform appearing, not the team spending more.
- */
-async function queryCoverage(pool, brand) {
-  const sql = `
-    select
-      m.${M.platform}                                          as platform,
-      min(m.${M.date})                                         as first_date,
-      count(*)                                                 as rows,
-      count(*) filter (where m.${M.engagements} is not null)    as rows_with_engagement
-    from ${T.creatives} c
-    join ${T.metrics} m on m.${M.creativeId} = c.${C.id}
-    where c.${C.brand} = $1
-    group by m.${M.platform}
-  `;
-  const { rows } = await pool.query(sql, [brand]);
-  return rows;
-}
-
-/** Freshest data timestamp, used for cache versioning. */
-async function queryFreshness(pool, brand) {
-  const sql = `
-    select max(m.${M.date})::text as max_date, count(*) as row_count
-    from ${T.creatives} c
-    join ${T.metrics} m on m.${M.creativeId} = c.${C.id}
-    where c.${C.brand} = $1
-  `;
-  const { rows } = await pool.query(sql, [brand]);
-  return rows[0];
-}
-
-// ---------------------------------------------------------------
-// Digest rendering
-// ---------------------------------------------------------------
-
-function renderDigest(ctx) {
-  const {
-    brand, range, totals, prior, platforms, formats, origin,
-    topCtr, bottomCtr, topEngagement, excluded, floor, freshness, coverage,
-  } = ctx;
-
-  const L = [];
-  const label = S.brandLabels[brand] || brand;
-
-  L.push(`SNAPSHOT: ${label} | ${range.start} to ${range.end} | data through ${freshness.max_date}`);
-  L.push('');
-
-  L.push('TOTALS');
-  const d = coverage.deltasReliable
-    ? (cur, pri, isRate) => ` (${delta(cur, pri, isRate)})`
-    : () => '';
-
-  L.push(`spend ${money(totals.spend)}${d(totals.spend, prior.spend, false)} | ` +
-         `impressions ${num(totals.impressions)}${d(totals.impressions, prior.impressions, false)} | ` +
-         `reach ${num(totals.reach)}${d(totals.reach, prior.reach, false)}`);
-  L.push(`CTR ${pct(totals.ctr)}${d(totals.ctr, prior.ctr, true)} | ` +
-         `engagement rate ${pct(totals.engagement_rate)}${d(totals.engagement_rate, prior.engagement_rate, true)} | ` +
-         `CPM ${money(totals.cpm)}${d(totals.cpm, prior.cpm, false)} | ` +
-         `CPC ${money(totals.cpc)}${d(totals.cpc, prior.cpc, false)}`);
-
-  if (coverage.deltasReliable) {
-    L.push(`${totals.creative_count} creatives live in period. Deltas compare to the previous ${range.days} days.`);
-  } else {
-    L.push(`${totals.creative_count} creatives live in period.`);
-    L.push(`NO PERIOD COMPARISON AVAILABLE. ${coverage.reason}`);
-    L.push('Do not compare this period to any earlier one, and do not say performance went up or down versus last month. Say the comparison is not available yet and why.');
-  }
-  L.push('');
-
-  L.push('BY PLATFORM');
-  const totalSpend = Number(totals.spend) || 1;
-  for (const p of platforms) {
-    const share = ((Number(p.spend) / totalSpend) * 100).toFixed(0);
-    L.push(`${S.platformLabels[p.platform] || p.platform}: ${share}% of spend, ` +
-           `CTR ${pct(p.ctr)}, ER ${pct(p.engagement_rate)}, ${p.creative_count} creatives`);
-  }
-  L.push('');
-
-  L.push('BY FORMAT');
-  for (const f of formats) {
-    L.push(`${f.format}: ${f.creative_count} creatives, CTR ${pct(f.ctr)}, ER ${pct(f.engagement_rate)}`);
-  }
-  L.push('');
-
-  L.push('ORIGINALS VS REPURPOSED');
-  for (const o of origin) {
-    L.push(`${o.origin}: ${o.creative_count} creatives, CTR ${pct(o.ctr)}, ER ${pct(o.engagement_rate)}`);
-  }
-  L.push('');
-
-  const line = (c) => {
-    const plats = (c.platforms || []).map((p) => S.platformLabels[p] || p).join('+') || 'unknown';
-    const er = c.engagement_rate === null ? 'n/a' : pct(c.engagement_rate);
-    return `${c.id} | ${plats} | ${c.format || 'unclassified'} | ${c.origin || 'unknown'} | ` +
-           `CTR ${pct(c.ctr)} | ER ${er} | impr ${num(c.impressions)}`;
-  };
-
-  L.push(`TOP ${topCtr.length} BY CTR`);
-  topCtr.forEach((c) => L.push(line(c)));
-  L.push('');
-
-  L.push(`BOTTOM ${bottomCtr.length} BY CTR`);
-  bottomCtr.forEach((c) => L.push(line(c)));
-  L.push('');
-
-  L.push(`TOP ${topEngagement.length} BY ENGAGEMENT RATE`);
-  topEngagement.forEach((c) => L.push(line(c)));
-  L.push('');
-
-  L.push('RANKING RULES APPLIED');
-  L.push(`Creatives below ${num(floor)} impressions in this period are excluded from all rankings above.`);
-  L.push(excluded > 0
-    ? `${excluded} creative${excluded === 1 ? ' was' : 's were'} excluded on that basis. Mention this if you report a ranking.`
-    : 'No creatives were excluded on that basis.');
-  L.push('');
-
-  const gaps = [];
-  const noEngagement = (coverage.rows || []).filter((r) => Number(r.rows_with_engagement) === 0);
-  const partial = (coverage.rows || []).filter(
-    (r) => Number(r.rows_with_engagement) > 0 && Number(r.rows_with_engagement) < Number(r.rows),
+async function queryCreatives(pool, brand) {
+  const { rows } = await pool.query(
+    `select ${C.id} as id, ${C.hook} as hook, ${C.format} as format,
+            ${C.productRole} as product_role, ${C.type} as type,
+            ${C.campaign} as campaign, ${C.isRepurposed} as is_repurposed,
+            ${C.parentId} as parent_id, ${C.publishedAt} as published_at,
+            ${C.durationS} as duration_s,
+            coalesce(${C.ttLink}, ${C.igLink}, ${C.fbLink}) as permalink
+     from ${T.creatives} where ${C.brand} = $1`,
+    [brand],
   );
+  return new Map(rows.map((r) => [r.id, r]));
+}
 
-  if (noEngagement.length) {
-    const names = noEngagement.map((r) => S.platformLabels[r.platform] || r.platform).join(' and ');
-    gaps.push(`${names} paid reports no engagement data, so engagement rate and engagements exclude it entirely.`);
-    gaps.push('Never present that figure as a whole-brand or cross-platform number.');
+async function queryPaidView(pool, view, brand) {
+  const { rows } = await pool.query(
+    `select ${P.creativeId} as id, ${P.spend} as spend, ${P.reach} as reach,
+            ${P.impressions} as impressions, ${P.hookRate} as hook_rate,
+            ${P.holdRate} as hold_rate, ${P.hookQ} as hook_q, ${P.holdQ} as hold_q,
+            ${P.vtr} as vtr, ${P.avgWatchTime} as avg_watch_time, ${P.cqr} as cqr,
+            ${P.isActive} as is_active, ${P.w25} as w25, ${P.w50} as w50,
+            ${P.w75} as w75, ${P.w100} as w100,
+            ${P.verdict} as verdict, ${P.working} as working,
+            ${P.notWorking} as not_working, ${P.action} as action, ${P.priority} as priority
+     from ${view} where ${P.brand} = $1 and ${P.creativeId} is not null`,
+    [brand],
+  );
+  return rows;
+}
+
+async function queryOrganic(pool, brand) {
+  const { rows } = await pool.query(
+    `select o.${OR.creativeId} as id, o.${OR.platform} as platform,
+            o.${OR.views} as views, o.${OR.reach} as reach,
+            o.${OR.totalInteractions} as total_interactions,
+            s.${O.cqr} as cqr, s.${O.engagementRate} as engagement_rate,
+            s.${O.retentionRate} as retention_rate
+     from ${T.organicRaw} o
+     join ${T.creatives} c on c.${C.id} = o.${OR.creativeId}
+     left join ${T.organicScored} s
+       on s.${O.creativeId} = o.${OR.creativeId} and s.${O.platform} = o.${OR.platform}
+     where c.${C.brand} = $1`,
+    [brand],
+  );
+  return rows;
+}
+
+async function queryFreshness(pool, brand) {
+  const { rows } = await pool.query(
+    `select max(date)::text as max_date, count(*) as row_count
+     from ${T.paidDaily} where brand_id = $1`,
+    [brand],
+  );
+  return rows[0] || { max_date: null, row_count: 0 };
+}
+
+async function queryMonthly(pool, brand) {
+  const { rows } = await pool.query(
+    `select month::text as month, act_spend, act_reach, act_impressions,
+            act_engagement_rate, act_cpm, kpi_spend, kpi_reach
+     from ${T.accountMonthly} where brand_id = $1
+     order by month desc limit 3`,
+    [brand],
+  );
+  return rows.reverse();
+}
+
+// ---------------------------------------------------------------
+// Merge, mirroring creatives.js
+// ---------------------------------------------------------------
+
+function mergePaid(meta, tiktok) {
+  const both = [meta, tiktok].filter(Boolean);
+  if (!both.length) return null;
+  const pick = (f) => both.map((x) => x[f]);
+  return {
+    platforms: both.map((x) => x.platform),
+    cqr: bestCqr(pick('cqr')),
+    hook_rate: r1(avg(pick('hook_rate'))),
+    hold_rate: both.length ? Math.max(...pick('hold_rate').map(num)) : null,
+    hook_q: (meta || tiktok).hook_q || '',
+    hold_q: (meta || tiktok).hold_q || '',
+    vtr: r1(avg(pick('vtr'))),
+    avg_watch_time: r1(avg(pick('avg_watch_time'))),
+    spend: pick('spend').reduce((s, v) => s + num(v), 0),
+    reach: Math.max(...pick('reach').map(num)),
+    impressions: pick('impressions').reduce((s, v) => s + num(v), 0),
+    is_active: both.some((x) => x.is_active),
+    verdict: (meta || tiktok).verdict || '',
+    working: (meta || tiktok).working || '',
+    not_working: (meta || tiktok).not_working || '',
+    action: (meta || tiktok).action || '',
+    priority: (meta || tiktok).priority || '',
+    per_platform: Object.fromEntries(both.map((x) => [x.platform, {
+      cqr: x.cqr, hook_rate: r1(x.hook_rate), hold_rate: r1(x.hold_rate),
+      spend: num(x.spend), reach: num(x.reach), impressions: num(x.impressions),
+      vtr: r1(x.vtr), retention: [100, r1(x.hook_rate), r1(x.w25), r1(x.w50), r1(x.w75), r1(x.w100)],
+    }])),
+  };
+}
+
+// ---------------------------------------------------------------
+// Digest
+// ---------------------------------------------------------------
+
+function line(c) {
+  const plats = (c.platforms || []).map((p) => S.platformLabels[p] || p).join('+') || 'not boosted';
+  return `${c.id} | ${c.cqr} | hook ${fmtPct(c.hook_rate)} | hold ${fmtPct(c.hold_rate)} | ` +
+         `${plats} | ${c.type || ''} | ${c.format || 'unclassified'} | reach ${fmtCount(c.reach)}`;
+}
+
+function renderDigest(x) {
+  const label = S.brandLabels[x.brand] || x.brand;
+  const L = [];
+
+  L.push(`SNAPSHOT: ${label} | lifetime per creative | paid data through ${x.freshness.max_date || 'unknown'}`);
+  L.push('');
+
+  L.push('HOW TO RANK');
+  L.push('Best performing means best CQR first, then hook rate, then hold rate. Use this order for any vague question.');
+  L.push('Engagement rate, reach and video views come next. CTR and VTR are vanity metrics here: never volunteer them, only report them if the user names them.');
+  L.push('');
+
+  L.push('PAID TOTALS');
+  L.push(`${x.paid.length} boosted creatives | spend ${money(x.totals.spend)} | reach ${fmtCount(x.totals.reach)} | impressions ${fmtCount(x.totals.impressions)}`);
+  L.push(`CQR mix: ${x.cqrMix.Good} Good, ${x.cqrMix.Average} Average, ${x.cqrMix.Poor} Poor, ${x.cqrMix.Invalid} Invalid`);
+  L.push(`Spend by CQR: Good ${money(x.spendByCqr.Good)} | Average ${money(x.spendByCqr.Average)} | Poor ${money(x.spendByCqr.Poor)}`);
+  L.push(`Brand avg hook ${fmtPct(x.totals.hook_rate)} | avg hold ${fmtPct(x.totals.hold_rate)}`);
+  L.push('');
+
+  L.push(`TOP ${x.top.length} PAID (CQR, then hook, then hold)`);
+  x.top.forEach((c) => L.push(line(c)));
+  L.push('');
+
+  L.push(`BOTTOM ${x.bottom.length} PAID`);
+  x.bottom.forEach((c) => L.push(line(c)));
+  L.push('');
+
+  L.push('BY PLATFORM (paid)');
+  for (const p of S.platforms) {
+    const s = x.byPlatform[p];
+    if (!s || !s.n) continue;
+    L.push(`${S.platformLabels[p]}: ${s.n} creatives, spend ${money(s.spend)}, avg hook ${fmtPct(s.hook_rate)}, avg hold ${fmtPct(s.hold_rate)}, ${s.good} Good / ${s.poor} Poor`);
   }
-  for (const r of partial) {
-    const name = S.platformLabels[r.platform] || r.platform;
-    const share = Math.round((Number(r.rows_with_engagement) / Number(r.rows)) * 100);
-    gaps.push(`${name} engagement data covers about ${share}% of its rows; earlier rows predate engagement tracking and are excluded from the rate.`);
+  L.push('');
+
+  L.push('BY TYPE (paid)');
+  for (const [t, s] of Object.entries(x.byType)) {
+    L.push(`${t}: ${s.n} creatives, avg hook ${fmtPct(s.hook_rate)}, avg hold ${fmtPct(s.hold_rate)}, ${s.good} Good / ${s.poor} Poor`);
   }
-  if (!noEngagement.length) {
-    gaps.push('Meta counts post engagements while TikTok counts likes, comments, shares and follows. The definitions differ, so treat a cross-platform engagement rate as indicative rather than exact.');
+  L.push('');
+
+  L.push('BY FORMAT (paid)');
+  for (const [f, s] of Object.entries(x.byFormat)) {
+    L.push(`${f}: ${s.n} creatives, avg hook ${fmtPct(s.hook_rate)}, avg hold ${fmtPct(s.hold_rate)}, ${s.good} Good / ${s.poor} Poor`);
   }
-  gaps.push('Organic performance is lifetime to date and is not filtered by this date range.');
+  L.push('');
+
+  if (x.organic.length) {
+    L.push('ORGANIC (lifetime, not date filtered)');
+    L.push(`${x.organicSummary.n} posts | views ${fmtCount(x.organicSummary.views)} | reach ${fmtCount(x.organicSummary.reach)} | CQR mix ${x.organicSummary.good} Good / ${x.organicSummary.avg} Average / ${x.organicSummary.poor} Poor`);
+    for (const p of S.organicPlatforms) {
+      const s = x.organicByPlatform[p];
+      if (!s || !s.n) continue;
+      L.push(`${S.platformLabels[p]}: ${s.n} posts, views ${fmtCount(s.views)}, avg ER ${fmtPct(s.engagement_rate, 2)}, ${s.good} Good`);
+    }
+    L.push('TOP ORGANIC BY CQR THEN VIEWS');
+    x.organicTop.forEach((o) => L.push(`${o.id} | ${o.platform} | ${o.cqr || 'unscored'} | views ${fmtCount(o.views)} | ER ${fmtPct(o.engagement_rate, 2)}`));
+    L.push('');
+  }
+
+  if (x.monthly.length) {
+    L.push('BRAND MONTHLY (account level, from the KPI tab)');
+    x.monthly.forEach((m) => L.push(
+      `${m.month.slice(0, 7)}: spend ${money(m.act_spend)} vs plan ${money(m.kpi_spend)} | reach ${fmtCount(m.act_reach)} vs plan ${fmtCount(m.kpi_reach)} | ER ${fmtPct(m.act_engagement_rate, 2)}`,
+    ));
+    L.push('');
+  }
+
+  if (x.verdicts.length) {
+    L.push('EXISTING INSIGHTS VERDICTS (already on the cards; cite them, do not contradict them)');
+    x.verdicts.forEach((v) => L.push(`${v.id}: ${v.verdict}${v.priority ? ` [${v.priority}]` : ''}${v.action ? ` -> ${v.action}` : ''}`));
+    L.push('');
+  }
+
+  L.push('RANKING RULES');
+  L.push(`Creatives under ${fmtCount(x.floor)} impressions are excluded from the ranked lists. ${x.excluded} excluded on that basis.`);
+  L.push('Creatives with no paid data are "not boosted" and do not appear in paid rankings.');
+  L.push('');
 
   L.push('DATA GAPS');
-  gaps.forEach((g) => L.push(g));
+  L.push('Paid engagement rate is Meta only; TikTok paid engagement columns are not populated yet. Organic engagement rate covers all platforms.');
+  L.push('All paid figures are lifetime per creative, matching the Creative Hub. Use get_series for anything over time.');
   L.push('');
 
   L.push('NOT IN THIS SNAPSHOT');
-  L.push('Daily or weekly time series. Creatives outside the top and bottom lists above.');
-  L.push('Individual creative comments or captions. Lineage detail beyond the origin counts.');
-  L.push('Anything outside this date range. Any brand other than ' + label + '.');
-  L.push('For any of these, call a tool. Never estimate a number that is not written above.');
+  L.push('Creatives outside the top and bottom lists. Daily or weekly series. Retention curves beyond hook and hold. Per-creative organic detail beyond the top list. Any brand other than ' + label + '.');
+  L.push('For any of these, call a tool. Never estimate a number not written above.');
 
   return L.join('\n');
 }
 
 // ---------------------------------------------------------------
-// Public API
+// Build
 // ---------------------------------------------------------------
 
-/**
- * Build a snapshot for one brand and range. Returns the row shape
- * written to brand_snapshots.
- */
-async function buildSnapshot(brand, rangeDays, opts = {}) {
+async function buildSnapshot(brand, _rangeDays, opts = {}) {
   assertBrand(brand);
   const pool = opts.pool || getPool();
-  const range = { ...dateRange(rangeDays, opts.endDate), days: rangeDays };
 
-  const freshness = await queryFreshness(pool, brand);
-  const coverageRows = await queryCoverage(pool, brand);
-
-  // A delta is only honest if every platform has data across the whole
-  // prior period. Otherwise growth is partly a platform switching on.
-  const iso = (v) => (v instanceof Date ? v.toISOString().slice(0, 10) : String(v));
-  const late = coverageRows.filter((r) => iso(r.first_date) > range.prevStart);
-  const coverage = late.length
-    ? {
-        rows: coverageRows,
-        deltasReliable: false,
-        reason:
-          late.map((r) => `${S.platformLabels[r.platform] || r.platform} data only starts ${iso(r.first_date)}`).join('; ') +
-          `, which is inside the comparison window (${range.prevStart} to ${range.prevEnd}), so any period-over-period change would partly reflect tracking coverage rather than performance.`,
-      }
-    : { rows: coverageRows, deltasReliable: true, reason: null };
-
-  const totals = await queryTotals(pool, brand, range.start, range.end);
-  const prior = await queryTotals(pool, brand, range.prevStart, range.prevEnd);
-
-  const floor = Math.max(
-    S.volumeFloor.absoluteMin,
-    Math.round(Number(totals.impressions || 0) * S.volumeFloor.relativeShare),
-  );
-
-  const [platforms, formats, origin, creatives] = await Promise.all([
-    queryPlatforms(pool, brand, range.start, range.end),
-    queryFormats(pool, brand, range.start, range.end),
-    queryOrigin(pool, brand, range.start, range.end),
-    queryCreatives(pool, brand, range.start, range.end, floor),
+  const [creatives, metaRows, ttRows, organicRows, freshness, monthly] = await Promise.all([
+    queryCreatives(pool, brand),
+    queryPaidView(pool, T.paidMeta, brand).then((r) => r.map((x) => ({ ...x, platform: 'meta' }))),
+    queryPaidView(pool, T.paidTiktok, brand).then((r) => r.map((x) => ({ ...x, platform: 'tiktok' }))),
+    queryOrganic(pool, brand),
+    queryFreshness(pool, brand),
+    queryMonthly(pool, brand),
   ]);
 
-  const byCtrDesc = [...creatives.eligible].sort((a, b) => Number(b.ctr || 0) - Number(a.ctr || 0));
-  const byErDesc = [...creatives.eligible].sort(
-    (a, b) => Number(b.engagement_rate || 0) - Number(a.engagement_rate || 0),
-  );
+  const metaBy = new Map(metaRows.map((r) => [r.id, r]));
+  const ttBy = new Map(ttRows.map((r) => [r.id, r]));
 
-  const topCtr = byCtrDesc.slice(0, TOP_N);
-  const bottomCtr = byCtrDesc.slice(-TOP_N).reverse();
-  const topEngagement = byErDesc.slice(0, ENGAGEMENT_N);
-
-  const version = crypto
-    .createHash('sha256')
-    .update([brand, rangeDays, range.end, freshness.max_date, freshness.row_count].join('|'))
-    .digest('hex')
-    .slice(0, 12);
-
-  const body = renderDigest({
-    brand, range, totals, prior, platforms, formats, origin,
-    topCtr, bottomCtr, topEngagement,
-    excluded: creatives.excluded, floor, freshness, coverage,
-  });
-
-  // Records for the marker side payload. Every creative referenced in
-  // the digest must be resolvable by the frontend without a round trip.
-  const referenced = new Map();
-  for (const c of [...topCtr, ...bottomCtr, ...topEngagement]) {
-    referenced.set(c.id, c);
+  // Merge paid per creative
+  const paid = [];
+  const records = {};
+  for (const [id, c] of creatives) {
+    const merged = mergePaid(metaBy.get(id), ttBy.get(id));
+    const rec = {
+      id, name: shortName(id), hook: c.hook, format: c.format, product_role: c.product_role,
+      type: c.type, campaign: c.campaign, origin: c.is_repurposed ? 'repurposed' : 'original',
+      parent_id: c.parent_id, published_at: c.published_at, duration_s: c.duration_s,
+      permalink: c.permalink, boosted: !!merged, ...(merged || {}),
+    };
+    records[id] = rec;
+    if (merged) paid.push(rec);
   }
 
+  // Organic per creative per platform
+  const organic = organicRows.map((o) => ({
+    id: o.id, platform: o.platform, views: num(o.views), reach: num(o.reach),
+    total_interactions: num(o.total_interactions), cqr: o.cqr,
+    engagement_rate: r1(o.engagement_rate), retention_rate: r1(o.retention_rate),
+  }));
+  for (const o of organic) {
+    if (!records[o.id]) continue;
+    records[o.id].organic = records[o.id].organic || {};
+    records[o.id].organic[o.platform] = o;
+  }
+
+  // Totals + floor
+  const totals = {
+    spend: paid.reduce((s, c) => s + num(c.spend), 0),
+    reach: paid.reduce((s, c) => s + num(c.reach), 0),
+    impressions: paid.reduce((s, c) => s + num(c.impressions), 0),
+    hook_rate: r1(avg(paid.map((c) => c.hook_rate))),
+    hold_rate: r1(avg(paid.map((c) => c.hold_rate))),
+  };
+  const floor = Math.max(S.volumeFloor.absoluteMin, Math.round(totals.impressions * S.volumeFloor.relativeShare));
+  const eligible = paid.filter((c) => num(c.impressions) >= floor);
+  const ranked = [...eligible].sort(rankCmp);
+
+  const cqrMix = { Good: 0, Average: 0, Poor: 0, Invalid: 0 };
+  const spendByCqr = { Good: 0, Average: 0, Poor: 0, Invalid: 0 };
+  for (const c of paid) {
+    const k = cqrMix[c.cqr] !== undefined ? c.cqr : 'Invalid';
+    cqrMix[k] += 1;
+    spendByCqr[k] += num(c.spend);
+  }
+
+  const group = (keyFn) => {
+    const out = {};
+    for (const c of paid) {
+      const k = keyFn(c) || 'unclassified';
+      const g = (out[k] = out[k] || { n: 0, spend: 0, hooks: [], holds: [], good: 0, poor: 0 });
+      g.n += 1; g.spend += num(c.spend);
+      g.hooks.push(c.hook_rate); g.holds.push(c.hold_rate);
+      if (c.cqr === 'Good') g.good += 1;
+      if (c.cqr === 'Poor') g.poor += 1;
+    }
+    for (const g of Object.values(out)) {
+      g.hook_rate = r1(avg(g.hooks)); g.hold_rate = r1(avg(g.holds));
+      delete g.hooks; delete g.holds;
+    }
+    return out;
+  };
+
+  const byPlatform = {};
+  for (const p of S.platforms) {
+    const rows = paid.filter((c) => c.per_platform && c.per_platform[p]).map((c) => c.per_platform[p]);
+    byPlatform[p] = {
+      n: rows.length,
+      spend: rows.reduce((s, r) => s + num(r.spend), 0),
+      hook_rate: r1(avg(rows.map((r) => r.hook_rate))),
+      hold_rate: r1(avg(rows.map((r) => r.hold_rate))),
+      good: rows.filter((r) => r.cqr === 'Good').length,
+      poor: rows.filter((r) => r.cqr === 'Poor').length,
+    };
+  }
+
+  const organicSummary = {
+    n: organic.length,
+    views: organic.reduce((s, o) => s + o.views, 0),
+    reach: organic.reduce((s, o) => s + o.reach, 0),
+    good: organic.filter((o) => o.cqr === 'Good').length,
+    avg: organic.filter((o) => o.cqr === 'Average').length,
+    poor: organic.filter((o) => o.cqr === 'Poor').length,
+  };
+  const organicByPlatform = {};
+  for (const p of S.organicPlatforms) {
+    const rows = organic.filter((o) => o.platform === p);
+    organicByPlatform[p] = {
+      n: rows.length, views: rows.reduce((s, o) => s + o.views, 0),
+      engagement_rate: r1(avg(rows.map((o) => o.engagement_rate))),
+      good: rows.filter((o) => o.cqr === 'Good').length,
+    };
+  }
+  const organicTop = [...organic]
+    .sort((a, b) => ((S.cqrRank[a.cqr] ?? 9) - (S.cqrRank[b.cqr] ?? 9)) || (b.views - a.views))
+    .slice(0, TOP_N);
+
+  const verdicts = paid.filter((c) => c.verdict).slice(0, 8)
+    .map((c) => ({ id: c.id, verdict: c.verdict, priority: c.priority, action: c.action }));
+
+  const version = crypto.createHash('sha256')
+    .update([brand, freshness.max_date, freshness.row_count, paid.length, organic.length].join('|'))
+    .digest('hex').slice(0, 12);
+
+  const body = renderDigest({
+    brand, freshness, paid, totals, cqrMix, spendByCqr,
+    top: ranked.slice(0, TOP_N), bottom: ranked.slice(-TOP_N).reverse(),
+    byPlatform, byType: group((c) => c.type), byFormat: group((c) => c.format),
+    organic, organicSummary, organicByPlatform, organicTop, monthly, verdicts,
+    floor, excluded: paid.length - eligible.length,
+  });
+
+  // Brand-level record so [[metric:hook_rate|brand]] resolves.
+  records.brand = { id: 'brand', name: S.brandLabels[brand], ...totals, cqr_mix: cqrMix };
+
   return {
-    brand,
-    range_days: rangeDays,
-    period_start: range.start,
-    period_end: range.end,
-    version,
-    body,
-    records: Object.fromEntries(referenced),
-    token_estimate: Math.ceil(body.length / 3.6),
-    floor,
+    brand, range_days: 0,
+    period_start: '1970-01-01', period_end: freshness.max_date || new Date().toISOString().slice(0, 10),
+    version, body, records,
+    token_estimate: Math.ceil(body.length / 3.6), floor,
   };
 }
 
-/** Build and persist. Returns the stored row. */
 async function generateAndStore(brand, rangeDays, opts = {}) {
   const pool = opts.pool || getPool();
   const snap = await buildSnapshot(brand, rangeDays, opts);
-
-  const sql = `
-    insert into brand_snapshots
-      (brand, range_days, period_start, period_end, version, body, records, token_estimate)
-    values ($1, $2, $3, $4, $5, $6, $7, $8)
-    on conflict (brand, range_days, version) do update
-      set body = excluded.body,
-          records = excluded.records,
-          period_start = excluded.period_start,
-          period_end = excluded.period_end,
-          generated_at = now()
-    returning *
-  `;
-  const { rows } = await pool.query(sql, [
-    snap.brand, snap.range_days, snap.period_start, snap.period_end,
-    snap.version, snap.body, JSON.stringify(snap.records), snap.token_estimate,
-  ]);
+  const { rows } = await pool.query(
+    `insert into brand_snapshots
+       (brand, range_days, period_start, period_end, version, body, records, token_estimate)
+     values ($1, $2, $3, $4, $5, $6, $7, $8)
+     on conflict (brand, range_days, version) do update
+       set body = excluded.body, records = excluded.records,
+           period_end = excluded.period_end, generated_at = now()
+     returning *`,
+    [snap.brand, snap.range_days, snap.period_start, snap.period_end,
+     snap.version, snap.body, JSON.stringify(snap.records), snap.token_estimate],
+  );
   return rows[0];
 }
 
-/** Read the freshest stored snapshot. Builds one on demand if missing. */
-async function getSnapshot(brand, rangeDays, opts = {}) {
+async function getSnapshot(brand, _rangeDays, opts = {}) {
   assertBrand(brand);
   const pool = opts.pool || getPool();
   const { rows } = await pool.query(
-    `select * from brand_snapshots
-     where brand = $1 and range_days = $2
+    `select * from brand_snapshots where brand = $1 and range_days = 0
      order by generated_at desc limit 1`,
-    [brand, rangeDays],
+    [brand],
   );
   if (rows.length) return rows[0];
-  return generateAndStore(brand, rangeDays, opts);
+  return generateAndStore(brand, 0, opts);
 }
 
-/** Cron entry point. Regenerates every brand and range, then prunes. */
 async function warmAll(opts = {}) {
   const pool = opts.pool || getPool();
   const results = [];
   for (const brand of S.brands) {
-    for (const rangeDays of S.snapshotRanges) {
-      try {
-        const row = await generateAndStore(brand, rangeDays, { pool });
-        results.push({ brand, rangeDays, version: row.version, tokens: row.token_estimate });
-      } catch (err) {
-        console.error(`[snapshot] ${brand}/${rangeDays}d failed:`, err.message);
-        results.push({ brand, rangeDays, error: err.message });
-      }
+    try {
+      const row = await generateAndStore(brand, 0, { pool });
+      results.push({ brand, version: row.version, tokens: row.token_estimate });
+    } catch (err) {
+      console.error(`[snapshot] ${brand} failed:`, err.message);
+      results.push({ brand, error: err.message });
     }
   }
   await pool.query('select prune_answer_cache()');
@@ -506,11 +478,4 @@ async function warmAll(opts = {}) {
   return results;
 }
 
-module.exports = {
-  buildSnapshot,
-  generateAndStore,
-  getSnapshot,
-  warmAll,
-  dateRange,
-  assertBrand,
-};
+module.exports = { buildSnapshot, generateAndStore, getSnapshot, warmAll, assertBrand, shortName, mergePaid, rankCmp };
