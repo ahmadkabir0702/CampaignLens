@@ -1,27 +1,15 @@
 /**
- * Postgres pool for the chat module.
+ * Ask Lens - database access.
  *
- * If Campaign Lens already exports a pool, delete the body below and
- * re-export yours instead:
- *
- *   module.exports = { getPool: () => require('../../db').pool };
+ * Reuses the app's existing Postgres pool from the root db.js rather than
+ * opening a second one. Supabase's transaction pooler multiplexes for us,
+ * so a second client-side pool would just waste slots.
  */
 
-const { Pool } = require('pg');
-
-let pool;
+const root = require('../../db');
 
 function getPool() {
-  if (!pool) {
-    pool = new Pool({
-      connectionString: process.env.DATABASE_URL,
-      ssl: process.env.PGSSL === 'disable' ? false : { rejectUnauthorized: false },
-      max: Number(process.env.PGPOOL_MAX || 8),
-      idleTimeoutMillis: 30_000,
-    });
-    pool.on('error', (err) => console.error('[db] idle client error:', err.message));
-  }
-  return pool;
+  return root.pool;
 }
 
-module.exports = { getPool };
+module.exports = { getPool, query: root.query };
