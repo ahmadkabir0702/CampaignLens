@@ -6,6 +6,7 @@
   <title>Campaign Lens</title>
   <link rel="stylesheet" href="/css/styles.css">
   <script src="https://cdnjs.cloudflare.com/ajax/libs/Chart.js/4.4.1/chart.umd.js"></script>
+  <link rel="stylesheet" href="/css/chat-panel.css">
   <link rel="stylesheet" href="/css/pretest.css">
   <link rel="stylesheet" href="/css/pretest-light.css">
 <style id="ac-plat-style">
@@ -627,6 +628,14 @@ window.addEventListener('load', () => setTimeout(syncFilterPills, 400));
   <script src="/js/signoff.js"></script>
   <script src="/js/dropdowns.js"></script>
   <script src="/js/pretest.js"></script>
+  <script src="/js/markers.js"></script>
+  <script src="/js/chat-cards.js"></script>
+  <script src="/js/chat-panel.js"></script>
+  <script>
+    AskLens.init({
+      mountButton: document.querySelector('.topbar-right'),
+    });
+  </script>
   <script>
   /* The two tabs have different filters. Show whichever belongs to the
      active tab; the KPI bar is rendered by kpi-dashboard.js into the
