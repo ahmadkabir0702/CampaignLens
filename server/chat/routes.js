@@ -2,10 +2,10 @@
  * Ask Lens - Express routes
  *
  * Mount in your app:
- *   app.use('/api/chat', require('./server/chat/routes')(requireAuth));
+ *   require('./server/chat/routes')(app);
  *
- * `requireAuth` is your existing middleware. It must set req.user with
- * at least { id, role }. Coordinators do not get the chat panel.
+ * Auth is handled globally in server.js. This reads req.session.user (the
+ * username string) and req.session.role. Coordinators do not get the panel.
  */
 
 const express = require('express');
@@ -15,21 +15,34 @@ const { handleMessage } = require('./orchestrator');
 const { getSnapshot } = require('./snapshot');
 const { handlers } = require('./toolHandlers');
 
-module.exports = function chatRoutes(requireAuth) {
+module.exports = function mountChatRoutes(app) {
   const router = express.Router();
   router.use(express.json());
-  if (requireAuth) router.use(requireAuth);
 
-  // Coordinators are scoped to /coordinator and do not get chat.
+  // server.js already runs requireAuth and the coordinator role guard before
+  // any route, so req.session is populated here and coordinators are already
+  // bounced. This is a second explicit guard for defence in depth.
   router.use((req, res, next) => {
-    if (req.user?.role === 'coordinator') {
+    if (!req.session || !req.session.user) {
+      return res.status(401).json({ error: 'Not authenticated' });
+    }
+    if (req.session.role === 'influencer_coordinator') {
       return res.status(403).json({ error: 'Not available for this role.' });
     }
     next();
   });
 
-  function validBrand(brand) {
-    return S.brands.includes(brand) ? brand : null;
+  // Resolve the brand for this request the same way the rest of the app does:
+  // an explicit brand is honoured only if the user is allowed it; otherwise
+  // fall back to their active brand, then their first allowed brand. A brand
+  // the user cannot access, or one not in the snapshot set, returns null.
+  function resolveBrand(req, requested) {
+    const allowed = req.session.brands || [];
+    const pick = requested || req.session.activeBrand || allowed[0];
+    if (!pick) return null;
+    if (!allowed.includes(pick)) return null;      // access control
+    if (!S.brands.includes(pick)) return null;     // must have a snapshot
+    return pick;
   }
 
   function validRange(days) {
@@ -41,7 +54,7 @@ module.exports = function chatRoutes(requireAuth) {
 
   router.get('/sessions', async (req, res) => {
     const pool = getPool();
-    const brand = validBrand(req.query.brand);
+    const brand = resolveBrand(req, req.query.brand);
     try {
       const { rows } = await pool.query(
         `select id, brand, range_days, title, turn_count, updated_at
@@ -50,7 +63,7 @@ module.exports = function chatRoutes(requireAuth) {
            and ($2::text is null or brand = $2)
          order by updated_at desc
          limit 25`,
-        [req.user.id, brand],
+        [req.session.user, brand],
       );
       res.json({ sessions: rows });
     } catch (err) {
@@ -61,14 +74,14 @@ module.exports = function chatRoutes(requireAuth) {
 
   router.post('/sessions', async (req, res) => {
     const pool = getPool();
-    const brand = validBrand(req.body.brand);
+    const brand = resolveBrand(req, req.body.brand);
     if (!brand) return res.status(400).json({ error: 'Unknown brand.' });
     const rangeDays = validRange(req.body.rangeDays);
     try {
       const { rows } = await pool.query(
         `insert into chat_sessions (user_id, brand, range_days)
          values ($1, $2, $3) returning id, brand, range_days, created_at`,
-        [req.user.id, brand, rangeDays],
+        [req.session.user, brand, rangeDays],
       );
       res.json({ session: rows[0] });
     } catch (err) {
@@ -86,7 +99,7 @@ module.exports = function chatRoutes(requireAuth) {
          join chat_sessions s on s.id = m.session_id
          where m.session_id = $1 and s.user_id = $2
          order by m.created_at`,
-        [req.params.id, req.user.id],
+        [req.params.id, req.session.user],
       );
       res.json({ messages: rows });
     } catch (err) {
@@ -101,7 +114,7 @@ module.exports = function chatRoutes(requireAuth) {
       await pool.query(
         `update chat_sessions set archived = true
          where id = $1 and user_id = $2`,
-        [req.params.id, req.user.id],
+        [req.params.id, req.session.user],
       );
       res.json({ ok: true });
     } catch (err) {
@@ -114,7 +127,7 @@ module.exports = function chatRoutes(requireAuth) {
   router.post('/message', async (req, res) => {
     const pool = getPool();
     const { sessionId, message } = req.body;
-    const brand = validBrand(req.body.brand);
+    const brand = resolveBrand(req, req.body.brand);
     const rangeDays = validRange(req.body.rangeDays);
 
     if (!brand) return res.status(400).json({ error: 'Unknown brand.' });
@@ -131,7 +144,7 @@ module.exports = function chatRoutes(requireAuth) {
       const { rows } = await pool.query(
         `select id, turn_count from chat_sessions
          where id = $1 and user_id = $2 and archived = false`,
-        [sessionId, req.user.id],
+        [sessionId, req.session.user],
       );
       session = rows[0];
     } catch (err) {
@@ -147,7 +160,7 @@ module.exports = function chatRoutes(requireAuth) {
     }
 
     await handleMessage({
-      userId: req.user.id,
+      userId: req.session.user,
       sessionId: session.id,
       brand,
       rangeDays,
@@ -160,7 +173,7 @@ module.exports = function chatRoutes(requireAuth) {
   // Frontend safety net for a marker the side payload missed.
 
   router.get('/records', async (req, res) => {
-    const brand = validBrand(req.query.brand);
+    const brand = resolveBrand(req, req.query.brand);
     if (!brand) return res.status(400).json({ error: 'Unknown brand.' });
 
     const ids = String(req.query.ids || '').split(',').map((s) => s.trim()).filter(Boolean).slice(0, 8);
@@ -180,7 +193,7 @@ module.exports = function chatRoutes(requireAuth) {
   // ---- Brand context for the panel header ----------------------
 
   router.get('/context', async (req, res) => {
-    const brand = validBrand(req.query.brand);
+    const brand = resolveBrand(req, req.query.brand);
     if (!brand) return res.status(400).json({ error: 'Unknown brand.' });
     try {
       const snap = await getSnapshot(brand, validRange(req.query.rangeDays));
@@ -196,5 +209,6 @@ module.exports = function chatRoutes(requireAuth) {
     }
   });
 
-  return router;
+  app.use('/api/chat', router);
+  console.log('[ask-lens] chat routes mounted at /api/chat');
 };
