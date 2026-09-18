@@ -19,7 +19,7 @@
     "express-session": "^1.18.0",
     "ioredis": "^5.4.1",
     "pg": "^8.11.5",
-    "youtube-dl-exec": "^3.0.12"
+    "youtube-dl-exec": "^3.0.12",
     "@anthropic-ai/sdk": "^0.105.0"
   },
   "engines": {
