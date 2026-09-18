@@ -15,7 +15,31 @@ const { handleMessage } = require('./orchestrator');
 const { getSnapshot } = require('./snapshot');
 const { handlers } = require('./toolHandlers');
 
+const { warmAll } = require('./snapshot');
+const { prewarmAll } = require('./prewarm');
+const rateLimitMod = require('./rateLimit');
+
 module.exports = function mountChatRoutes(app) {
+  // ---- Pipeline hook, no session. n8n calls this after each run. ------
+  // Protected by a shared secret in the X-Warm-Secret header. Set
+  // ASK_LENS_WARM_SECRET in Render. Rebuilds every brand snapshot and
+  // prunes stale answer-cache rows.
+  app.post('/api/chat/warm', express.json(), async (req, res) => {
+    const secret = process.env.ASK_LENS_WARM_SECRET;
+    if (!secret) return res.status(503).json({ error: 'ASK_LENS_WARM_SECRET not configured.' });
+    if (req.get('X-Warm-Secret') !== secret) return res.status(401).json({ error: 'Unauthorized' });
+    try {
+      const results = await warmAll({ quiet: true });
+      const failed = results.filter((r) => r.error);
+      res.status(failed.length ? 207 : 200).json({ ok: !failed.length, results, prewarm: 'started' });
+      // Pre-warm after responding so n8n is not kept waiting on ~50 model calls.
+      setImmediate(() => { prewarmAll({ quiet: false }).catch((e) => console.error('[prewarm]', e.message)); });
+    } catch (err) {
+      console.error('[ask-lens/warm]', err.message);
+      res.status(500).json({ error: 'Warm failed.' });
+    }
+  });
+
   const router = express.Router();
   router.use(express.json());
 
@@ -190,6 +214,30 @@ module.exports = function mountChatRoutes(app) {
     }
   });
 
+  // ---- Usage, for the panel's limit bar ------------------------
+
+  router.get('/usage', async (req, res) => {
+    const pool = getPool();
+    try {
+      const { rows } = await pool.query(
+        `select window_kind, coalesce(sum(count), 0)::int as used
+         from chat_rate_limit
+         where user_id = $1
+           and ((window_kind = 'day'  and window_start >= date_trunc('day', now()))
+             or (window_kind = 'hour' and window_start >= date_trunc('hour', now())))
+         group by window_kind`,
+        [req.session.user],
+      );
+      const by = Object.fromEntries(rows.map((r) => [r.window_kind, r.used]));
+      res.json({
+        day:  { used: by.day  || 0, limit: S.rateLimit.perDay },
+        hour: { used: by.hour || 0, limit: S.rateLimit.perHour },
+      });
+    } catch (err) {
+      res.status(500).json({ error: 'Could not load usage.' });
+    }
+  });
+
   // ---- Brand context for the panel header ----------------------
 
   router.get('/context', async (req, res) => {
@@ -197,10 +245,15 @@ module.exports = function mountChatRoutes(app) {
     if (!brand) return res.status(400).json({ error: 'Unknown brand.' });
     try {
       const snap = await getSnapshot(brand, validRange(req.query.rangeDays));
+      const meta = (snap.records && snap.records.__meta) || {};
+      const freshness = meta.freshness || snap.period_end;
+      const ageDays = freshness ? Math.floor((Date.now() - new Date(freshness).getTime()) / 86400000) : null;
       res.json({
         brand,
         brandLabel: S.brandLabels[brand],
-        period: `${snap.period_start} to ${snap.period_end}`,
+        dataThrough: freshness,
+        ageDays,
+        stale: ageDays !== null && ageDays > S.staleAfterDays,
         generatedAt: snap.generated_at,
         records: snap.records,
       });
