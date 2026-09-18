@@ -1,26 +1,25 @@
 /**
- * Ask Lens - marker renderers
+ * Ask Lens - marker renderers (v2)
  *
- * Every renderer reads from the records store, never from text the
- * model produced. That is the whole point: the model points, the
- * database supplies the number.
+ * Every renderer reads from the records store, never from model text.
+ * Values in records are already percentages (hook 34.2, not 0.342).
  */
-
 (function (global) {
   'use strict';
 
   var METRICS = {
-    ctr:             { label: 'CTR',             type: 'percent',  decimals: 2 },
-    engagement_rate: { label: 'Engagement rate', type: 'percent',  decimals: 2 },
-    vtr:             { label: 'VTR',             type: 'percent',  decimals: 1 },
-    cpm:             { label: 'CPM',             type: 'currency', decimals: 0 },
-    cpc:             { label: 'CPC',             type: 'currency', decimals: 2 },
-    spend:           { label: 'Spend',           type: 'currency', decimals: 0 },
-    impressions:     { label: 'Impressions',     type: 'count' },
+    cqr:             { label: 'CQR',             type: 'cqr' },
+    hook_rate:       { label: 'Hook rate',       type: 'pct', decimals: 1 },
+    hold_rate:       { label: 'Hold rate',       type: 'pct', decimals: 1 },
+    engagement_rate: { label: 'Engagement rate', type: 'pct', decimals: 2 },
+    retention_rate:  { label: 'Retention',       type: 'pct', decimals: 1 },
+    vtr:             { label: 'VTR',             type: 'pct', decimals: 1 },
+    ctr:             { label: 'CTR',             type: 'pct', decimals: 2 },
     reach:           { label: 'Reach',           type: 'count' },
-    clicks:          { label: 'Clicks',          type: 'count' },
-    engagements:     { label: 'Engagements',     type: 'count' },
     video_views:     { label: 'Video views',     type: 'count' },
+    impressions:     { label: 'Impressions',     type: 'count' },
+    spend:           { label: 'Spend',           type: 'currency' },
+    avg_watch_time:  { label: 'Avg watch',       type: 'seconds', decimals: 1 },
   };
 
   var PLATFORMS = {
@@ -30,9 +29,8 @@
     facebook:  { label: 'Facebook',  color: '#1877f2' },
   };
 
+  var CQR_CLASS = { Good: 'good', Average: 'avg', Poor: 'poor', Invalid: 'inv' };
   var CURRENCY = 'LKR';
-
-  // ---- Formatting ----------------------------------------------
 
   function formatCount(n) {
     n = Number(n);
@@ -45,194 +43,135 @@
   function formatMetric(metric, value) {
     var def = METRICS[metric];
     if (value === null || value === undefined || value === '') return 'n/a';
+    if (def && def.type === 'cqr') return String(value);
     var n = Number(value);
     if (!isFinite(n)) return 'n/a';
     if (!def) return String(value);
-
-    if (def.type === 'percent') return (n * 100).toFixed(def.decimals) + '%';
+    if (def.type === 'pct') return n.toFixed(def.decimals) + '%';
     if (def.type === 'currency') return formatCount(n) + ' ' + CURRENCY;
+    if (def.type === 'seconds') return n.toFixed(def.decimals) + 's';
     return formatCount(n);
   }
 
-  function metricLabel(metric) {
-    return (METRICS[metric] && METRICS[metric].label) || metric;
+  function metricLabel(m) { return (METRICS[m] && METRICS[m].label) || m; }
+
+  function el(tag, cls, text) {
+    var n = document.createElement(tag);
+    if (cls) n.className = cls;
+    if (text !== undefined && text !== null) n.textContent = text;
+    return n;
   }
 
-  function el(tag, className, text) {
-    var node = document.createElement(tag);
-    if (className) node.className = className;
-    if (text !== undefined && text !== null) node.textContent = text;
-    return node;
+  function cqrDot(cqr) {
+    var d = el('span', 'al-cqr-dot ' + (CQR_CLASS[cqr] || 'inv'));
+    d.title = 'CQR ' + (cqr || 'unrated');
+    return d;
   }
 
-  /** A creative can run on several platforms, so this returns a group. */
+  function cqrBadge(cqr) {
+    return el('span', 'al-cqr ' + (CQR_CLASS[cqr] || 'inv'), cqr || 'Unrated');
+  }
+
   function platformDots(platforms) {
     var list = Array.isArray(platforms) ? platforms : (platforms ? [platforms] : []);
     var wrap = el('span', 'al-dots');
-    if (!list.length) {
-      var none = el('span', 'al-dot');
-      none.style.background = 'var(--al-muted)';
-      wrap.appendChild(none);
-      return wrap;
-    }
     list.forEach(function (name) {
       var p = PLATFORMS[name];
       var dot = el('span', 'al-dot');
-      dot.style.background = p ? p.color : 'var(--al-muted)';
+      dot.style.background = p ? p.color : '#A0A0BB';
       dot.title = p ? p.label : name;
       wrap.appendChild(dot);
     });
     return wrap;
   }
 
-  function platformDot(platforms) { return platformDots(platforms); }
-
   function platformText(platforms) {
     var list = Array.isArray(platforms) ? platforms : (platforms ? [platforms] : []);
-    if (!list.length) return 'Unknown';
+    if (!list.length) return 'Not boosted';
     return list.map(function (n) { return (PLATFORMS[n] && PLATFORMS[n].label) || n; }).join(' + ');
   }
 
-  function prettyFormat(fmt) {
-    if (!fmt) return 'Unclassified';
-    return String(fmt).replace(/_/g, ' ').replace(/^./, function (c) { return c.toUpperCase(); });
+  function prettyFormat(f) {
+    if (!f) return 'Unclassified';
+    return String(f).replace(/_/g, ' ').replace(/^./, function (c) { return c.toUpperCase(); });
   }
 
-  // ---- Records store -------------------------------------------
+  // ---- Store ---------------------------------------------------
 
-  function Store() {
-    this.records = {};
-    this.brand = null;
-    this.brandTotals = null;
-    this.series = null;
-    this.pending = {};
-  }
-
+  function Store() { this.records = {}; this.series = null; this.pending = {}; }
   Store.prototype.merge = function (records) {
     if (!records) return;
-    for (var id in records) {
-      if (Object.prototype.hasOwnProperty.call(records, id)) {
-        this.records[id] = records[id];
-      }
-    }
+    for (var id in records) if (Object.prototype.hasOwnProperty.call(records, id)) this.records[id] = records[id];
   };
-
-  Store.prototype.get = function (id) {
-    if (id === 'brand') return this.brandTotals;
-    return this.records[id] || null;
-  };
-
-  /** Safety net for a marker whose record never arrived. */
+  Store.prototype.get = function (id) { return this.records[id] || null; };
   Store.prototype.fetchMissing = function (ids, ctx) {
     var self = this;
     var need = ids.filter(function (id) { return id !== 'brand' && !self.records[id] && !self.pending[id]; });
     if (!need.length) return Promise.resolve();
     need.forEach(function (id) { self.pending[id] = true; });
-
-    return fetch('/api/chat/records?brand=' + encodeURIComponent(ctx.brand) +
-                 '&rangeDays=' + encodeURIComponent(ctx.rangeDays) +
-                 '&ids=' + encodeURIComponent(need.join(',')), { credentials: 'same-origin' })
+    return fetch('/api/chat/records?brand=' + encodeURIComponent(ctx.brand) + '&ids=' + encodeURIComponent(need.join(',')), { credentials: 'same-origin' })
       .then(function (r) { return r.ok ? r.json() : { records: {} }; })
-      .then(function (data) {
-        self.merge(data.records);
-        need.forEach(function (id) { delete self.pending[id]; });
-      })
-      .catch(function () {
-        need.forEach(function (id) { delete self.pending[id]; });
-      });
+      .then(function (d) { self.merge(d.records); need.forEach(function (id) { delete self.pending[id]; }); })
+      .catch(function () { need.forEach(function (id) { delete self.pending[id]; }); });
   };
 
-  // ---- Creative chip, expands inline ---------------------------
+  // ---- Creative chip -------------------------------------------
 
   function renderCreative(marker, store, ctx) {
     var wrap = el('span', 'al-chip-wrap');
     var chip = el('button', 'al-chip');
     chip.type = 'button';
     chip.setAttribute('aria-expanded', 'false');
-
     var rec = store.get(marker.id);
 
-    if (rec && rec.thumbnail_url) {
-      var img = el('img', 'al-chip-thumb');
-      img.src = rec.thumbnail_url;
-      img.alt = '';
-      img.loading = 'lazy';
-      chip.appendChild(img);
-    }
-
-    chip.appendChild(platformDots(rec && rec.platforms));
+    chip.appendChild(cqrDot(rec && rec.cqr));
     chip.appendChild(el('span', 'al-chip-label', rec ? (rec.name || marker.id) : marker.id));
-    chip.appendChild(el('span', 'al-chip-caret', ''));
+    chip.appendChild(el('span', 'al-chip-caret'));
 
     var panel = el('div', 'al-expand');
     panel.hidden = true;
 
     chip.addEventListener('click', function () {
       var open = !panel.hidden;
-      // Only one expanded at a time keeps the panel readable.
-      var others = wrap.closest('.al-messages');
-      if (others) {
-        others.querySelectorAll('.al-expand:not([hidden])').forEach(function (p) {
-          if (p !== panel) {
-            p.hidden = true;
-            var c = p.previousElementSibling;
-            if (c && c.classList.contains('al-chip')) c.setAttribute('aria-expanded', 'false');
-          }
-        });
-      }
+      var log = wrap.closest('.al-messages');
+      if (log) log.querySelectorAll('.al-expand:not([hidden])').forEach(function (p) {
+        if (p !== panel) { p.hidden = true; var c = p.previousElementSibling; if (c) c.setAttribute('aria-expanded', 'false'); }
+      });
       panel.hidden = open;
       chip.setAttribute('aria-expanded', String(!open));
-      if (!open && !panel.dataset.filled) {
-        fillExpand(panel, marker.id, store, ctx);
-        panel.dataset.filled = '1';
-      }
+      if (!open && !panel.dataset.filled) { fillExpand(panel, marker.id, store, ctx); panel.dataset.filled = '1'; }
     });
 
     wrap.appendChild(chip);
     wrap.appendChild(panel);
 
-    // Backfill once the record arrives.
-    if (!rec) {
-      store.fetchMissing([marker.id], ctx).then(function () {
-        var r = store.get(marker.id);
-        if (!r) return;
-        var label = chip.querySelector('.al-chip-label');
-        if (label) label.textContent = r.name || marker.id;
-        var dots = chip.querySelector('.al-dots');
-        if (dots) chip.replaceChild(platformDots(r.platforms), dots);
-      });
-    }
-
+    if (!rec) store.fetchMissing([marker.id], ctx).then(function () {
+      var r = store.get(marker.id); if (!r) return;
+      chip.querySelector('.al-chip-label').textContent = r.name || marker.id;
+      chip.replaceChild(cqrDot(r.cqr), chip.querySelector('.al-cqr-dot'));
+    });
     return wrap;
   }
 
   function fillExpand(panel, id, store, ctx) {
     var rec = store.get(id);
-    if (!rec) {
-      panel.appendChild(el('div', 'al-expand-empty', 'Details for this creative are not available.'));
-      return;
-    }
+    if (!rec) { panel.appendChild(el('div', 'al-expand-empty', 'Details not available.')); return; }
 
     var head = el('div', 'al-expand-head');
-    if (rec.thumbnail_url) {
-      var img = el('img', 'al-expand-thumb');
-      img.src = rec.thumbnail_url;
-      img.alt = '';
-      head.appendChild(img);
-    }
     var meta = el('div', 'al-expand-meta');
     meta.appendChild(el('div', 'al-expand-name', rec.name || id));
     var sub = el('div', 'al-expand-sub');
+    sub.appendChild(cqrBadge(rec.cqr));
     sub.appendChild(platformDots(rec.platforms));
-    sub.appendChild(el('span', null,
-      platformText(rec.platforms) + ' · ' + prettyFormat(rec.format) +
-      (rec.origin ? ' · ' + rec.origin : '')));
+    sub.appendChild(el('span', null, platformText(rec.platforms) + ' · ' + prettyFormat(rec.format) + (rec.type ? ' · ' + rec.type : '') + (rec.origin === 'repurposed' ? ' · repurposed' : '')));
     meta.appendChild(sub);
     head.appendChild(meta);
     panel.appendChild(head);
 
+    if (rec.hook) panel.appendChild(el('div', 'al-expand-hook', rec.hook));
+
     var grid = el('div', 'al-expand-grid');
-    ['ctr', 'engagement_rate', 'impressions', 'reach', 'clicks', 'spend'].forEach(function (m) {
+    ['hook_rate', 'hold_rate', 'reach', 'impressions', 'spend', 'avg_watch_time'].forEach(function (m) {
       var cell = el('div', 'al-expand-cell');
       cell.appendChild(el('span', 'al-expand-cell-label', metricLabel(m)));
       cell.appendChild(el('span', 'al-expand-cell-value', formatMetric(m, rec[m])));
@@ -240,41 +179,59 @@
     });
     panel.appendChild(grid);
 
-    var actions = el('div', 'al-expand-actions');
-    // The dashboard has no deep-link router yet, so the reliable action is
-    // the live post. If a hub deep-link is added later, swap this href.
-    if (rec.permalink) {
-      var openHub = el('a', 'al-link', 'View creative');
-      openHub.href = rec.permalink;
-      openHub.target = '_blank';
-      openHub.rel = 'noopener noreferrer';
-      actions.appendChild(openHub);
+    if (rec.per_platform && Object.keys(rec.per_platform).length > 1) {
+      var plats = el('div', 'al-expand-platforms');
+      Object.keys(rec.per_platform).forEach(function (p) {
+        var x = rec.per_platform[p];
+        var row = el('div', 'al-expand-plat');
+        row.appendChild(platformDots([p]));
+        row.appendChild(el('b', null, (PLATFORMS[p] && PLATFORMS[p].label) || p));
+        row.appendChild(cqrBadge(x.cqr));
+        row.appendChild(el('span', null, 'hook ' + formatMetric('hook_rate', x.hook_rate) + ' · hold ' + formatMetric('hold_rate', x.hold_rate)));
+        plats.appendChild(row);
+      });
+      panel.appendChild(plats);
     }
-    panel.appendChild(actions);
+
+    if (rec.verdict) {
+      var v = el('div', 'al-expand-verdict');
+      var b = el('b', null, 'Insights verdict: ');
+      v.appendChild(b);
+      v.appendChild(document.createTextNode(rec.verdict + (rec.action ? ' Action: ' + rec.action : '')));
+      panel.appendChild(v);
+    }
+
+    if (rec.permalink) {
+      var actions = el('div', 'al-expand-actions');
+      var a = el('a', 'al-link', 'View creative');
+      a.href = rec.permalink; a.target = '_blank'; a.rel = 'noopener noreferrer';
+      actions.appendChild(a);
+      panel.appendChild(actions);
+    }
   }
 
   // ---- Metric badge --------------------------------------------
 
   function renderMetric(marker, store, ctx) {
-    var badge = el('span', 'al-badge');
     var rec = store.get(marker.id);
     var value = rec ? rec[marker.metric] : null;
 
-    badge.appendChild(el('span', 'al-badge-value', formatMetric(marker.metric, value)));
-    badge.appendChild(el('span', 'al-badge-label', metricLabel(marker.metric)));
-    badge.title = metricLabel(marker.metric) +
-      (marker.id === 'brand' ? ' across the brand' : ' for ' + (rec ? (rec.name || marker.id) : marker.id));
-
-    if (!rec && marker.id !== 'brand') {
-      store.fetchMissing([marker.id], ctx).then(function () {
-        var r = store.get(marker.id);
-        if (!r) return;
-        var v = badge.querySelector('.al-badge-value');
-        if (v) v.textContent = formatMetric(marker.metric, r[marker.metric]);
+    if (marker.metric === 'cqr') {
+      var badge = cqrBadge(value);
+      if (!rec && marker.id !== 'brand') store.fetchMissing([marker.id], ctx).then(function () {
+        var r = store.get(marker.id); if (r) badge.replaceWith(cqrBadge(r.cqr));
       });
+      return badge;
     }
 
-    return badge;
+    var b = el('span', 'al-badge');
+    b.appendChild(el('span', 'al-badge-value', formatMetric(marker.metric, value)));
+    b.appendChild(el('span', 'al-badge-label', metricLabel(marker.metric)));
+    b.title = metricLabel(marker.metric) + (marker.id === 'brand' ? ', brand average' : ' for ' + (rec ? rec.name : marker.id));
+    if (!rec && marker.id !== 'brand') store.fetchMissing([marker.id], ctx).then(function () {
+      var r = store.get(marker.id); if (r) b.querySelector('.al-badge-value').textContent = formatMetric(marker.metric, r[marker.metric]);
+    });
+    return b;
   }
 
   // ---- Chart ---------------------------------------------------
@@ -282,175 +239,88 @@
   function renderChart(marker, store, ctx) {
     var card = el('div', 'al-card al-chart-card');
     var canvas = document.createElement('canvas');
-    canvas.height = 180;
     card.appendChild(canvas);
 
     function draw() {
-      if (typeof Chart === 'undefined') {
-        card.appendChild(el('div', 'al-expand-empty', 'Chart could not be drawn.'));
-        return;
-      }
-
-      var labels = [];
-      var values = [];
-      var colors = [];
-
+      if (typeof Chart === 'undefined') { card.appendChild(el('div', 'al-expand-empty', 'Chart unavailable.')); return; }
+      var labels = [], values = [], colors = [];
       if (marker.series) {
         var s = store.series;
-        if (!s || s.metric !== marker.metric) {
-          card.appendChild(el('div', 'al-expand-empty', 'No series available for this metric.'));
-          return;
-        }
-        labels = s.labels;
-        values = s.values;
+        if (!s || s.metric !== marker.metric) { card.appendChild(el('div', 'al-expand-empty', 'No series for this metric.')); return; }
+        labels = s.labels; values = s.values;
       } else {
         marker.ids.forEach(function (id) {
-          var rec = store.get(id);
-          if (!rec) return;
-          labels.push(rec.name || id);
-          values.push(Number(rec[marker.metric]));
-          var first = Array.isArray(rec.platforms) ? rec.platforms[0] : rec.platforms;
-          colors.push((PLATFORMS[first] && PLATFORMS[first].color) || '#1B2A4A');
+          var rec = store.get(id); if (!rec) return;
+          labels.push(rec.name || id); values.push(Number(rec[marker.metric]));
+          var cq = rec.cqr;
+          colors.push(cq === 'Good' ? '#04785C' : cq === 'Average' ? '#8A5A12' : cq === 'Poor' ? '#A32040' : '#6B6B90');
         });
-        if (!values.length) {
-          card.appendChild(el('div', 'al-expand-empty', 'No data for those creatives.'));
-          return;
-        }
+        if (!values.length) { card.appendChild(el('div', 'al-expand-empty', 'No data for those creatives.')); return; }
       }
-
       var def = METRICS[marker.metric] || {};
-      var isPct = def.type === 'percent';
-
       new Chart(canvas.getContext('2d'), {
         type: marker.type,
-        data: {
-          labels: labels,
-          datasets: [{
-            label: metricLabel(marker.metric),
-            data: values,
-            backgroundColor: marker.series ? 'rgba(27,42,74,0.08)' : colors,
-            borderColor: marker.series ? '#1B2A4A' : colors,
-            borderWidth: marker.series ? 2 : 0,
-            pointRadius: marker.series ? 0 : undefined,
-            tension: 0.25,
-            fill: !!marker.series,
-          }],
-        },
-        options: {
-          responsive: true,
-          maintainAspectRatio: false,
-          plugins: {
-            legend: { display: false },
-            tooltip: {
-              callbacks: {
-                label: function (c) { return formatMetric(marker.metric, c.parsed.y); },
-              },
-            },
-          },
-          scales: {
-            x: {
-              grid: { display: false },
-              ticks: { font: { family: 'Rubik', size: 11 }, maxRotation: 0, autoSkip: true },
-            },
-            y: {
-              grid: { color: 'rgba(0,0,0,0.05)' },
-              ticks: {
-                font: { family: 'Rubik', size: 11 },
-                callback: function (v) { return isPct ? (v * 100).toFixed(1) + '%' : formatCount(v); },
-              },
-            },
-          },
-        },
+        data: { labels: labels, datasets: [{ label: metricLabel(marker.metric), data: values,
+          backgroundColor: marker.series ? 'rgba(0,0,80,0.08)' : colors, borderColor: marker.series ? '#000050' : colors,
+          borderWidth: marker.series ? 2 : 0, pointRadius: marker.series ? 0 : undefined, tension: 0.25, fill: !!marker.series, borderRadius: 4 }] },
+        options: { responsive: true, maintainAspectRatio: false,
+          plugins: { legend: { display: false }, tooltip: { callbacks: { label: function (c) { return formatMetric(marker.metric, c.parsed.y); } } } },
+          scales: { x: { grid: { display: false }, ticks: { font: { family: 'Rubik', size: 11 }, maxRotation: 0, autoSkip: true } },
+                    y: { grid: { color: 'rgba(0,0,80,0.06)' }, ticks: { font: { family: 'Rubik', size: 11 },
+                      callback: function (v) { return def.type === 'pct' ? v.toFixed(0) + '%' : formatCount(v); } } } } },
       });
     }
 
     if (!marker.series) {
       var missing = marker.ids.filter(function (id) { return !store.get(id); });
-      if (missing.length) {
-        store.fetchMissing(missing, ctx).then(draw);
-        return card;
-      }
+      if (missing.length) { store.fetchMissing(missing, ctx).then(draw); return card; }
     }
-    // Chart.js needs the canvas in the DOM before it measures.
     setTimeout(draw, 0);
     return card;
   }
 
-  // ---- Compare table -------------------------------------------
+  // ---- Compare -------------------------------------------------
 
   function renderCompare(marker, store, ctx) {
     var card = el('div', 'al-card');
-
     function draw() {
       card.innerHTML = '';
       var recs = marker.ids.map(function (id) { return store.get(id); }).filter(Boolean);
-      if (recs.length < 2) {
-        card.appendChild(el('div', 'al-expand-empty', 'Not enough data to compare those.'));
-        return;
-      }
-
+      if (recs.length < 2) { card.appendChild(el('div', 'al-expand-empty', 'Not enough data to compare.')); return; }
       var table = el('table', 'al-compare');
-      var thead = el('thead');
-      var hrow = el('tr');
+      var thead = el('thead'), hrow = el('tr');
       hrow.appendChild(el('th', 'al-compare-metric', ''));
-      recs.forEach(function (r) {
-        var th = el('th');
-        th.appendChild(platformDots(r.platforms));
-        th.appendChild(el('span', null, r.name || r.id));
-        hrow.appendChild(th);
-      });
-      thead.appendChild(hrow);
-      table.appendChild(thead);
-
+      recs.forEach(function (r) { var th = el('th'); th.appendChild(cqrDot(r.cqr)); th.appendChild(el('span', null, r.name || r.id)); hrow.appendChild(th); });
+      thead.appendChild(hrow); table.appendChild(thead);
       var tbody = el('tbody');
-      ['ctr', 'engagement_rate', 'impressions', 'spend'].forEach(function (m) {
-        var tr = el('tr');
-        tr.appendChild(el('td', 'al-compare-metric', metricLabel(m)));
-        var nums = recs.map(function (r) { return Number(r[m]); });
-        var best = Math.max.apply(null, nums.filter(isFinite));
-        recs.forEach(function (r, i) {
-          var td = el('td', nums[i] === best ? 'al-compare-best' : null, formatMetric(m, r[m]));
-          tr.appendChild(td);
-        });
+      ['cqr', 'hook_rate', 'hold_rate', 'reach'].forEach(function (m) {
+        var tr = el('tr'); tr.appendChild(el('td', 'al-compare-metric', metricLabel(m)));
+        if (m === 'cqr') { recs.forEach(function (r) { var td = el('td'); td.appendChild(cqrBadge(r.cqr)); tr.appendChild(td); }); }
+        else { var nums = recs.map(function (r) { return Number(r[m]); }); var best = Math.max.apply(null, nums.filter(isFinite));
+          recs.forEach(function (r, i) { tr.appendChild(el('td', nums[i] === best ? 'al-compare-best' : null, formatMetric(m, r[m]))); }); }
         tbody.appendChild(tr);
       });
-      table.appendChild(tbody);
-      card.appendChild(table);
+      table.appendChild(tbody); card.appendChild(table);
     }
-
     var missing = marker.ids.filter(function (id) { return !store.get(id); });
-    if (missing.length) store.fetchMissing(missing, ctx).then(draw);
-    else draw();
-
+    if (missing.length) store.fetchMissing(missing, ctx).then(draw); else draw();
     return card;
   }
 
-  // ---- Cohort tile ---------------------------------------------
+  // ---- Cohort --------------------------------------------------
 
   function renderCohort(marker, store) {
     var card = el('div', 'al-card al-cohort');
-    var parts = String(marker.key).split(':');
-    var kind = parts[0];
-    var value = parts.slice(1).join(':');
-
-    var title = kind === 'platform'
-      ? (PLATFORMS[value] ? PLATFORMS[value].label : value)
-      : kind === 'format' ? prettyFormat(value)
-      : value.charAt(0).toUpperCase() + value.slice(1);
-
+    var parts = String(marker.key).split(':'), kind = parts[0], value = parts.slice(1).join(':');
+    var title = kind === 'platform' ? ((PLATFORMS[value] && PLATFORMS[value].label) || value) : kind === 'format' ? prettyFormat(value) : value;
     var head = el('div', 'al-cohort-head');
-    if (kind === 'platform') head.appendChild(platformDot(value));
+    if (kind === 'platform') head.appendChild(platformDots([value]));
     head.appendChild(el('span', 'al-cohort-title', title));
     card.appendChild(head);
-
-    var cohort = (store.cohorts && store.cohorts[marker.key]) || null;
-    if (!cohort) {
-      card.appendChild(el('div', 'al-expand-empty', 'Summary not available.'));
-      return card;
-    }
-
+    var cohort = store.cohorts && store.cohorts[marker.key];
+    if (!cohort) { card.appendChild(el('div', 'al-expand-empty', 'Summary not available.')); return card; }
     var grid = el('div', 'al-cohort-grid');
-    ['ctr', 'engagement_rate', 'impressions'].forEach(function (m) {
+    ['hook_rate', 'hold_rate', 'reach'].forEach(function (m) {
       var cell = el('div', 'al-expand-cell');
       cell.appendChild(el('span', 'al-expand-cell-label', metricLabel(m)));
       cell.appendChild(el('span', 'al-expand-cell-value', formatMetric(m, cohort[m])));
@@ -459,8 +329,6 @@
     card.appendChild(grid);
     return card;
   }
-
-  // ---- Dispatch ------------------------------------------------
 
   function render(marker, store, ctx) {
     switch (marker.kind) {
@@ -472,20 +340,7 @@
       default:         return document.createTextNode('');
     }
   }
+  function isBlock(m) { return m.kind === 'chart' || m.kind === 'compare' || m.kind === 'cohort'; }
 
-  /** Block-level markers break out of the paragraph flow. */
-  function isBlock(marker) {
-    return marker.kind === 'chart' || marker.kind === 'compare' || marker.kind === 'cohort';
-  }
-
-  global.AskLensCards = {
-    Store: Store,
-    render: render,
-    isBlock: isBlock,
-    formatMetric: formatMetric,
-    platformText: platformText,
-    metricLabel: metricLabel,
-    METRICS: METRICS,
-    PLATFORMS: PLATFORMS,
-  };
+  global.AskLensCards = { Store: Store, render: render, isBlock: isBlock, formatMetric: formatMetric, metricLabel: metricLabel, platformText: platformText, cqrBadge: cqrBadge, METRICS: METRICS, PLATFORMS: PLATFORMS };
 })(window);
