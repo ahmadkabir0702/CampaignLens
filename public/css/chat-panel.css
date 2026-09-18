@@ -211,3 +211,52 @@ body.al-open { padding-right: var(--al-width); }
 }
 .al-input:focus { border-color: var(--navy); outline: none; }
 .al-input::placeholder { color: var(--ink-300); }
+
+/* ---- v3 additions ---- */
+
+/* Usage bar under the header */
+.al-usage { display: flex; align-items: center; gap: 10px; padding: 6px 18px; background: var(--white); border-bottom: 1px solid var(--line-soft); }
+.al-usage-bar { flex: 1; height: 4px; background: var(--line-soft); border-radius: var(--r-pill); overflow: hidden; }
+.al-usage-fill { height: 100%; width: 0; background: var(--navy); border-radius: var(--r-pill); transition: width .3s var(--ease); }
+.al-usage.warn .al-usage-fill { background: var(--warn); }
+.al-usage.full .al-usage-fill { background: var(--neg); }
+.al-usage-text { font-size: 11px; color: var(--ink-400); white-space: nowrap; }
+
+/* Stale data note, only shown when the pipeline is behind */
+.al-stale { padding: 8px 18px; background: var(--warn-bg); color: var(--warn); font-size: 12.5px; border-bottom: 1px solid var(--line); }
+.al-stale[hidden] { display: none; }
+
+/* Short id under the display name in the expanded card */
+.al-expand-id { font-size: 11px; color: var(--ink-300); margin-top: 1px; font-family: ui-monospace, SFMono-Regular, Menlo, monospace; }
+
+/* Strong / Weak colouring on hook and hold values */
+.al-expand-cell-value.is-strong { color: var(--pos); }
+.al-expand-cell-value.is-weak { color: var(--neg); }
+
+/* Retention strip */
+.al-ret { margin-top: 12px; }
+.al-ret-label { font-size: 11px; color: var(--ink-400); display: block; margin-bottom: 6px; }
+.al-ret-strip { display: grid; grid-template-columns: repeat(6, 1fr); gap: 6px; align-items: end; height: 64px; }
+.al-ret-col { display: flex; flex-direction: column; align-items: center; justify-content: flex-end; height: 100%; }
+.al-ret-bar { width: 100%; max-width: 28px; background: var(--s3); border-radius: 2px 2px 0 0; min-height: 2px; }
+.al-ret-col:first-child .al-ret-bar { background: var(--navy); }
+.al-ret-val { font-size: 10.5px; color: var(--ink-900); font-weight: 500; margin-top: 3px; }
+.al-ret-key { font-size: 10px; color: var(--ink-400); }
+
+/* Verdict block: clamped to 4 lines until expanded */
+.al-expand-verdict-body p { margin: 0 0 6px; }
+.al-expand-verdict-body p:last-child { margin-bottom: 0; }
+.al-expand-verdict.clamped .al-expand-verdict-body { max-height: 5.8em; overflow: hidden; position: relative; }
+.al-expand-verdict.clamped .al-expand-verdict-body::after { content: ''; position: absolute; left: 0; right: 0; bottom: 0; height: 1.6em; background: linear-gradient(to bottom, rgba(255,255,255,0), var(--white)); }
+.al-more { margin-top: 6px; background: none; border: 0; padding: 0; font-family: inherit; font-size: 12px; color: var(--navy); cursor: pointer; border-bottom: 1px solid var(--line); }
+.al-more[hidden] { display: none; }
+
+/* Cohort subtitle */
+.al-cohort-sub { font-size: 12px; color: var(--ink-400); margin-top: 3px; }
+
+/* Copy button on answers */
+.al-copy { margin-top: 10px; background: none; border: 1px solid var(--line); border-radius: var(--r-btn); padding: 3px 9px; font-family: inherit; font-size: 11.5px; color: var(--ink-400); cursor: pointer; }
+.al-copy:hover { color: var(--navy); border-color: var(--navy); }
+
+/* Inline New chat button for the turn cap */
+.al-inline-btn { margin-top: 8px; }
