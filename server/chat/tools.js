@@ -29,6 +29,9 @@ const tools = [
         format: { type: 'string', description: 'Creative format as classified in the data.' },
         origin: { type: 'string', enum: ['original', 'repurposed'] },
         cqr: { type: 'string', enum: ['Good', 'Average', 'Poor'], description: 'Only creatives with this CQR.' },
+        campaign: { type: 'string', description: 'Campaign name, partial match.' },
+        creator: { type: 'string', description: 'Creator name, partial match. Others Say only.' },
+        active: { type: 'boolean', description: 'true for running ads only, false for stopped only.' },
       },
       required: [],
     },
@@ -102,7 +105,7 @@ function buildTools() {
   const copy = tools.map((t) => ({ ...t }));
   copy[copy.length - 1] = {
     ...copy[copy.length - 1],
-    cache_control: { type: 'ephemeral' },
+    cache_control: { type: 'ephemeral', ttl: '1h' },
   };
   return copy;
 }
