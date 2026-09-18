@@ -25,10 +25,10 @@
   var Cards = global.AskLensCards;
 
   var STARTERS = [
-    'Best performing creatives',
-    'Where is spend going to Poor creatives',
-    'Brand Say vs Others Say',
-    'Meta vs TikTok on hook rate',
+    'What are our best performing creatives?',
+    'Which Poor creatives are still running?',
+    'How does Brand Say compare to Others Say?',
+    'What is validated but not boosted yet?',
   ];
 
   var state = {
@@ -127,10 +127,24 @@
       ask(text);
     });
 
+    var usage = el('div', 'al-usage');
+    var usageBar = el('div', 'al-usage-bar');
+    var usageFill = el('div', 'al-usage-fill');
+    usageBar.appendChild(usageFill);
+    var usageText = el('span', 'al-usage-text', '');
+    usage.appendChild(usageBar);
+    usage.appendChild(usageText);
+    usage.title = 'Your daily question limit';
+
+    var stale = el('div', 'al-stale');
+    stale.hidden = true;
+
     var history = el('div', 'al-history');
     history.hidden = true;
 
     panel.appendChild(head);
+    panel.appendChild(usage);
+    panel.appendChild(stale);
     panel.appendChild(history);
     panel.appendChild(messages);
     panel.appendChild(chips);
@@ -139,6 +153,7 @@
     nodes = {
       panel: panel, messages: messages, chips: chips,
       input: input, send: send, context: context, history: history,
+      usageFill: usageFill, usageText: usageText, usage: usage, stale: stale,
     };
 
     document.body.appendChild(panel);
@@ -153,11 +168,27 @@
     return btn;
   }
 
+  function refreshUsage() {
+    fetch('/api/chat/usage', { credentials: 'same-origin' })
+      .then(function (r) { return r.ok ? r.json() : null; })
+      .then(function (u) {
+        if (!u) return;
+        var pct = Math.min(100, Math.round((u.day.used / u.day.limit) * 100));
+        nodes.usageFill.style.width = pct + '%';
+        nodes.usage.classList.toggle('warn', pct >= 80);
+        nodes.usage.classList.toggle('full', u.day.used >= u.day.limit);
+        nodes.usageText.textContent = u.day.used + ' / ' + u.day.limit + ' today';
+        nodes.usage.title = u.hour.used + ' of ' + u.hour.limit + ' this hour, ' + u.day.used + ' of ' + u.day.limit + ' today';
+      })
+      .catch(function () {});
+  }
+
   function open() {
     state.open = true;
     nodes.panel.hidden = false;
     document.body.classList.add('al-open');
     syncContext();
+    refreshUsage();
     if (!state.sessionId) startSession(false);
     setTimeout(function () { nodes.input.focus(); }, 60);
   }
@@ -181,8 +212,14 @@
       .then(function (r) { return r.ok ? r.json() : null; })
       .then(function (data) {
         if (!data) return;
-        nodes.context.textContent = data.brandLabel + ' · lifetime · paid through ' + fmtDate(data.period.split(' to ')[1]);
+        nodes.context.textContent = data.brandLabel;
         state.store.merge(data.records);
+        if (data.stale) {
+          nodes.stale.textContent = 'Data last updated ' + fmtDate(data.dataThrough) + '. The pipeline may not have run.';
+          nodes.stale.hidden = false;
+        } else {
+          nodes.stale.hidden = true;
+        }
       })
       .catch(function () { /* header text is cosmetic */ });
   }
@@ -244,14 +281,14 @@
     var out = [];
 
     if (kinds.indexOf('creative') !== -1) {
-      if (!/hook/.test(q)) out.push('Rank by hook rate');
-      if (!/hold/.test(q)) out.push('Rank by hold rate');
-      out.push('Only Good rated');
+      if (!/why|working/.test(q)) out.push('Why are these working?');
+      if (!/hook/.test(q)) out.push('Rank them by hook rate instead');
+      if (!/good/.test(q)) out.push('Show only Good rated creatives');
     }
-    if (/platform|meta|tiktok/.test(q)) out.push('Break down by format');
-    if (!/brand say|others say|creator/.test(q)) out.push('Brand Say vs Others Say');
-    if (!/organic/.test(q)) out.push('How about organic');
-    if (!/meta/.test(q)) out.push('Meta only');
+    if (/platform|meta|tiktok/.test(q)) out.push('Break that down by format');
+    if (!/brand say|others say|creator/.test(q)) out.push('How does Brand Say compare to Others Say?');
+    if (!/organic/.test(q)) out.push('What about organic?');
+    if (!/pause|stop|waste|poor/.test(q)) out.push('What should we pause?');
     return out.slice(0, 4);
   }
 
@@ -367,12 +404,25 @@
     })
       .then(function (res) {
         if (!res.ok) {
-          return res.json().then(function (e) { throw new Error(e.error || 'Request failed.'); });
+          return res.json().then(function (e) {
+            if (e.code === 'TURN_CAP') {
+              var err = new Error(e.error); err.turnCap = true; throw err;
+            }
+            throw new Error(e.error || 'Request failed.');
+          });
         }
         return readStream(res.body);
       })
       .catch(function (err) {
         if (thinking && thinking.parentNode) thinking.remove();
+        if (err.turnCap) {
+          shell.para.textContent = 'This chat has run long. Start a new one to keep answers sharp.';
+          var nb = el('button', 'al-btn-outline al-inline-btn', 'New chat');
+          nb.type = 'button';
+          nb.addEventListener('click', function () { startSession(true); });
+          shell.body.appendChild(nb);
+          return;
+        }
         shell.para.textContent = err.message || 'Something went wrong. Try again.';
         shell.para.classList.add('al-error-text');
       })
@@ -380,6 +430,7 @@
         state.busy = false;
         nodes.send.disabled = false;
         nodes.input.focus();
+        refreshUsage();
       });
 
     function readStream(body) {
@@ -417,8 +468,7 @@
 
           case 'meta': {
             var b = state.store.get('brand');
-            var label = (b && b.name) || data.brand;
-            nodes.context.textContent = label + ' · lifetime · paid through ' + fmtDate(data.period.split(' to ')[1]);
+            nodes.context.textContent = (b && b.name) || data.brand;
             break;
           }
 
@@ -471,12 +521,44 @@
           .filter(function (t) { return t.type === 'marker'; })
           .map(function (t) { return t.marker; });
 
+        addCopyButton(shell, collected);
         if (markers.length) renderChips(refineChips(markers, text));
         scrollToEnd();
       }
 
       return pump();
     }
+  }
+
+  // ---- Copy ----------------------------------------------------
+
+  /** Plain-text version of an answer: markers become their rendered values. */
+  function plainText(tokens) {
+    return tokens.map(function (t) {
+      if (t.type === 'text') return t.value;
+      var m = t.marker, rec;
+      switch (m.kind) {
+        case 'creative': rec = state.store.get(m.id); return rec ? (rec.name || m.id) : m.id;
+        case 'metric':   rec = state.store.get(m.id); return rec ? Cards.formatMetric(m.metric, rec[m.metric]) + ' ' + Cards.metricLabel(m.metric) : '';
+        case 'compare':  return '[comparison of ' + m.ids.length + ' creatives]';
+        case 'chart':    return '[chart: ' + Cards.metricLabel(m.metric) + ']';
+        case 'cohort':   return '[' + m.key + ' summary]';
+        default: return '';
+      }
+    }).join('').replace(/\n{3,}/g, '\n\n').trim();
+  }
+
+  function addCopyButton(shell, tokens) {
+    var btn = el('button', 'al-copy', 'Copy');
+    btn.type = 'button';
+    btn.setAttribute('aria-label', 'Copy answer');
+    btn.addEventListener('click', function () {
+      var txt = plainText(tokens);
+      var done = function () { btn.textContent = 'Copied'; setTimeout(function () { btn.textContent = 'Copy'; }, 1500); };
+      if (navigator.clipboard && navigator.clipboard.writeText) navigator.clipboard.writeText(txt).then(done, done);
+      else { var ta = document.createElement('textarea'); ta.value = txt; document.body.appendChild(ta); ta.select(); try { document.execCommand('copy'); } catch (e) {} ta.remove(); done(); }
+    });
+    shell.body.appendChild(btn);
   }
 
   // ---- History -------------------------------------------------
@@ -540,9 +622,11 @@
         (data.messages || []).forEach(function (m) {
           if (m.role === 'user') { addUserMessage(m.content); return; }
           var shell = addAssistantShell();
-          Markers.parseAll(m.content).forEach(function (t) { appendToken(shell, t, ctx); });
+          var toks = Markers.parseAll(m.content);
+          toks.forEach(function (t) { appendToken(shell, t, ctx); });
           var last = shell.body.lastElementChild;
           if (last && last.tagName === 'P' && !last.textContent.trim() && !last.children.length) last.remove();
+          addCopyButton(shell, toks);
         });
         scrollToEnd();
       });
