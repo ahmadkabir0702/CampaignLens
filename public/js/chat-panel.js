@@ -25,10 +25,10 @@
   var Cards = global.AskLensCards;
 
   var STARTERS = [
-    'Top performers this month',
-    'Meta vs TikTok',
-    "What's underperforming",
-    'How does this compare to last month',
+    'Best performing creatives',
+    'Where is spend going to Poor creatives',
+    'Brand Say vs Others Say',
+    'Meta vs TikTok on hook rate',
   ];
 
   var state = {
@@ -72,6 +72,10 @@
     titleWrap.appendChild(context);
 
     var actions = el('div', 'al-head-actions');
+    var histBtn = el('button', 'al-btn-outline', 'History');
+    histBtn.type = 'button';
+    histBtn.addEventListener('click', toggleHistory);
+    actions.appendChild(histBtn);
     var newBtn = el('button', 'al-btn-outline', 'New chat');
     newBtn.type = 'button';
     newBtn.addEventListener('click', function () { startSession(true); });
@@ -123,14 +127,18 @@
       ask(text);
     });
 
+    var history = el('div', 'al-history');
+    history.hidden = true;
+
     panel.appendChild(head);
+    panel.appendChild(history);
     panel.appendChild(messages);
     panel.appendChild(chips);
     panel.appendChild(form);
 
     nodes = {
       panel: panel, messages: messages, chips: chips,
-      input: input, send: send, context: context,
+      input: input, send: send, context: context, history: history,
     };
 
     document.body.appendChild(panel);
@@ -173,7 +181,7 @@
       .then(function (r) { return r.ok ? r.json() : null; })
       .then(function (data) {
         if (!data) return;
-        nodes.context.textContent = data.brandLabel + ' · ' + data.period;
+        nodes.context.textContent = data.brandLabel + ' · lifetime · paid through ' + fmtDate(data.period.split(' to ')[1]);
         state.store.merge(data.records);
       })
       .catch(function () { /* header text is cosmetic */ });
@@ -236,20 +244,14 @@
     var out = [];
 
     if (kinds.indexOf('creative') !== -1) {
-      out.push('Rank by engagement');
-      out.push('Rank by reach');
+      if (!/hook/.test(q)) out.push('Rank by hook rate');
+      if (!/hold/.test(q)) out.push('Rank by hold rate');
+      out.push('Only Good rated');
     }
-    if (kinds.indexOf('cohort') !== -1 || /platform|meta|tiktok|instagram/.test(q)) {
-      out.push('Break down by format');
-    }
-    if (kinds.indexOf('chart') === -1) {
-      out.push('Show the trend');
-    }
-    if (!/last 7|this week|7 days/.test(q)) {
-      out.push('Last 7 days');
-    }
+    if (/platform|meta|tiktok/.test(q)) out.push('Break down by format');
+    if (!/brand say|others say|creator/.test(q)) out.push('Brand Say vs Others Say');
+    if (!/organic/.test(q)) out.push('How about organic');
     if (!/meta/.test(q)) out.push('Meta only');
-
     return out.slice(0, 4);
   }
 
@@ -413,10 +415,12 @@
             state.store.merge(data);
             break;
 
-          case 'meta':
-            nodes.context.textContent =
-              (Cards.PLATFORMS[data.brand] ? data.brand : data.brand) + ' · ' + data.period;
+          case 'meta': {
+            var b = state.store.get('brand');
+            var label = (b && b.name) || data.brand;
+            nodes.context.textContent = label + ' · lifetime · paid through ' + fmtDate(data.period.split(' to ')[1]);
             break;
+          }
 
           case 'series':
             state.store.series = data;
@@ -473,6 +477,75 @@
 
       return pump();
     }
+  }
+
+  // ---- History -------------------------------------------------
+
+  function fmtDate(iso) {
+    if (!iso) return '';
+    var d = new Date(iso);
+    if (isNaN(d)) return iso;
+    return d.toLocaleDateString('en-GB', { day: 'numeric', month: 'short', timeZone: 'UTC' });
+  }
+
+  function fmtWhen(iso) {
+    var d = new Date(iso), now = new Date();
+    var days = Math.floor((now - d) / 86400000);
+    if (days === 0) return 'today';
+    if (days === 1) return 'yesterday';
+    if (days < 7) return days + 'd ago';
+    return fmtDate(iso);
+  }
+
+  function toggleHistory() {
+    if (!nodes.history.hidden) { nodes.history.hidden = true; return; }
+    loadHistoryList();
+  }
+
+  function loadHistoryList() {
+    nodes.history.innerHTML = '';
+    nodes.history.hidden = false;
+    fetch('/api/chat/sessions?brand=' + encodeURIComponent(state.getBrand()), { credentials: 'same-origin' })
+      .then(function (r) { return r.ok ? r.json() : { sessions: [] }; })
+      .then(function (data) {
+        var list = (data.sessions || []).filter(function (s) { return s.turn_count > 0; });
+        if (!list.length) {
+          nodes.history.appendChild(el('div', 'al-history-empty', 'No past chats for this brand yet.'));
+          return;
+        }
+        list.forEach(function (sess) {
+          var item = el('button', 'al-history-item' + (sess.id === state.sessionId ? ' active' : ''));
+          item.type = 'button';
+          item.appendChild(el('span', 'al-history-title', sess.title || 'Untitled chat'));
+          item.appendChild(el('span', 'al-history-when', fmtWhen(sess.updated_at)));
+          item.addEventListener('click', function () { openSession(sess.id); });
+          nodes.history.appendChild(item);
+        });
+      })
+      .catch(function () {
+        nodes.history.appendChild(el('div', 'al-history-empty', 'Could not load history.'));
+      });
+  }
+
+  /** Replay a stored conversation, rendering markers from the records store. */
+  function openSession(id) {
+    nodes.history.hidden = true;
+    nodes.messages.innerHTML = '';
+    nodes.chips.innerHTML = '';
+    state.sessionId = id;
+    var ctx = { brand: state.getBrand(), rangeDays: state.getRangeDays() };
+    fetch('/api/chat/sessions/' + encodeURIComponent(id) + '/messages', { credentials: 'same-origin' })
+      .then(function (r) { return r.ok ? r.json() : { messages: [] }; })
+      .then(function (data) {
+        (data.messages || []).forEach(function (m) {
+          if (m.role === 'user') { addUserMessage(m.content); return; }
+          var shell = addAssistantShell();
+          Markers.parseAll(m.content).forEach(function (t) { appendToken(shell, t, ctx); });
+          var last = shell.body.lastElementChild;
+          if (last && last.tagName === 'P' && !last.textContent.trim() && !last.children.length) last.remove();
+        });
+        scrollToEnd();
+      });
   }
 
   // ---- Public API ----------------------------------------------
