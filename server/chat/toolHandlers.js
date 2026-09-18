@@ -8,7 +8,8 @@
 
 const S = require('./schema.config');
 const { getPool } = require('./db');
-const { shortName, mergePaid, rankCmp } = require('./snapshot');
+const { shortName, displayLabel, mergePaid, rankCmp } = require('./snapshot');
+const CR = S.creator;
 
 const T = S.tables;
 const C = S.creative;
@@ -36,17 +37,21 @@ async function loadMerged(pool, brand) {
     ${P.impressions} as impressions, ${P.hookRate} as hook_rate, ${P.holdRate} as hold_rate,
     ${P.hookQ} as hook_q, ${P.holdQ} as hold_q, ${P.vtr} as vtr,
     ${P.avgWatchTime} as avg_watch_time, ${P.cqr} as cqr, ${P.isActive} as is_active,
+    ${P.durationS} as duration_s,
     ${P.w25} as w25, ${P.w50} as w50, ${P.w75} as w75, ${P.w100} as w100,
     ${P.verdict} as verdict, ${P.working} as working, ${P.notWorking} as not_working,
-    ${P.action} as action, ${P.priority} as priority`;
+    ${P.action} as action, ${P.actionType} as action_type, ${P.priority} as priority,
+    ${P.confidence} as confidence, ${P.actionStatus} as action_status`;
 
   const [cr, meta, tt] = await Promise.all([
     pool.query(
-      `select ${C.id} as id, ${C.format} as format, ${C.type} as type, ${C.campaign} as campaign,
-              ${C.isRepurposed} as is_repurposed, ${C.parentId} as parent_id,
-              ${C.productRole} as product_role,
-              coalesce(${C.ttLink}, ${C.igLink}, ${C.fbLink}) as permalink
-       from ${T.creatives} where ${C.brand} = $1`, [brand]),
+      `select c.${C.id} as id, c.${C.hook} as hook, c.${C.format} as format, c.${C.type} as type,
+              c.${C.campaign} as campaign, c.${C.isRepurposed} as is_repurposed, c.${C.parentId} as parent_id,
+              c.${C.productRole} as product_role, c.${C.durationS} as duration_s, cr.${CR.name} as creator,
+              coalesce(c.${C.ttLink}, c.${C.igLink}, c.${C.fbLink}) as permalink
+       from ${T.creatives} c
+       left join ${T.creators} cr on cr.${CR.id} = c.${C.creatorId}
+       where c.${C.brand} = $1`, [brand]),
     pool.query(`select ${paidSel} from ${T.paidMeta} where ${P.brand} = $1 and ${P.creativeId} is not null`, [brand]),
     pool.query(`select ${paidSel} from ${T.paidTiktok} where ${P.brand} = $1 and ${P.creativeId} is not null`, [brand]),
   ]);
@@ -59,9 +64,10 @@ async function loadMerged(pool, brand) {
     const m = mergePaid(metaBy.get(c.id), ttBy.get(c.id));
     if (!m) continue;
     out.push({
-      id: c.id, name: shortName(c.id), format: c.format, type: c.type, campaign: c.campaign,
+      id: c.id, name: displayLabel(c.id, c.hook), short: shortName(c.id), hook: c.hook,
+      format: c.format, type: c.type, campaign: c.campaign, creator: c.creator,
       origin: c.is_repurposed ? 'repurposed' : 'original', parent_id: c.parent_id,
-      product_role: c.product_role, permalink: c.permalink, boosted: true, ...m,
+      product_role: c.product_role, duration_s: c.duration_s, permalink: c.permalink, boosted: true, ...m,
     });
   }
   return out;
@@ -74,8 +80,8 @@ function floorFor(rows) {
 
 function slim(r, metric) {
   return {
-    id: r.id, cqr: r.cqr, hook_rate: r.hook_rate, hold_rate: r.hold_rate,
-    platforms: r.platforms, type: r.type, format: r.format,
+    id: r.id, cqr: r.cqr, hook_rate: r.hook_rate, hook_q: r.hook_q, hold_rate: r.hold_rate, hold_q: r.hold_q,
+    platforms: r.platforms, type: r.type, format: r.format, is_active: r.is_active,
     ...(metric && !['cqr', 'hook_rate', 'hold_rate'].includes(metric) ? { [metric]: r[metric] } : {}),
   };
 }
@@ -98,6 +104,9 @@ async function rank_creatives(args, ctx) {
   if (args.format) rows = rows.filter((r) => r.format === args.format);
   if (args.origin) rows = rows.filter((r) => r.origin === args.origin);
   if (args.cqr) rows = rows.filter((r) => r.cqr === args.cqr);
+  if (args.campaign) rows = rows.filter((r) => (r.campaign || '').toLowerCase().includes(String(args.campaign).toLowerCase()));
+  if (args.creator) rows = rows.filter((r) => (r.creator || '').toLowerCase().includes(String(args.creator).toLowerCase()));
+  if (args.active !== undefined) rows = rows.filter((r) => !!r.is_active === !!args.active);
 
   if (metric === 'cqr') {
     rows.sort(rankCmp);
@@ -127,13 +136,15 @@ async function get_creative(args, ctx) {
 
   return {
     result: cap({
-      id: r.id, name: r.name, cqr: r.cqr, hook_rate: r.hook_rate, hold_rate: r.hold_rate,
-      hook_q: r.hook_q, hold_q: r.hold_q, platforms: r.platforms, type: r.type, format: r.format,
-      origin: r.origin, spend: Math.round(r.spend), reach: r.reach, impressions: r.impressions,
-      avg_watch_time: r.avg_watch_time, is_active: r.is_active,
+      id: r.id, name: r.name, cqr: r.cqr, hook_rate: r.hook_rate, hook_q: r.hook_q,
+      hold_rate: r.hold_rate, hold_q: r.hold_q, retention_curve: r.retention,
+      duration_s: r.duration_s, platforms: r.platforms, type: r.type, format: r.format,
+      campaign: r.campaign, creator: r.creator, origin: r.origin, is_active: r.is_active,
+      spend: Math.round(r.spend), reach: r.reach, impressions: r.impressions, avg_watch_time: r.avg_watch_time,
       per_platform: r.per_platform,
-      existing_verdict: r.verdict || null, working: r.working || null,
-      not_working: r.not_working || null, recommended_action: r.action || null,
+      insights: r.verdict ? { verdict: r.verdict, working: r.working, not_working: r.not_working,
+        action: r.action, action_type: r.action_type, priority: r.priority, confidence: r.confidence,
+        action_status: r.action_status } : null,
     }),
     records: { [r.id]: r },
   };
