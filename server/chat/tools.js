@@ -17,35 +17,30 @@ const tools = [
   {
     name: 'rank_creatives',
     description:
-      'Rank the brand\'s creatives by one metric, with optional filters. Use only when the snapshot\'s top and bottom lists do not cover the question, for example a different metric, a platform filter, a format filter, or a rank position beyond the top five. Returns IDs and the ranked metric only.',
+      'Rank boosted creatives. Default metric is cqr, which ranks CQR then hook rate then hold rate. Use only when the snapshot lists do not cover the question: a different metric, a platform, type, format or CQR filter, or a rank beyond the top five.',
     input_schema: {
       type: 'object',
       properties: {
-        metric: { type: 'string', enum: METRIC_ENUM, description: 'Metric to rank by.' },
-        direction: {
-          type: 'string', enum: ['best', 'worst'], default: 'best',
-          description: 'best accounts for metrics where lower is better, such as CPM and CPC.',
-        },
+        metric: { type: 'string', enum: METRIC_ENUM, default: 'cqr', description: 'cqr is the default and means CQR then hook then hold.' },
+        direction: { type: 'string', enum: ['best', 'worst'], default: 'best' },
         limit: { type: 'integer', minimum: 1, maximum: 10, default: 5 },
         platform: { type: 'string', enum: S.platforms },
-        format: { type: 'string', description: 'Creative format, as classified in the data.' },
+        type: { type: 'string', description: 'Creative type, e.g. BrandSay or OthersSay.' },
+        format: { type: 'string', description: 'Creative format as classified in the data.' },
         origin: { type: 'string', enum: ['original', 'repurposed'] },
-        range_days: { type: 'integer', minimum: 1, maximum: 365, description: 'Defaults to the selected range.' },
+        cqr: { type: 'string', enum: ['Good', 'Average', 'Poor'], description: 'Only creatives with this CQR.' },
       },
-      required: ['metric'],
+      required: [],
     },
   },
 
   {
     name: 'get_creative',
     description:
-      'Full metrics for one creative over the selected period. Use when the user asks about a specific creative in detail and the snapshot line is not enough.',
+      'Full lifetime metrics for one boosted creative, per platform, including the existing Insights verdict. Use when the snapshot line is not enough.',
     input_schema: {
       type: 'object',
-      properties: {
-        creative_id: { type: 'string' },
-        range_days: { type: 'integer', minimum: 1, maximum: 365 },
-      },
+      properties: { creative_id: { type: 'string' } },
       required: ['creative_id'],
     },
   },
@@ -53,11 +48,11 @@ const tools = [
   {
     name: 'get_series',
     description:
-      'Time series for one metric, at brand level or for one creative. Use for questions about trends, when something changed, or spikes and drops. Returns chart-ready arrays. Reference the result with [[chart:line|METRIC|series]].',
+      'Daily or weekly series for spend, reach, impressions, video_views or clicks. Hook rate, hold rate and CQR have no daily series. Use for trend questions. Reference with [[chart:line|METRIC|series]].',
     input_schema: {
       type: 'object',
       properties: {
-        metric: { type: 'string', enum: METRIC_ENUM },
+        metric: { type: 'string', enum: ['spend', 'reach', 'impressions', 'video_views', 'clicks'] },
         granularity: { type: 'string', enum: ['day', 'week'], default: 'day' },
         range_days: { type: 'integer', minimum: 2, maximum: 180 },
         platform: { type: 'string', enum: S.platforms },
@@ -79,9 +74,8 @@ const tools = [
         },
         metrics: {
           type: 'array', items: { type: 'string', enum: METRIC_ENUM },
-          description: 'Defaults to ctr, engagement_rate, impressions, spend.',
+          description: 'Defaults to cqr, hook_rate, hold_rate, reach.',
         },
-        range_days: { type: 'integer', minimum: 1, maximum: 365 },
       },
       required: ['creative_ids'],
     },
@@ -93,10 +87,7 @@ const tools = [
       'The original and repurposed relatives of one creative, with each one\'s headline metrics. Use for questions about repurposing performance on a specific asset.',
     input_schema: {
       type: 'object',
-      properties: {
-        creative_id: { type: 'string' },
-        range_days: { type: 'integer', minimum: 1, maximum: 365 },
-      },
+      properties: { creative_id: { type: 'string' } },
       required: ['creative_id'],
     },
   },
