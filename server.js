@@ -183,6 +183,8 @@ if (String(process.env.RUN_WORKER_IN_PROCESS || 'true') !== 'false') {
 
 // All Postgres-backed API routes live in routes.js
 require('./routes')(app, { ai, youtubedl });
+// Ask Lens chat routes
+require('./server/chat/routes')(app);
 
 app.get('*', (req, res) => {
   res.sendFile(path.join(__dirname, 'public', 'index.html'));
