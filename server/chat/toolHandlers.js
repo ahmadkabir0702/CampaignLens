@@ -1,396 +1,225 @@
 /**
- * Ask Lens - tool handlers
+ * Ask Lens - tool handlers (v2, reads the dashboard views)
  *
- * Every handler:
- *   1. validates its arguments against the whitelist in schema.config
- *   2. runs one parameterised query scoped to the session's brand
- *   3. returns a compact object plus a `records` map for the marker
- *      side payload
- *
- * The brand is taken from the session, never from the model. A tool
- * call cannot reach another brand's data even if the model asks.
+ * Every handler reads the same views the Creative Hub reads and applies
+ * the same Meta+TikTok merge. Brand comes from the session, never from
+ * the model. Results stay under ~400 tokens.
  */
 
 const S = require('./schema.config');
 const { getPool } = require('./db');
-const { dateRange } = require('./snapshot');
+const { shortName, mergePaid, rankCmp } = require('./snapshot');
 
 const T = S.tables;
 const C = S.creative;
-const M = S.metric;
+const P = S.paidView;
+const MAX_RESULT_CHARS = 1500;
 
-const MAX_RESULT_CHARS = 1500; // ~400 tokens
+const num = (v) => (v === null || v === undefined ? 0 : Number(v));
+const r1 = (v) => (v === null || v === undefined ? null : Math.round(Number(v) * 10) / 10);
 
-// ---------------------------------------------------------------
-// Validation
-// ---------------------------------------------------------------
-
-function validMetric(metric) {
-  if (!S.rankableMetrics.includes(metric)) {
-    throw new Error(`Unsupported metric: ${metric}`);
-  }
-  return metric;
-}
-
-function validPlatform(p) {
-  if (p && !S.platforms.includes(p)) throw new Error(`Unsupported platform: ${p}`);
-  return p || null;
-}
-
-function validOrigin(o) {
-  if (o && !['original', 'repurposed'].includes(o)) throw new Error(`Unsupported origin: ${o}`);
-  return o || null;
-}
-
-function round(v, places = 6) {
-  if (v === null || v === undefined) return null;
-  return Number(Number(v).toFixed(places));
-}
-
-/** Trim a result object if it would blow the token budget. */
 function cap(result) {
   const json = JSON.stringify(result);
   if (json.length <= MAX_RESULT_CHARS) return result;
-  if (Array.isArray(result.rows)) {
-    const trimmed = { ...result, rows: result.rows.slice(0, 5), truncated: true };
-    return trimmed;
-  }
+  if (Array.isArray(result.rows)) return { ...result, rows: result.rows.slice(0, 5), truncated: true };
   return { ...result, truncated: true };
 }
 
-/** Shared select list for per-creative aggregates. */
-function creativeSelect() {
-  return `
-    c.${C.id}          as id,
-    c.${C.name}        as name,
-    c.${C.format}      as format,
-    c.${C.productRole} as product_role,
-    c.${C.parentId}    as parent_id,
-    ${S.creativeExpr.origin}    as origin,
-    ${S.creativeExpr.platforms} as platforms,
-    ${S.creativeExpr.permalink} as permalink,
-    coalesce(sum(m.${M.impressions}), 0) as impressions,
-    coalesce(sum(m.${M.reach}), 0)       as reach,
-    coalesce(sum(m.${M.clicks}), 0)      as clicks,
-    coalesce(sum(m.${M.spend}), 0)       as spend,
-    coalesce(sum(m.${M.engagements}), 0) as engagements,
-    ${S.derived.ctr}             as ctr,
-    ${S.derived.cpm}             as cpm,
-    ${S.derived.cpc}             as cpc,
-    ${S.derived.engagement_rate} as engagement_rate
-  `;
+function validMetric(m) {
+  if (!S.rankableMetrics.includes(m)) throw new Error(`Unsupported metric: ${m}`);
+  return m;
 }
 
-function creativeGroupBy() {
-  return `
-    group by c.${C.id}, c.${C.name}, c.${C.format}, c.${C.productRole},
-             c.${C.parentId}, c.${C.isRepurposed},
-             c.${C.ttLink}, c.${C.igLink}, c.${C.fbLink}
-  `;
+/** Load and merge every boosted creative for a brand, with creative metadata. */
+async function loadMerged(pool, brand) {
+  const paidSel = `${P.creativeId} as id, ${P.spend} as spend, ${P.reach} as reach,
+    ${P.impressions} as impressions, ${P.hookRate} as hook_rate, ${P.holdRate} as hold_rate,
+    ${P.hookQ} as hook_q, ${P.holdQ} as hold_q, ${P.vtr} as vtr,
+    ${P.avgWatchTime} as avg_watch_time, ${P.cqr} as cqr, ${P.isActive} as is_active,
+    ${P.w25} as w25, ${P.w50} as w50, ${P.w75} as w75, ${P.w100} as w100,
+    ${P.verdict} as verdict, ${P.working} as working, ${P.notWorking} as not_working,
+    ${P.action} as action, ${P.priority} as priority`;
+
+  const [cr, meta, tt] = await Promise.all([
+    pool.query(
+      `select ${C.id} as id, ${C.format} as format, ${C.type} as type, ${C.campaign} as campaign,
+              ${C.isRepurposed} as is_repurposed, ${C.parentId} as parent_id,
+              ${C.productRole} as product_role,
+              coalesce(${C.ttLink}, ${C.igLink}, ${C.fbLink}) as permalink
+       from ${T.creatives} where ${C.brand} = $1`, [brand]),
+    pool.query(`select ${paidSel} from ${T.paidMeta} where ${P.brand} = $1 and ${P.creativeId} is not null`, [brand]),
+    pool.query(`select ${paidSel} from ${T.paidTiktok} where ${P.brand} = $1 and ${P.creativeId} is not null`, [brand]),
+  ]);
+
+  const metaBy = new Map(meta.rows.map((r) => [r.id, { ...r, platform: 'meta' }]));
+  const ttBy = new Map(tt.rows.map((r) => [r.id, { ...r, platform: 'tiktok' }]));
+
+  const out = [];
+  for (const c of cr.rows) {
+    const m = mergePaid(metaBy.get(c.id), ttBy.get(c.id));
+    if (!m) continue;
+    out.push({
+      id: c.id, name: shortName(c.id), format: c.format, type: c.type, campaign: c.campaign,
+      origin: c.is_repurposed ? 'repurposed' : 'original', parent_id: c.parent_id,
+      product_role: c.product_role, permalink: c.permalink, boosted: true, ...m,
+    });
+  }
+  return out;
 }
 
-/** Brand period impressions, for the relative volume floor. */
-async function brandFloor(pool, brand, start, end) {
-  const { rows } = await pool.query(
-    `select coalesce(sum(m.${M.impressions}), 0) as impressions
-     from ${T.creatives} c
-     join ${T.metrics} m on m.${M.creativeId} = c.${C.id}
-     where c.${C.brand} = $1 and m.${M.date} between $2 and $3`,
-    [brand, start, end],
-  );
-  const total = Number(rows[0]?.impressions || 0);
+function floorFor(rows) {
+  const total = rows.reduce((s, r) => s + num(r.impressions), 0);
   return Math.max(S.volumeFloor.absoluteMin, Math.round(total * S.volumeFloor.relativeShare));
 }
 
-// ---------------------------------------------------------------
-// rank_creatives
+function slim(r, metric) {
+  return {
+    id: r.id, cqr: r.cqr, hook_rate: r.hook_rate, hold_rate: r.hold_rate,
+    platforms: r.platforms, type: r.type, format: r.format,
+    ...(metric && !['cqr', 'hook_rate', 'hold_rate'].includes(metric) ? { [metric]: r[metric] } : {}),
+  };
+}
+
 // ---------------------------------------------------------------
 
 async function rank_creatives(args, ctx) {
   const pool = ctx.pool || getPool();
-  const metric = validMetric(args.metric);
-  const platform = validPlatform(args.platform);
-  const origin = validOrigin(args.origin);
+  const metric = validMetric(args.metric || 'cqr');
+  const wantBest = (args.direction || 'best') !== 'worst';
   const limit = Math.min(Math.max(Number(args.limit) || 5, 1), 10);
-  const range = dateRange(args.range_days || ctx.rangeDays);
 
-  const floor = await brandFloor(pool, ctx.brand, range.start, range.end);
+  let rows = await loadMerged(pool, ctx.brand);
+  const floor = floorFor(rows);
+  const excluded = rows.filter((r) => num(r.impressions) < floor).length;
+  rows = rows.filter((r) => num(r.impressions) >= floor);
 
-  const lowerBetter = S.lowerIsBetter.includes(metric);
-  const wantBest = (args.direction || 'best') === 'best';
-  const desc = wantBest ? !lowerBetter : lowerBetter;
+  if (args.platform) rows = rows.filter((r) => (r.platforms || []).includes(args.platform));
+  if (args.type) rows = rows.filter((r) => r.type === args.type);
+  if (args.format) rows = rows.filter((r) => r.format === args.format);
+  if (args.origin) rows = rows.filter((r) => r.origin === args.origin);
+  if (args.cqr) rows = rows.filter((r) => r.cqr === args.cqr);
 
-  const params = [ctx.brand, range.start, range.end, floor];
-  let filters = '';
-  if (platform) { params.push(platform); filters += ` and m.${M.platform} = $${params.length}`; }
-  if (origin)   { filters += ` and c.${C.isRepurposed} is ${origin === 'repurposed' ? 'true' : 'not true'}`; }
-  if (args.format) { params.push(args.format); filters += ` and c.${C.format} = $${params.length}`; }
-  params.push(limit);
-
-  const sql = `
-    select * from (
-      select ${creativeSelect()}
-      from ${T.creatives} c
-      join ${T.metrics} m on m.${M.creativeId} = c.${C.id}
-      where c.${C.brand} = $1 and m.${M.date} between $2 and $3${filters}
-      ${creativeGroupBy()}
-      having coalesce(sum(m.${M.impressions}), 0) >= $4
-    ) ranked
-    where ranked.${metric} is not null
-    order by ranked.${metric} ${desc ? 'desc' : 'asc'}
-    limit $${params.length}
-  `;
-
-  const { rows } = await pool.query(sql, params);
-
-  // Count what the floor removed, so the model can say so.
-  const { rows: exc } = await pool.query(
-    `select count(*)::int as n from (
-       select c.${C.id}
-       from ${T.creatives} c
-       join ${T.metrics} m on m.${M.creativeId} = c.${C.id}
-       where c.${C.brand} = $1 and m.${M.date} between $2 and $3
-       group by c.${C.id}
-       having coalesce(sum(m.${M.impressions}), 0) < $4
-     ) t`,
-    [ctx.brand, range.start, range.end, floor],
-  );
+  if (metric === 'cqr') {
+    rows.sort(rankCmp);
+  } else {
+    rows = rows.filter((r) => r[metric] !== null && r[metric] !== undefined);
+    rows.sort((a, b) => num(b[metric]) - num(a[metric]));
+  }
+  if (!wantBest) rows.reverse();
+  rows = rows.slice(0, limit);
 
   return {
     result: cap({
-      metric,
+      ranked_by: metric === 'cqr' ? 'cqr, then hook_rate, then hold_rate' : metric,
       direction: wantBest ? 'best' : 'worst',
-      period: `${range.start} to ${range.end}`,
-      volume_floor_impressions: floor,
-      excluded_below_floor: exc[0].n,
-      rows: rows.map((r) => ({
-        id: r.id,
-        platforms: r.platforms,
-        format: r.format,
-        origin: r.origin,
-        [metric]: round(r[metric]),
-      })),
+      volume_floor_impressions: floor, excluded_below_floor: excluded,
+      rows: rows.map((r) => slim(r, metric)),
     }),
     records: Object.fromEntries(rows.map((r) => [r.id, r])),
   };
 }
 
-// ---------------------------------------------------------------
-// get_creative
-// ---------------------------------------------------------------
-
 async function get_creative(args, ctx) {
   const pool = ctx.pool || getPool();
-  const range = dateRange(args.range_days || ctx.rangeDays);
+  const rows = await loadMerged(pool, ctx.brand);
+  const r = rows.find((x) => String(x.id) === String(args.creative_id));
+  if (!r) return { result: { error: 'No boosted creative with that id for this brand.' }, records: {} };
 
-  const { rows } = await pool.query(
-    `select ${creativeSelect()}
-     from ${T.creatives} c
-     join ${T.metrics} m on m.${M.creativeId} = c.${C.id}
-     where c.${C.brand} = $1 and c.${C.id} = $2 and m.${M.date} between $3 and $4
-     ${creativeGroupBy()}`,
-    [ctx.brand, args.creative_id, range.start, range.end],
-  );
-
-  if (!rows.length) {
-    return { result: { error: 'No creative with that id has delivery in this period for this brand.' }, records: {} };
-  }
-
-  const r = rows[0];
   return {
     result: cap({
-      id: r.id,
-      platforms: r.platforms,
-      format: r.format,
-      product_role: r.product_role,
-      origin: r.origin,
-      is_repurposed_from: r.parent_id || null,
-      period: `${range.start} to ${range.end}`,
-      impressions: Number(r.impressions),
-      reach: Number(r.reach),
-      clicks: Number(r.clicks),
-      spend: round(r.spend, 2),
-      engagements: Number(r.engagements),
-      ctr: round(r.ctr),
-      cpm: round(r.cpm, 2),
-      cpc: round(r.cpc, 2),
-      engagement_rate: round(r.engagement_rate),
+      id: r.id, name: r.name, cqr: r.cqr, hook_rate: r.hook_rate, hold_rate: r.hold_rate,
+      hook_q: r.hook_q, hold_q: r.hold_q, platforms: r.platforms, type: r.type, format: r.format,
+      origin: r.origin, spend: Math.round(r.spend), reach: r.reach, impressions: r.impressions,
+      avg_watch_time: r.avg_watch_time, is_active: r.is_active,
+      per_platform: r.per_platform,
+      existing_verdict: r.verdict || null, working: r.working || null,
+      not_working: r.not_working || null, recommended_action: r.action || null,
     }),
     records: { [r.id]: r },
   };
 }
 
-// ---------------------------------------------------------------
-// get_series
-// ---------------------------------------------------------------
-
 async function get_series(args, ctx) {
   const pool = ctx.pool || getPool();
-  const metric = validMetric(args.metric);
-  const platform = validPlatform(args.platform);
-  const granularity = args.granularity === 'week' ? 'week' : 'day';
-  const range = dateRange(args.range_days || ctx.rangeDays);
-
-  const bucket = granularity === 'week'
-    ? `date_trunc('week', m.${M.date})::date`
-    : `m.${M.date}`;
-
-  const params = [ctx.brand, range.start, range.end];
+  // Only metrics that exist on daily rows. Hook/hold/CQR are view-level.
+  const allowed = { spend: 'spend_lkr', reach: 'reach', impressions: 'impressions', video_views: 'video_plays', clicks: 'clicks' };
+  const col = allowed[args.metric];
+  if (!col) {
+    return { result: { error: `Time series is only available for ${Object.keys(allowed).join(', ')}. Hook rate, hold rate and CQR are lifetime scores without a daily series.` }, records: {} };
+  }
+  const days = Math.min(Math.max(Number(args.range_days) || 30, 2), 180);
+  const bucket = args.granularity === 'week' ? "date_trunc('week', date)::date" : 'date';
+  const params = [ctx.brand, days];
   let filters = '';
-  if (platform)         { params.push(platform);         filters += ` and m.${M.platform} = $${params.length}`; }
-  if (args.creative_id) { params.push(args.creative_id); filters += ` and c.${C.id} = $${params.length}`; }
+  if (args.platform)    { params.push(args.platform);    filters += ` and platform = $${params.length}`; }
+  if (args.creative_id) { params.push(args.creative_id); filters += ` and creative_id = $${params.length}`; }
 
   const { rows } = await pool.query(
-    `select ${bucket} as bucket, ${S.derived[metric]} as value
-     from ${T.creatives} c
-     join ${T.metrics} m on m.${M.creativeId} = c.${C.id}
-     where c.${C.brand} = $1 and m.${M.date} between $2 and $3${filters}
-     group by bucket
-     order by bucket`,
-    params,
-  );
+    `select ${bucket} as bucket, sum(${col}) as value
+     from ${T.paidDaily}
+     where brand_id = $1 and date > current_date - $2::int${filters}
+     group by bucket order by bucket`, params);
 
   const labels = rows.map((r) => (r.bucket instanceof Date ? r.bucket.toISOString().slice(0, 10) : String(r.bucket)));
-  const values = rows.map((r) => round(r.value));
-
-  // Describe the shape so the model can comment without reading every point.
-  const nums = values.filter((v) => v !== null);
-  const first = nums[0] ?? null;
-  const last = nums[nums.length - 1] ?? null;
-  const peakIdx = values.indexOf(Math.max(...nums));
-  const troughIdx = values.indexOf(Math.min(...nums));
+  const values = rows.map((r) => Math.round(num(r.value)));
+  const peakIdx = values.indexOf(Math.max(...values));
+  const troughIdx = values.indexOf(Math.min(...values));
 
   return {
     result: cap({
-      metric,
-      granularity,
-      period: `${range.start} to ${range.end}`,
-      points: values.length,
-      first, last,
-      direction: first !== null && last !== null ? (last > first ? 'up' : last < first ? 'down' : 'flat') : 'unknown',
+      metric: args.metric, granularity: args.granularity === 'week' ? 'week' : 'day', days,
+      points: values.length, first: values[0] ?? null, last: values[values.length - 1] ?? null,
+      direction: values.length > 1 ? (values[values.length - 1] > values[0] ? 'up' : values[values.length - 1] < values[0] ? 'down' : 'flat') : 'unknown',
       peak: peakIdx >= 0 ? { date: labels[peakIdx], value: values[peakIdx] } : null,
       trough: troughIdx >= 0 ? { date: labels[troughIdx], value: values[troughIdx] } : null,
-      note: 'Full series is attached to the interface. Reference it with [[chart:line|' + metric + '|series]].',
+      note: `Reference with [[chart:line|${args.metric}|series]].`,
     }),
     records: {},
-    series: { metric, granularity, labels, values, scope: args.creative_id || platform || 'brand' },
+    series: { metric: args.metric, labels, values, scope: args.creative_id || args.platform || 'brand' },
   };
 }
-
-// ---------------------------------------------------------------
-// compare_creatives
-// ---------------------------------------------------------------
 
 async function compare_creatives(args, ctx) {
   const pool = ctx.pool || getPool();
   const ids = (args.creative_ids || []).slice(0, 4);
-  if (ids.length < 2) throw new Error('compare_creatives needs at least two creative ids.');
-
-  const metrics = (args.metrics && args.metrics.length ? args.metrics : ['ctr', 'engagement_rate', 'impressions', 'spend'])
-    .map(validMetric);
-  const range = dateRange(args.range_days || ctx.rangeDays);
-
-  const { rows } = await pool.query(
-    `select ${creativeSelect()}
-     from ${T.creatives} c
-     join ${T.metrics} m on m.${M.creativeId} = c.${C.id}
-     where c.${C.brand} = $1 and c.${C.id} = any($2) and m.${M.date} between $3 and $4
-     ${creativeGroupBy()}`,
-    [ctx.brand, ids, range.start, range.end],
-  );
-
+  if (ids.length < 2) throw new Error('compare_creatives needs at least two ids.');
+  const rows = (await loadMerged(pool, ctx.brand)).filter((r) => ids.includes(String(r.id)));
+  const metrics = (args.metrics && args.metrics.length ? args.metrics : ['cqr', 'hook_rate', 'hold_rate', 'reach']).map(validMetric);
   return {
     result: cap({
-      period: `${range.start} to ${range.end}`,
       metrics,
-      rows: rows.map((r) => {
-        const out = { id: r.id, platforms: r.platforms, format: r.format, origin: r.origin };
-        for (const k of metrics) out[k] = round(r[k]);
-        return out;
-      }),
-      missing: ids.filter((id) => !rows.some((r) => String(r.id) === String(id))),
+      rows: rows.map((r) => { const o = { id: r.id, platforms: r.platforms, type: r.type, format: r.format }; metrics.forEach((k) => { o[k] = r[k]; }); return o; }),
+      missing: ids.filter((id) => !rows.some((r) => String(r.id) === id)),
     }),
     records: Object.fromEntries(rows.map((r) => [r.id, r])),
   };
 }
-
-// ---------------------------------------------------------------
-// get_lineage
-// ---------------------------------------------------------------
 
 async function get_lineage(args, ctx) {
   const pool = ctx.pool || getPool();
-  const range = dateRange(args.range_days || ctx.rangeDays);
-
-  const { rows } = await pool.query(
-    `with target as (
-       select ${C.id} as id, ${C.parentId} as parent_id
-       from ${T.creatives} where ${C.brand} = $1 and ${C.id} = $2
-     ),
-     root as (
-       select coalesce((select parent_id from target), (select id from target)) as root_id
-     )
-     select ${creativeSelect()},
-            case when c.${C.id} = (select root_id from root) then 'original' else 'repurposed' end as lineage_role
-     from ${T.creatives} c
-     join ${T.metrics} m on m.${M.creativeId} = c.${C.id}
-     where c.${C.brand} = $1
-       and (c.${C.id} = (select root_id from root) or c.${C.parentId} = (select root_id from root))
-       and m.${M.date} between $3 and $4
-     ${creativeGroupBy()}`,
-    [ctx.brand, args.creative_id, range.start, range.end],
-  );
-
-  if (!rows.length) {
-    return { result: { error: 'No lineage found for that creative in this period.' }, records: {} };
-  }
-
+  const all = await loadMerged(pool, ctx.brand);
+  const target = all.find((r) => String(r.id) === String(args.creative_id));
+  const rootId = target ? (target.parent_id || target.id) : args.creative_id;
+  const family = all.filter((r) => String(r.id) === String(rootId) || String(r.parent_id) === String(rootId));
+  if (!family.length) return { result: { error: 'No lineage found for that creative.' }, records: {} };
   return {
     result: cap({
-      period: `${range.start} to ${range.end}`,
-      rows: rows.map((r) => ({
-        id: r.id,
-        role: r.lineage_role,
-        platforms: r.platforms,
-        format: r.format,
-        ctr: round(r.ctr),
-        engagement_rate: round(r.engagement_rate),
-        impressions: Number(r.impressions),
-      })),
+      rows: family.map((r) => ({ id: r.id, role: String(r.id) === String(rootId) ? 'original' : 'repurposed', cqr: r.cqr, hook_rate: r.hook_rate, hold_rate: r.hold_rate, platforms: r.platforms, reach: r.reach })),
     }),
-    records: Object.fromEntries(rows.map((r) => [r.id, r])),
+    records: Object.fromEntries(family.map((r) => [r.id, r])),
   };
 }
 
-// ---------------------------------------------------------------
-// Dispatch
-// ---------------------------------------------------------------
+const handlers = { rank_creatives, get_creative, get_series, compare_creatives, get_lineage };
 
-const handlers = {
-  rank_creatives,
-  get_creative,
-  get_series,
-  compare_creatives,
-  get_lineage,
-};
-
-/**
- * Runs one tool. Never throws to the caller: a tool failure comes back
- * as a result the model can read and recover from, because a thrown
- * error would kill the stream mid-answer.
- */
 async function runTool(name, args, ctx) {
   const fn = handlers[name];
   if (!fn) return { result: { error: `Unknown tool: ${name}` }, records: {} };
-  try {
-    return await fn(args || {}, ctx);
-  } catch (err) {
+  try { return await fn(args || {}, ctx); }
+  catch (err) {
     console.error(`[tool:${name}]`, err.message);
-    return {
-      result: { error: 'That query could not be run. Tell the user you could not fetch it and suggest rephrasing.' },
-      records: {},
-    };
+    return { result: { error: 'That query could not be run. Tell the user you could not fetch it and suggest rephrasing.' }, records: {} };
   }
 }
 
-module.exports = { runTool, handlers, MAX_RESULT_CHARS };
+module.exports = { runTool, handlers, loadMerged, MAX_RESULT_CHARS };
