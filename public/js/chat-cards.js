@@ -160,6 +160,7 @@
     var head = el('div', 'al-expand-head');
     var meta = el('div', 'al-expand-meta');
     meta.appendChild(el('div', 'al-expand-name', rec.name || id));
+    if (rec.short && rec.short !== rec.name) meta.appendChild(el('div', 'al-expand-id', rec.short));
     var sub = el('div', 'al-expand-sub');
     sub.appendChild(cqrBadge(rec.cqr));
     sub.appendChild(platformDots(rec.platforms));
@@ -168,16 +169,38 @@
     head.appendChild(meta);
     panel.appendChild(head);
 
-    if (rec.hook) panel.appendChild(el('div', 'al-expand-hook', rec.hook));
+    if (rec.hook && rec.name !== rec.hook) panel.appendChild(el('div', 'al-expand-hook', rec.hook));
 
     var grid = el('div', 'al-expand-grid');
     ['hook_rate', 'hold_rate', 'reach', 'impressions', 'spend', 'avg_watch_time'].forEach(function (m) {
       var cell = el('div', 'al-expand-cell');
-      cell.appendChild(el('span', 'al-expand-cell-label', metricLabel(m)));
-      cell.appendChild(el('span', 'al-expand-cell-value', formatMetric(m, rec[m])));
+      var q = m === 'hook_rate' ? rec.hook_q : m === 'hold_rate' ? rec.hold_q : '';
+      cell.appendChild(el('span', 'al-expand-cell-label', metricLabel(m) + (q ? ' · ' + q : '')));
+      var val = el('span', 'al-expand-cell-value', formatMetric(m, rec[m]));
+      if (q === 'Strong') val.classList.add('is-strong'); else if (q === 'Weak') val.classList.add('is-weak');
+      cell.appendChild(val);
       grid.appendChild(cell);
     });
     panel.appendChild(grid);
+
+    // Retention strip: 0s / hook / 25 / 50 / 75 / 100
+    if (Array.isArray(rec.retention) && rec.retention.some(function (v) { return v !== null; })) {
+      var ret = el('div', 'al-ret');
+      ret.appendChild(el('span', 'al-ret-label', 'Retention'));
+      var strip = el('div', 'al-ret-strip');
+      var labels = ['0s', 'hook', '25%', '50%', '75%', '100%'];
+      rec.retention.forEach(function (v, i) {
+        var col = el('div', 'al-ret-col');
+        var bar = el('div', 'al-ret-bar');
+        bar.style.height = (v === null ? 0 : Math.max(2, v)) + '%';
+        col.appendChild(bar);
+        col.appendChild(el('span', 'al-ret-val', v === null ? '-' : v + '%'));
+        col.appendChild(el('span', 'al-ret-key', labels[i]));
+        strip.appendChild(col);
+      });
+      ret.appendChild(strip);
+      panel.appendChild(ret);
+    }
 
     if (rec.per_platform && Object.keys(rec.per_platform).length > 1) {
       var plats = el('div', 'al-expand-platforms');
@@ -193,12 +216,31 @@
       panel.appendChild(plats);
     }
 
-    if (rec.verdict) {
-      var v = el('div', 'al-expand-verdict');
-      var b = el('b', null, 'Insights verdict: ');
-      v.appendChild(b);
-      v.appendChild(document.createTextNode(rec.verdict + (rec.action ? ' Action: ' + rec.action : '')));
+    if (rec.verdict || rec.working || rec.not_working || rec.action) {
+      var v = el('div', 'al-expand-verdict clamped');
+      var body = el('div', 'al-expand-verdict-body');
+      var row = function (label, text) {
+        if (!text) return;
+        var pdiv = el('p');
+        pdiv.appendChild(el('b', null, label + ' '));
+        pdiv.appendChild(document.createTextNode(text));
+        body.appendChild(pdiv);
+      };
+      row('Verdict:', rec.verdict);
+      row('Working:', rec.working);
+      row('Not working:', rec.not_working);
+      row('Action:', rec.action ? rec.action + (rec.priority ? ' (' + rec.priority + ')' : '') : '');
+      v.appendChild(body);
+      var more = el('button', 'al-more', 'More');
+      more.type = 'button';
+      more.addEventListener('click', function () {
+        var open = v.classList.toggle('clamped');
+        more.textContent = open ? 'More' : 'Less';
+      });
+      v.appendChild(more);
       panel.appendChild(v);
+      // Only show the toggle if content actually overflows.
+      setTimeout(function () { if (body.scrollHeight <= body.clientHeight + 2) more.hidden = true; }, 0);
     }
 
     if (rec.permalink) {
@@ -313,16 +355,19 @@
     var card = el('div', 'al-card al-cohort');
     var parts = String(marker.key).split(':'), kind = parts[0], value = parts.slice(1).join(':');
     var title = kind === 'platform' ? ((PLATFORMS[value] && PLATFORMS[value].label) || value) : kind === 'format' ? prettyFormat(value) : value;
+    if (kind === 'type') title = value === 'BrandSay' ? 'Brand Say' : value === 'OthersSay' ? 'Others Say' : value;
     var head = el('div', 'al-cohort-head');
     if (kind === 'platform') head.appendChild(platformDots([value]));
     head.appendChild(el('span', 'al-cohort-title', title));
     card.appendChild(head);
-    var cohort = store.cohorts && store.cohorts[marker.key];
+    var cohort = store.get('cohort:' + marker.key);
     if (!cohort) { card.appendChild(el('div', 'al-expand-empty', 'Summary not available.')); return card; }
+    var sub = el('div', 'al-cohort-sub', cohort.n + ' creatives · ' + cohort.active + ' active · ' + cohort.good + ' Good / ' + cohort.avg + ' Avg / ' + cohort.poor + ' Poor');
+    card.appendChild(sub);
     var grid = el('div', 'al-cohort-grid');
-    ['hook_rate', 'hold_rate', 'reach'].forEach(function (m) {
+    ['hook_rate', 'hold_rate', 'spend'].forEach(function (m) {
       var cell = el('div', 'al-expand-cell');
-      cell.appendChild(el('span', 'al-expand-cell-label', metricLabel(m)));
+      cell.appendChild(el('span', 'al-expand-cell-label', m === 'spend' ? 'Spend' : 'Avg ' + metricLabel(m).toLowerCase()));
       cell.appendChild(el('span', 'al-expand-cell-value', formatMetric(m, cohort[m])));
       grid.appendChild(cell);
     });
