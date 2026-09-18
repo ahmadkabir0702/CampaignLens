@@ -20,6 +20,7 @@
     "ioredis": "^5.4.1",
     "pg": "^8.11.5",
     "youtube-dl-exec": "^3.0.12"
+    "@anthropic-ai/sdk": "^0.65.0"
   },
   "engines": {
     "node": ">=18"
