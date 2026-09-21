@@ -71,7 +71,7 @@ app.use(requireAuth);
 const COORD_ROLE = 'influencer_coordinator';
 const COORD_API = new Set([
   '/api/brands', '/api/switch-brand',
-  '/api/others-say-pending', '/api/others-say-stats', '/api/add-creative',
+  '/api/others-say-pending', '/api/add-creative',
   '/api/campaigns', '/api/check-links',
 ]);
 // Deny by default: a coordinator may reach their own page, the assets it

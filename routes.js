@@ -736,26 +736,32 @@ app.get('/api/brands', async (req, res) => {
   app.get('/api/others-say-pending', async (req, res) => {
     try {
       const brand = resolveBrand(req);
+      // Everything the coordinator page needs to show sync state per platform:
+      // the numbers, which of them a person typed, and any open sync error so
+      // the coordinator can see their own link is broken.
       const { rows } = await query(
-        `select c.creative_id, c.campaign, c.creator_profile, c.duration_s,
-                c.ig_link, c.fb_link, c.tt_link,
-                c.date, c.created_at, c.format, c.content_hook,
-                c.created_at + interval '48 hours' as deadline,
+        `select c.creative_id, c.campaign, c.creator_profile, c.creator_handle,
+                c.duration_s, c.ig_link, c.fb_link, c.tt_link,
+                c.date, c.posted_at, c.created_at, c.format, c.content_hook,
+                c.tracking_mode,
                 round(extract(epoch from (now() - c.created_at)) / 3600, 1) as hours_since_upload,
-                coalesce(
-                  json_agg(json_build_object(
+                coalesce((
+                  select json_agg(json_build_object(
                     'platform', o.platform, 'views', o.views, 'likes', o.likes,
                     'comments', o.comments, 'shares', o.shares, 'saves', o.saves,
-                    'avg_watch_time', o.avg_watch_time
-                  ) order by o.platform) filter (where o.platform is not null),
-                  '[]'
-                ) as stats
+                    'avg_watch_time', o.avg_watch_time, 'reach', o.reach
+                  ) order by o.platform)
+                  from organic_perf o where o.creative_id = c.creative_id
+                ), '[]') as stats,
+                coalesce((
+                  select json_agg(json_build_object(
+                    'platform', e.platform, 'error', e.error,
+                    'occurrences', e.occurrences, 'last_seen', e.last_seen))
+                  from sync_errors e
+                  where e.creative_id = c.creative_id and e.resolved_at is null
+                ), '[]') as errors
            from creatives c
-           left join organic_perf o on o.creative_id = c.creative_id
           where c.brand_id = $1 and c.type = 'Others Say'
-          group by c.creative_id, c.campaign, c.creator_profile, c.duration_s,
-                   c.ig_link, c.fb_link, c.tt_link,
-                   c.date, c.created_at, c.format, c.content_hook
           order by c.created_at desc`,
         [brand]
       );
@@ -765,58 +771,6 @@ app.get('/api/brands', async (req, res) => {
     }
   });
 
-  app.post('/api/others-say-stats', async (req, res) => {
-    try {
-      const brand = resolveBrand(req);
-      const { creative_id, platform, views, likes, comments, shares, saves, avg_watch_time } = req.body;
-
-      if (!['ig', 'fb', 'tt'].includes(platform)) {
-        return res.status(400).json({ error: "platform must be 'ig', 'fb' or 'tt'" });
-      }
-
-      const { rows } = await query(
-        `select duration_s from creatives
-          where creative_id = $1 and brand_id = $2 and type = 'Others Say'`,
-        [creative_id, brand]
-      );
-      if (!rows.length) return res.status(404).json({ error: 'Others Say creative not found for this brand' });
-
-      const num = v => (v === '' || v === null || v === undefined ? null : Number(v));
-      const watch = num(avg_watch_time);
-
-      // Guard the commonest hand-entry mistake: milliseconds pasted from
-      // an API export instead of seconds off Business Suite. The database
-      // CHECK also blocks it, but a clear message here beats a 500.
-      const dur = rows[0].duration_s;
-      if (watch !== null && dur && watch > dur * 5) {
-        return res.status(400).json({
-          error: `Average watch time of ${watch}s is implausible for a ${dur}s video. Enter SECONDS, not milliseconds.`
-        });
-      }
-
-      const l = num(likes) || 0, c = num(comments) || 0,
-            s = num(shares) || 0, sv = num(saves) || 0;
-
-      await query(
-        `insert into organic_perf
-           (creative_id, platform, views, likes, comments, shares, saves,
-            total_interactions, avg_watch_time)
-         values ($1,$2,$3,$4,$5,$6,$7,$8,$9)
-         on conflict (creative_id, platform) do update set
-           views = excluded.views, likes = excluded.likes,
-           comments = excluded.comments, shares = excluded.shares,
-           saves = excluded.saves,
-           total_interactions = excluded.total_interactions,
-           avg_watch_time = excluded.avg_watch_time`,
-        [creative_id, platform, num(views), l, c, s, sv, l + c + s + sv, watch]
-      );
-
-      res.json({ success: true });
-    } catch (err) {
-      console.error('[others-say-stats]', err.message);
-      res.status(500).json({ error: err.message });
-    }
-  });
 
   // -------------------------------------------------------------------
   //  TEMPORARY manual-upload tool. Takes a raw MP4 body, runs it through

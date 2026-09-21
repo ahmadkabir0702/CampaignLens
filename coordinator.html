@@ -50,13 +50,19 @@
   .badge.pending { background: var(--info-bg); color: var(--info); }
   .badge.soon { background: var(--warn-bg); color: var(--warn); }
   .badge.overdue { background: var(--bad-bg); color: var(--bad); }
+  .badge.problem { background: var(--bad-bg); color: var(--bad); }
+  .badge.syncing { background: var(--info-bg); color: var(--info); }
+  .plat.err { background: var(--bad-bg); color: var(--bad); border-color: #F0C4C1; }
+  .plat.wait { color: var(--ink-300); }
+  .sync-err { margin: 6px 0 0; padding: 12px 14px; background: var(--bad-bg); border: 1px solid #F0C4C1;
+              border-radius: 8px; color: var(--bad); font-size: 13px; line-height: 1.45; }
+  .sync-err code { font-size: 12px; word-break: break-word; }
+
   .plats { display: flex; gap: 6px; flex-wrap: wrap; }
   .plat { font-size: 11px; padding: 2px 7px; border-radius: 4px; background: var(--bg); color: var(--ink-700); border: 1px solid var(--line); }
   .plat.has { background: var(--good-bg); color: var(--good); border-color: #C8E6D3; }
   .empty { color: var(--ink-500); padding: 24px; text-align: center; }
   /* stats modal */
-  .overlay { position: fixed; inset: 0; background: rgba(26,26,79,.45); display: none; align-items: center; justify-content: center; padding: 20px; z-index: 50; }
-  .overlay.show { display: flex; }
   .modal { background: #fff; border-radius: 12px; width: min(860px, 100%); max-height: 92vh; overflow: auto; padding: 22px; }
   .modal h3 { margin: 0 0 4px; font-size: 16px; }
   .tabs { display: flex; gap: 6px; margin: 14px 0; }
@@ -95,13 +101,15 @@
   .rv-warn { margin-top: 10px; font-size: 12px; color: var(--warn); }
   .stats-grid { display: grid; grid-template-columns: repeat(3, 1fr); gap: 12px; }
   @media (max-width: 640px) { .stats-grid { grid-template-columns: 1fr 1fr; } }
+  .plat-err { display: none; margin: -2px 0 4px 96px; font-size: 12px; line-height: 1.4; color: #A32040; }
+  .plat-row input.bad, .plat-row input.bad:focus { border-color: #A32040; outline-color: #A32040; }
 </style>
 </head>
 <body>
 
 <header>
   <div>
-    <h1>Influencer Stats</h1>
+    <h1>Influencer content</h1>
     <div class="who" id="who"></div>
   </div>
   <div style="display:flex;gap:12px;align-items:center">
@@ -112,7 +120,6 @@
 
 <main>
   <div class="banner bad" id="overdueBanner"></div>
-  <div class="banner warn" id="soonBanner"></div>
 
   <section class="card">
     <h2>Add influencer content</h2>
@@ -124,24 +131,29 @@
         <input type="hidden" id="f_creator_id">
       </div>
       <div><label>Campaign</label><select id="f_campaign"><option value="" disabled selected>Select campaign</option></select></div>
-      <div><label>Date posted</label><input id="f_date" type="date"></div>
     </div>
     <div class="plats-form">
       <div class="plat-row">
         <label class="tgl"><input type="checkbox" id="f_ig_on" onchange="platToggle('ig')"><span class="tgl-track"></span></label>
         <div class="plat-name">Instagram</div>
-        <input id="f_ig" placeholder="https://www.instagram.com/reel/…" disabled>
+        <input id="f_ig" placeholder="https://www.instagram.com/reel/…" disabled
+               onblur="checkOne('ig')" oninput="setErr('ig', '')">
       </div>
+      <div class="plat-err" id="f_ig_err"></div>
       <div class="plat-row">
         <label class="tgl"><input type="checkbox" id="f_fb_on" onchange="platToggle('fb')"><span class="tgl-track"></span></label>
         <div class="plat-name">Facebook</div>
-        <input id="f_fb" placeholder="https://www.facebook.com/…" disabled>
+        <input id="f_fb" placeholder="https://www.facebook.com/…" disabled
+               onblur="checkOne('fb')" oninput="setErr('fb', '')">
       </div>
+      <div class="plat-err" id="f_fb_err"></div>
       <div class="plat-row">
         <label class="tgl"><input type="checkbox" id="f_tt_on" onchange="platToggle('tt')"><span class="tgl-track"></span></label>
         <div class="plat-name">TikTok</div>
-        <input id="f_tt" placeholder="https://www.tiktok.com/@…/video/…" disabled>
+        <input id="f_tt" placeholder="TikTok video link" disabled
+               onblur="checkOne('tt')" oninput="setErr('tt', '')">
       </div>
+      <div class="plat-err" id="f_tt_err"></div>
       <div class="sub">Turn on every platform this content went live on. A platform left off is recorded as not used.</div>
     </div>
     <div id="review" style="display:none"></div>
@@ -158,32 +170,15 @@
   </section>
 </main>
 
-<div class="overlay" id="overlay">
-  <div class="modal">
-    <h3 id="mTitle"></h3>
-    <div class="sub" id="mSub"></div>
-    <div class="tabs" id="tabs"></div>
-    <div class="stats-grid">
-      <div><label>Views</label><input id="s_views" type="number" min="0" inputmode="numeric"></div>
-      <div><label>Likes</label><input id="s_likes" type="number" min="0" inputmode="numeric"></div>
-      <div><label>Comments</label><input id="s_comments" type="number" min="0" inputmode="numeric"></div>
-      <div><label>Shares</label><input id="s_shares" type="number" min="0" inputmode="numeric"></div>
-      <div><label>Saves</label><input id="s_saves" type="number" min="0" inputmode="numeric"></div>
-      <div><label>Avg watch time (seconds)</label><input id="s_watch" type="number" min="0" step="0.1" inputmode="decimal"></div>
-    </div>
-    <div class="row">
-      <button class="primary" id="saveBtn">Save</button>
-      <button id="closeBtn">Close</button>
-      <span class="msg" id="saveMsg"></span>
-    </div>
-  </div>
-</div>
-
+<script src="/js/links.js"></script>
 <script>
 const $ = id => document.getElementById(id);
 const PLAT = { ig: 'Instagram', fb: 'Facebook', tt: 'TikTok' };
-const SOON_AT = 36, DUE_AT = 48;
-let CREATIVES = [], CURRENT = null, CUR_PLAT = 'ig', BRAND = null;
+// After this long with no data and no logged error, something is wrong even
+// if the sync has not said so. First sync normally lands within 30 minutes;
+// Instagram posts still being classified can take about an hour.
+const PROBLEM_AFTER_H = 6;
+let CREATIVES = [], BRAND = null;
 
 // ── boot ──────────────────────────────────────────────────────────────────
 (async function boot() {
@@ -314,16 +309,34 @@ $('f_creator').addEventListener('keydown', e => {
 });
 
 // ── list ──────────────────────────────────────────────────────────────────
+// State of one platform on one creative.
+//   synced   the sync has written numbers for it
+//   error    no numbers, and the sync logged a failure
+//   waiting  no numbers, nothing logged yet
+function platState(c, p) {
+  const st = (c.stats || []).find(x => x.platform === p);
+  if (st && (st.views != null || st.likes != null || st.comments != null)) return 'synced';
+  if ((c.errors || []).some(e => e.platform === p)) return 'error';
+  return 'waiting';
+}
+
+function linksOf(c) { return ['ig', 'fb', 'tt'].filter(p => c[p + '_link']); }
+
 function status(c) {
-  const has = (c.stats || []).length > 0;
+  const links = linksOf(c);
+  if (!links.length) return { k: 'problem', label: 'No links' };
   const h = Number(c.hours_since_upload) || 0;
-  if (has) return { k: 'done', label: 'Done' };
-  if (h >= DUE_AT) return { k: 'overdue', label: `Overdue by ${fmtH(h - DUE_AT)}` };
-  if (h >= SOON_AT) return { k: 'soon', label: `Due in ${fmtH(DUE_AT - h)}` };
-  return { k: 'pending', label: `Due in ${fmtH(DUE_AT - h)}` };
+  const states = links.map(p => platState(c, p));
+  if (states.includes('error')) return { k: 'problem', label: 'Not syncing' };
+  if (states.includes('waiting')) {
+    return h >= PROBLEM_AFTER_H
+      ? { k: 'problem', label: 'Not syncing' }
+      : { k: 'syncing', label: 'Syncing' };
+  }
+  return { k: 'done', label: 'Synced' };
 }
 function fmtH(h) { return h < 1 ? `${Math.round(h * 60)}m` : `${Math.round(h)}h`; }
-const ORDER = { overdue: 0, soon: 1, pending: 2, done: 3 };
+const ORDER = { problem: 0, syncing: 1, done: 2 };
 
 async function load() {
   const r = await fetch('/api/others-say-pending?brand=' + encodeURIComponent(BRAND));
@@ -332,28 +345,34 @@ async function load() {
   CREATIVES.forEach(c => c._s = status(c));
   CREATIVES.sort((a, b) => ORDER[a._s.k] - ORDER[b._s.k] || new Date(b.created_at) - new Date(a.created_at));
 
-  const overdue = CREATIVES.filter(c => c._s.k === 'overdue').length;
-  const soon = CREATIVES.filter(c => c._s.k === 'soon').length;
-  $('overdueBanner').className = 'banner bad' + (overdue ? ' show' : '');
-  $('overdueBanner').textContent = overdue ? `${overdue} piece${overdue > 1 ? 's' : ''} of content past the 48-hour deadline with no stats entered. These are at the top of the list.` : '';
-  $('soonBanner').className = 'banner warn' + (soon && !overdue ? ' show' : '');
-  $('soonBanner').textContent = soon ? `${soon} piece${soon > 1 ? 's' : ''} due within the next ${DUE_AT - SOON_AT} hours.` : '';
+  const problems = CREATIVES.filter(c => c._s.k === 'problem').length;
+  $('overdueBanner').className = 'banner bad' + (problems ? ' show' : '');
+  $('overdueBanner').textContent = problems
+    ? `${problems} piece${problems > 1 ? 's' : ''} of content ${problems > 1 ? 'are' : 'is'} not syncing. The reason is shown on each. Usually the post was deleted, made private, or the link is wrong.`
+    : '';
   $('countSub').textContent = CREATIVES.length ? `· ${CREATIVES.length} total, ${CREATIVES.filter(c => c._s.k === 'done').length} done` : '';
 
   if (!CREATIVES.length) { $('list').innerHTML = '<div class="empty">Nothing yet. Add content above.</div>'; return; }
   $('list').innerHTML = `<table><thead><tr>
-      <th>Creative</th><th>Creator</th><th>Posted</th><th>Uploaded</th><th>Status</th><th>Stats</th><th></th>
+      <th>Creative</th><th>Creator</th><th>Posted</th><th>Uploaded</th><th>Status</th><th>Sync</th>
     </tr></thead><tbody>` + CREATIVES.map(c => {
-      const has = new Set((c.stats || []).map(s => s.platform));
-      const links = ['ig', 'fb', 'tt'].filter(p => c[p + '_link']);
+      const links = linksOf(c);
       return `<tr>
         <td><div class="id">${esc(c.creative_id)}</div><div class="sub">${esc(c.campaign || '')}${c.format ? ' · ' + esc(c.format.replace('_', ' ')) : ''}</div></td>
-        <td>${esc(c.creator_profile || '—')}</td>
+        <td>${esc(c.creator_handle ? '@' + c.creator_handle : (c.creator_profile || '—'))}</td>
         <td>${c.date ? fmtD(c.date) : '—'}</td>
         <td>${fmtDT(c.created_at)}</td>
         <td><span class="badge ${c._s.k}">${c._s.label}</span></td>
-        <td><div class="plats">${links.map(p => `<span class="plat ${has.has(p) ? 'has' : ''}">${PLAT[p]}${has.has(p) ? ' ✓' : ''}</span>`).join('') || '<span class="sub">no links</span>'}</div></td>
-        <td><button onclick="openStats('${esc(c.creative_id)}')">${has.size ? 'Edit stats' : 'Enter stats'}</button></td>
+        <td><div class="plats">${links.map(p => {
+          const st = platState(c, p);
+          const cls = st === 'synced' ? 'has' : st === 'error' ? 'err' : 'wait';
+          const mark = st === 'synced' ? ' ✓' : st === 'error' ? ' failed' : '';
+          return `<span class="plat ${cls}">${PLAT[p]}${mark}</span>`;
+        }).join('') || '<span class="sub">no links</span>'}</div>${
+          c._s.k === 'problem' && (c.errors || []).length
+            ? (c.errors || []).map(e => `<div class="sync-err"><b>${PLAT[e.platform] || e.platform}:</b> <code>${esc(e.error)}</code></div>`).join('')
+            : ''}</td>
+
       </tr>`;
     }).join('') + '</tbody></table>';
 }
@@ -393,7 +412,6 @@ function readForm() {
     creator: $('f_creator').value.trim(),
     creatorId: $('f_creator_id').value || null,
     campaign: $('f_campaign').value,
-    date: $('f_date').value || null,
     plats,
   };
 }
@@ -401,14 +419,45 @@ function readForm() {
 function validate(f) {
   if (!f.campaign) return 'Select a campaign.';
   if (!f.creatorId) return 'Pick a creator from the list. If they are missing, they need assigning to this campaign first.';
-  if (!f.date) return 'Date posted is required.';
   if (!PLATS.some(p => f.plats[p.k].on)) return 'Turn on at least one platform. Content with no links cannot have stats.';
+  let bad = false;
   for (const p of PLATS) {
     const v = f.plats[p.k];
-    if (v.on && !v.link) return `${p.label} is on but has no link. Add the link or turn it off.`;
-    if (v.on && !/^https?:\/\//i.test(v.link)) return `${p.label} link should start with http:// or https://`;
+    if (!v.on) { setErr(p.k, ''); continue; }
+    if (!v.link) { setErr(p.k, 'Add the link or turn this platform off.'); bad = true; continue; }
+    const r = window.CLLinks.validate(p.k, v.link);
+    if (!r.ok && !r.needsResolve) { setErr(p.k, r.error); bad = true; }
+    else setErr(p.k, '');
   }
-  return null;
+  return bad ? 'Fix the highlighted links.' : null;
+}
+
+function setErr(k, msg) {
+  const el = $('f_' + k + '_err'), inp = $('f_' + k);
+  if (el) { el.textContent = msg || ''; el.style.display = msg ? 'block' : 'none'; }
+  if (inp) inp.classList.toggle('bad', !!msg);
+}
+
+function checkOne(k) {
+  const box = $('f_' + k + '_on'), inp = $('f_' + k);
+  if (!box || !box.checked || !inp || !inp.value.trim()) return;
+  const r = window.CLLinks.validate(k, inp.value);
+  setErr(k, (!r.ok && !r.needsResolve) ? r.error : '');
+}
+
+async function serverCheck(f) {
+  const body = {};
+  PLATS.forEach(p => { if (f.plats[p.k].on) body[p.k] = f.plats[p.k].link; });
+  const r = await fetch('/api/check-links', {
+    method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
+  const data = await r.json();
+  if (!r.ok) throw new Error(data.error || 'HTTP ' + r.status);
+  for (const p of PLATS) {
+    const res = data.fields && data.fields[p.k];
+    setErr(p.k, res && !res.ok ? res.error : '');
+    if (res && res.ok && res.url) $('f_' + p.k).value = res.url;
+  }
+  return !!data.ok;
 }
 
 function renderReview(f) {
@@ -417,7 +466,6 @@ function renderReview(f) {
   return `<div class="rv"><h4>Check before submitting</h4>
     ${line('Creator', f.creator)}
     ${line('Campaign', f.campaign)}
-    ${line('Date posted', fmtD(f.date))}
     ${PLATS.map(p => line(p.label, f.plats[p.k].on ? f.plats[p.k].link : 'Not used', !f.plats[p.k].on)).join('')}
     ${off ? `<div class="rv-warn">${off} platform${off > 1 ? 's' : ''} recorded as not used. Go back if that is wrong.</div>` : ''}
     <div class="rv-warn">Stats for this content are due within 48 hours of submitting.</div>
@@ -441,6 +489,16 @@ $('addBtn').onclick = async () => {
   if (!REVIEWED) {
     const err = validate(f);
     if (err) { m.className = 'msg err'; m.textContent = err; return; }
+    $('addBtn').disabled = true; m.textContent = 'Checking links…';
+    let linksOk = false;
+    try { linksOk = await serverCheck(f); }
+    catch (e) { m.className = 'msg err'; m.textContent = 'Could not check the links: ' + e.message; }
+    finally { $('addBtn').disabled = false; }
+    if (!linksOk) {
+      if (m.className !== 'msg err') { m.className = 'msg err'; m.textContent = 'Fix the highlighted links.'; }
+      return;
+    }
+    Object.assign(f, readForm());
     $('review').innerHTML = renderReview(f);
     $('review').style.display = 'block';
     document.querySelectorAll('.grid, .plats-form').forEach(el => el.style.display = 'none');
@@ -454,7 +512,7 @@ $('addBtn').onclick = async () => {
   const body = {
     brand_id: BRAND, type: 'Others Say',
     creator: f.creator, creator_id: f.creatorId,
-    campaign: f.campaign, date: f.date,
+    campaign: f.campaign,
     ig: f.plats.ig.on ? f.plats.ig.link : null,
     fb: f.plats.fb.on ? f.plats.fb.link : null,
     tt: f.plats.tt.on ? f.plats.tt.link : null,
@@ -463,12 +521,18 @@ $('addBtn').onclick = async () => {
   try {
     const r = await fetch('/api/add-creative', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
     const j = await r.json();
+    if (j.fieldErrors) {
+      setEditMode();
+      Object.entries(j.fieldErrors).forEach(([k, msg]) => setErr(k, msg));
+      throw new Error('Fix the highlighted links.');
+    }
     if (!r.ok || j.error) throw new Error(j.error || 'HTTP ' + r.status);
     m.className = 'msg ok';
     m.textContent = j.queued
-      ? 'Queued. The video is being analysed; it will appear below in a few minutes. Stats are due within 48 hours of now.'
-      : 'Added. Stats are due within 48 hours of now.';
-    ['f_creator', 'f_creator_id', 'f_date', 'f_ig', 'f_fb', 'f_tt'].forEach(id => $(id).value = '');
+      ? 'Queued. The video is being analysed and will appear below in a few minutes. Numbers start syncing on their own within about 30 minutes.'
+      : 'Added. Numbers start syncing on their own within about 30 minutes.';
+    ['f_creator', 'f_creator_id', 'f_ig', 'f_fb', 'f_tt'].forEach(id => $(id).value = '');
+    PLATS.forEach(p => setErr(p.k, ''));
     $('f_campaign').selectedIndex = 0;
     loadCreators();
     PLATS.forEach(p => { $('f_' + p.k + '_on').checked = false; });
@@ -480,46 +544,6 @@ $('addBtn').onclick = async () => {
 };
 
 // ── stats modal ───────────────────────────────────────────────────────────
-function openStats(id) {
-  CURRENT = CREATIVES.find(c => c.creative_id === id); if (!CURRENT) return;
-  $('mTitle').textContent = CURRENT.creative_id;
-  $('mSub').textContent = `${CURRENT.creator_profile || ''} · ${CURRENT.campaign || ''} · ${CURRENT._s.label}`;
-  const links = ['ig', 'fb', 'tt'].filter(p => CURRENT[p + '_link']);
-  CUR_PLAT = links[0] || 'ig';
-  $('tabs').innerHTML = ['ig', 'fb', 'tt'].map(p => {
-    const on = p === CUR_PLAT, off = !CURRENT[p + '_link'];
-    return `<div class="tab ${on ? 'on' : ''} ${off ? 'off' : ''}" title="${off ? 'No ' + PLAT[p] + ' link on this creative' : ''}" onclick="${off ? '' : `switchPlat('${p}')`}">${PLAT[p]}</div>`;
-  }).join('');
-  fillForm(); $('saveMsg').textContent = ''; $('overlay').classList.add('show');
-}
-function switchPlat(p) { CUR_PLAT = p; [...$('tabs').children].forEach(t => t.classList.toggle('on', t.textContent === PLAT[p])); fillForm(); $('saveMsg').textContent = ''; }
-function fillForm() {
-  const s = (CURRENT.stats || []).find(x => x.platform === CUR_PLAT) || {};
-  $('s_views').value = s.views ?? ''; $('s_likes').value = s.likes ?? ''; $('s_comments').value = s.comments ?? '';
-  $('s_shares').value = s.shares ?? ''; $('s_saves').value = s.saves ?? ''; $('s_watch').value = s.avg_watch_time ?? '';
-}
-$('closeBtn').onclick = () => $('overlay').classList.remove('show');
-$('overlay').onclick = e => { if (e.target === $('overlay')) $('overlay').classList.remove('show'); };
-
-$('saveBtn').onclick = async () => {
-  const body = {
-    brand_id: BRAND, creative_id: CURRENT.creative_id, platform: CUR_PLAT,
-    views: $('s_views').value, likes: $('s_likes').value, comments: $('s_comments').value,
-    shares: $('s_shares').value, saves: $('s_saves').value, avg_watch_time: $('s_watch').value,
-  };
-  const m = $('saveMsg'); m.className = 'msg';
-  if (body.views === '') { m.className = 'msg err'; m.textContent = 'Views is required.'; return; }
-  $('saveBtn').disabled = true; m.textContent = 'Saving…';
-  try {
-    const r = await fetch('/api/others-say-stats', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
-    const j = await r.json();
-    if (!r.ok || j.error) throw new Error(j.error || 'HTTP ' + r.status);
-    m.className = 'msg ok'; m.textContent = `${PLAT[CUR_PLAT]} saved.`;
-    await load(); CURRENT = CREATIVES.find(c => c.creative_id === CURRENT.creative_id) || CURRENT;
-    $('mSub').textContent = `${CURRENT.creator_profile || ''} · ${CURRENT.campaign || ''} · ${CURRENT._s.label}`;
-  } catch (e) { m.className = 'msg err'; m.textContent = e.message; }
-  finally { $('saveBtn').disabled = false; }
-};
 
 // ── utils ─────────────────────────────────────────────────────────────────
 function esc(s) { return String(s ?? '').replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/"/g, '&quot;'); }
