@@ -1214,7 +1214,22 @@ async function acServerCheck(f) {
     // full one before the user confirms.
     if (res && res.ok && res.url) document.getElementById(`ac-${p.k}`).value = res.url;
   }
+  AC_CONTENT = data.content || null;
   return !!data.ok;
+}
+
+// A warning shown in the review step when the links do not look like the
+// same video. Informational notes (could not compare) are shown quietly.
+function acContentBlock() {
+  const c = AC_CONTENT;
+  if (!c) return '';
+  if (c.verdict === 'different') {
+    return `<div class="rv-content-warn"><b>These links look like different videos.</b> ${escapeHtml(c.warning || '')}
+      <div class="rv-content-sub">Only one of them is analysed, so the creative's description would not match the other's numbers.
+      Go back and check the links, or add it anyway if they really are the same content.</div></div>`;
+  }
+  if (c.note) return `<div class="rv-content-note">${escapeHtml(c.note)}</div>`;
+  return '';
 }
 
 function acRenderReview(f) {
@@ -1249,9 +1264,13 @@ function backToEdit() {
   document.getElementById('ac-back-btn').style.display = 'none';
   document.getElementById('ac-confirm-btn').innerText = 'Review';
   AC_REVIEWED = false;
+  AC_CONTENT = null;
 }
 
 let AC_REVIEWED = false;
+// Result of comparing the links' videos at Review. When they look like
+// different videos the person must confirm before the creative is added.
+let AC_CONTENT = null;
 
 function escapeHtml(s) {
   return String(s ?? '').replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
@@ -1275,7 +1294,7 @@ async function submitCreative(e) {
     // The check may have rewritten links to their full form.
     Object.assign(f, acReadForm());
     const rv = document.getElementById('ac-review');
-    rv.innerHTML = acRenderReview(f);
+    rv.innerHTML = acRenderReview(f) + acContentBlock();
     rv.style.display = 'block';
     ['ac-campaign', 'ac-type', 'ac-repurposed', 'ac-original-id'].forEach(id => {
       const el = document.getElementById(id);
@@ -1283,7 +1302,8 @@ async function submitCreative(e) {
     });
     document.querySelectorAll('#addCreativeForm .plat-rows').forEach(el => el.style.display = 'none');
     document.getElementById('ac-back-btn').style.display = '';
-    document.getElementById('ac-confirm-btn').innerText = 'Confirm and add';
+    document.getElementById('ac-confirm-btn').innerText =
+      (AC_CONTENT && AC_CONTENT.verdict === 'different') ? 'Add anyway' : 'Confirm and add';
     AC_REVIEWED = true;
     return;
   }
@@ -1325,7 +1345,8 @@ async function submitCreative(e) {
     const res = await fetch('/api/add-creative', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ campaign, type, ig, fb, tt, repurposed, originalId, description, brand: BRAND_NAME }),
+      body: JSON.stringify({ campaign, type, ig, fb, tt, repurposed, originalId, description, brand: BRAND_NAME,
+        content_confirmed: !!(AC_CONTENT && AC_CONTENT.verdict === 'different') }),
       signal: AbortSignal.timeout(120000)
     });
     clearTimeout(t1); clearTimeout(t2); clearTimeout(t3); clearTimeout(t4);
@@ -1336,6 +1357,13 @@ async function submitCreative(e) {
       // polling theatre — the analysis takes minutes and the result arrives
       // by email, so say what happened and let the user get on with it.
       showQueuedConfirmation(result);
+    } else if (result.contentWarning) {
+      progressContainer.style.display = 'none';
+      resetSubmitUI(0);
+      AC_CONTENT = result.content || { verdict: 'different', warning: result.contentWarning };
+      const rv = document.getElementById('ac-review');
+      rv.innerHTML = acRenderReview(acReadForm()) + acContentBlock();
+      document.getElementById('ac-confirm-btn').innerText = 'Add anyway';
     } else if (result.fieldErrors) {
       // The server's link check disagreed with the browser, most likely a
       // duplicate added by someone else a moment ago. Show it where it belongs.
@@ -1500,6 +1528,7 @@ function resetAddCreativeForm() {
   const conf = document.getElementById('ac-confirm-btn');
   if (conf) conf.innerText = 'Review';
   AC_REVIEWED = false;
+  AC_CONTENT = null;
   document.getElementById('addCreativeModal').style.pointerEvents = 'auto';
 }
 
