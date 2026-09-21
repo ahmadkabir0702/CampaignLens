@@ -18,7 +18,8 @@ const { getPool } = require('./db');
 
 const client = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY });
 
-const WRITER_MODEL = 'claude-sonnet-4-6';
+// Current Sonnet. Same listed price as 4.6. Override with ASK_LENS_WRITER_MODEL.
+const WRITER_MODEL = process.env.ASK_LENS_WRITER_MODEL || 'claude-sonnet-5';
 const MIN_EVIDENCE = 5;   // never write a finding on fewer creatives than this
 
 /**
@@ -61,7 +62,7 @@ const HYPOTHESES = [
     question: 'Is spend concentrated on the creatives that actually perform?',
     evidence: (an) => {
       const total = an.spendByCqr.Good + an.spendByCqr.Average + an.spendByCqr.Poor;
-      if (!total) return null;
+      if (!total || an.totals.creatives < MIN_EVIDENCE) return null;
       return {
         goodShare: Math.round(an.spendByCqr.Good / total * 100),
         poorShare: Math.round(an.spendByCqr.Poor / total * 100),
@@ -105,15 +106,67 @@ const HYPOTHESES = [
   {
     id: 'action',
     question: 'What is the single highest-value change the team could make next?',
-    evidence: (an) => ({
-      discriminating: an.discriminating.slice(0, 3),
-      anomalies: an.anomalies,
-      wasteSpend: an.wasteSpend, wasteCount: an.waste.length,
-      unboosted: an.validatedUnboosted.length,
-      topActions: an.top.filter((c) => c.action).slice(0, 5).map((c) => ({ id: c.id, action: c.action, priority: c.priority })),
-    }),
+    evidence: (an) => {
+      const topActions = an.top.filter((c) => c.action).slice(0, 5).map((c) => ({ id: c.id, action: c.action, priority: c.priority }));
+      const hasSignal = an.discriminating.length || an.anomalies.length || an.waste.length
+        || an.validatedUnboosted.length || topActions.length;
+      if (!hasSignal || an.totals.creatives < MIN_EVIDENCE) return null;
+      return {
+        discriminating: an.discriminating.slice(0, 3),
+        anomalies: an.anomalies.map((a) => ({ kind: a.kind, n: a.n, note: a.note, ...(a.spend ? { spend: a.spend } : {}) })),
+        wasteSpend: an.wasteSpend, wasteCount: an.waste.length,
+        unboosted: an.validatedUnboosted.length,
+        topActions,
+      };
+    },
   },
 ];
+
+
+// ---------------------------------------------------------------
+// Presentation. Evidence is formatted ONCE, here, and the same formatted
+// version goes to the writer, the number check and the verifier. So the only
+// numbers a finding can legitimately contain are ones that appear verbatim in
+// what the writer was shown.
+// ---------------------------------------------------------------
+
+function compact(n) {
+  const v = Number(n);
+  if (!isFinite(v)) return String(n);
+  if (Math.abs(v) >= 1e6) return `${(v / 1e6).toFixed(1)}M`;
+  if (Math.abs(v) >= 1e3) return `${(v / 1e3).toFixed(1)}k`;
+  return String(Math.round(v * 10) / 10);
+}
+
+function formatByKey(key, v) {
+  const k = String(key);
+  if (/spend/i.test(k)) return `${compact(v)} LKR`;
+  if (/(hook_rate|hold_rate|engagement_rate|retention_rate|Hook$|screenpct|productscreenpct)/i.test(k)) return `${Number(v).toFixed(1)}%`;
+  if (/share$/i.test(k)) return `${Math.round(Number(v))}%`;
+  if (/(reach|views|impressions)$/i.test(k)) return compact(v);
+  if (/timetoproduct/i.test(k)) return `${Number(v).toFixed(1)}s`;
+  if (/(spread|cutsper10s)/i.test(k)) return Number(v).toFixed(1);
+  return v; // counts and anything unrecognised stay as they are
+}
+
+function present(value, key = '', parentKey = '') {
+  if (value === null || value === undefined) return value;
+  if (Array.isArray(value)) return value.map((x) => present(x, key, parentKey));
+  if (typeof value === 'object') {
+    const out = {};
+    for (const [k, v] of Object.entries(value)) {
+      if (k === 'ids' || k === 'tooFew') continue; // internal, never cited
+      // Children inherit this key as context: spendByCqr.Good is a spend figure.
+      out[k] = present(v, k, key || parentKey);
+    }
+    return out;
+  }
+  if (typeof value === 'number') {
+    const own = formatByKey(key, value);
+    return own !== value ? own : formatByKey(parentKey, value);
+  }
+  return value;
+}
 
 const WRITER_PROMPT = `You write findings for a creative performance dashboard used by a media team at WPP working on Unilever Sri Lanka brands.
 
@@ -122,7 +175,7 @@ You are given one analytical question and the computed evidence that answers it.
 Write the finding in at most three sentences.
 
 Rules:
-- Use only numbers that appear in the evidence. Never calculate, average, round differently or estimate. If you want to state a number that is not in the evidence, leave it out.
+- Use only numbers that appear in the evidence, copied exactly as written there, units included ("13.8M LKR", "56%", "50.1%"). Never calculate, average, round differently, convert or estimate. If you want a number that is not written in the evidence, leave it out.
 - Lead with what is true, then why it matters. No preamble.
 - Talk about patterns across groups, not individual creatives, unless one creative is the clearest example of the pattern.
 - Where the evidence shows a dimension does not separate performance, say so plainly. A null finding is useful.
@@ -188,13 +241,14 @@ async function generateForBrand(brand, snapshot, opts = {}) {
     try { evidence = h.evidence(an); } catch { evidence = null; }
     if (!evidence) { out.skipped += 1; continue; }   // abstention, before any model call
 
+    const shown = present(evidence);
     try {
-      const body = await writeFinding(h, evidence);
+      const body = await writeFinding(h, shown);
 
-      const pre = numbersReconcile(body, evidence);
+      const pre = numbersReconcile(body, shown);
       let verified = pre.ok, note = pre.ok ? null : `numbers not in evidence: ${pre.bad.join(', ')}`;
       if (verified) {
-        const v = await verifyFinding(body, evidence);
+        const v = await verifyFinding(body, shown);
         verified = !!v.ok; note = v.ok ? null : (v.reason || 'failed verification');
       }
       if (!verified) out.rejected += 1; else out.written += 1;
@@ -206,9 +260,11 @@ async function generateForBrand(brand, snapshot, opts = {}) {
            set body = excluded.body, evidence = excluded.evidence,
                verified = excluded.verified, verify_note = excluded.verify_note,
                generated_at = now()`,
-        [brand, snapshot.version, h.id, body, JSON.stringify(evidence), verified, note]);
+        [brand, snapshot.version, h.id, body, JSON.stringify(shown), verified, note]);
+      if (!verified) (out.reasons = out.reasons || []).push(`${h.id}: ${note}`);
     } catch (err) {
       out.rejected += 1;
+      (out.reasons = out.reasons || []).push(`${h.id}: error ${err.message}`);
       console.error(`[insights] ${brand}/${h.id}:`, err.message);
     }
   }
@@ -220,7 +276,8 @@ async function generateAll(opts = {}) {
   const pool = opts.pool || getPool();
   const { getSnapshot, buildSnapshot } = require('./snapshot');
   const results = [];
-  for (const brand of S.brands) {
+  const brands = opts.brands && opts.brands.length ? opts.brands : S.brands;
+  for (const brand of brands) {
     try {
       const stored = await getSnapshot(brand, 0, { pool });
       // Findings need the analytics object, which the stored row does not carry.
@@ -232,8 +289,15 @@ async function generateAll(opts = {}) {
       console.error(`[insights] ${brand}:`, err.message);
     }
   }
-  if (!opts.quiet) console.table(results);
+  if (!opts.quiet) {
+    console.table(results.map(({ reasons, ...r }) => r));
+    const why = results.filter((r) => r.reasons && r.reasons.length);
+    if (why.length) {
+      console.log('\nRejection reasons:');
+      why.forEach((r) => r.reasons.forEach((x) => console.log(`  ${r.brand} / ${x}`)));
+    }
+  }
   return results;
 }
 
-module.exports = { generateAll, generateForBrand, HYPOTHESES, numbersReconcile };
+module.exports = { generateAll, generateForBrand, HYPOTHESES, numbersReconcile, present };
