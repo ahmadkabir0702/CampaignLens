@@ -171,6 +171,24 @@
 
     if (rec.hook && rec.name !== rec.hook) panel.appendChild(el('div', 'al-expand-hook', rec.hook));
 
+    // What the classifier saw, in plain words: opening hook, purpose, structure.
+    var lab = rec.labels || {};
+    var tags = [
+      lab.hook_device && ['Opening', lab.hook_device],
+      lab.content_intent && ['Purpose', lab.content_intent],
+      lab.narrative_structure && ['Structure', lab.narrative_structure],
+    ].filter(Boolean);
+    if (tags.length) {
+      var tagRow = el('div', 'al-expand-tags');
+      tags.forEach(function (t) {
+        var tag = el('span', 'al-tag');
+        tag.appendChild(el('span', 'al-tag-key', t[0]));
+        tag.appendChild(el('span', 'al-tag-val', t[1]));
+        tagRow.appendChild(tag);
+      });
+      panel.appendChild(tagRow);
+    }
+
     var grid = el('div', 'al-expand-grid');
     ['hook_rate', 'hold_rate', 'reach', 'impressions', 'spend', 'avg_watch_time'].forEach(function (m) {
       var cell = el('div', 'al-expand-cell');
@@ -356,22 +374,27 @@
     var parts = String(marker.key).split(':'), kind = parts[0], value = parts.slice(1).join(':');
     var title = kind === 'platform' ? ((PLATFORMS[value] && PLATFORMS[value].label) || value) : kind === 'format' ? prettyFormat(value) : value;
     if (kind === 'type') title = value === 'BrandSay' ? 'Brand Say' : value === 'OthersSay' ? 'Others Say' : value;
+    var named = store.get('cohort:' + marker.key);
+    if (named && named.name) title = named.name;
     var head = el('div', 'al-cohort-head');
     if (kind === 'platform') head.appendChild(platformDots([value]));
     head.appendChild(el('span', 'al-cohort-title', title));
     card.appendChild(head);
     var cohort = store.get('cohort:' + marker.key);
     if (!cohort) { card.appendChild(el('div', 'al-expand-empty', 'Summary not available.')); return card; }
-    var sub = el('div', 'al-cohort-sub', cohort.n + ' creatives · ' + cohort.active + ' active · ' + cohort.good + ' Good / ' + cohort.avg + ' Avg / ' + cohort.poor + ' Poor');
-    card.appendChild(sub);
-    var grid = el('div', 'al-cohort-grid');
-    ['hook_rate', 'hold_rate', 'spend'].forEach(function (m) {
-      var cell = el('div', 'al-expand-cell');
-      cell.appendChild(el('span', 'al-expand-cell-label', m === 'spend' ? 'Spend' : 'Avg ' + metricLabel(m).toLowerCase()));
-      cell.appendChild(el('span', 'al-expand-cell-value', formatMetric(m, cohort[m])));
-      grid.appendChild(cell);
+    if (cohort.tooFew) { card.appendChild(el('div', 'al-cohort-sub', 'One example only, not enough to compare.')); return card; }
+    // How this group compares with the brand overall, in words.
+    var vs = cohort.vs || {};
+    var row = el('div', 'al-expand-tags');
+    [['CQR', vs.cqr], ['Hook', vs.hook], ['Hold', vs.hold]].forEach(function (t) {
+      if (!t[1] || t[1] === 'unknown') return;
+      var tag = el('span', 'al-tag al-tag-' + t[1]);
+      tag.appendChild(el('span', 'al-tag-key', t[0]));
+      tag.appendChild(el('span', 'al-tag-val', t[1].charAt(0).toUpperCase() + t[1].slice(1)));
+      row.appendChild(tag);
     });
-    card.appendChild(grid);
+    card.appendChild(row);
+    card.appendChild(el('div', 'al-cohort-sub', (cohort.early ? 'Early sign. ' : '') + 'Compared with the brand overall.'));
     return card;
   }
 
