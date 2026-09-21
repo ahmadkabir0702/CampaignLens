@@ -284,7 +284,6 @@
     <div class="modal-box" style="width: 450px;">
        <h3 class="modal-title">Add New Creative</h3>
        <form id="addCreativeForm" onsubmit="submitCreative(event)">
-           <input type="date" id="ac-date" class="modal-input" style="margin-bottom:10px;" required>
            
            <input type="text" id="ac-description" class="modal-input" style="margin-bottom:4px;"
                   maxlength="20" placeholder="Short description (optional) — e.g. Shanudrie 6sec"
@@ -314,16 +313,22 @@
            <div class="plat-rows">
              <div class="plat-row">
                <label class="tgl"><input type="checkbox" id="ac-ig-on" onchange="onPlatToggle('ig')"><span class="tgl-track"></span></label>
-               <input type="text" id="ac-ig" class="modal-input plat-input" placeholder="Instagram link" disabled>
+               <input type="text" id="ac-ig" class="modal-input plat-input" placeholder="Instagram link" disabled
+                      onblur="acCheckOne('ig')" oninput="acClearErr('ig')">
              </div>
+             <div class="plat-err" id="ac-ig-err"></div>
              <div class="plat-row">
                <label class="tgl"><input type="checkbox" id="ac-fb-on" onchange="onPlatToggle('fb')"><span class="tgl-track"></span></label>
-               <input type="text" id="ac-fb" class="modal-input plat-input" placeholder="Facebook link" disabled>
+               <input type="text" id="ac-fb" class="modal-input plat-input" placeholder="Facebook link" disabled
+                      onblur="acCheckOne('fb')" oninput="acClearErr('fb')">
              </div>
+             <div class="plat-err" id="ac-fb-err"></div>
              <div class="plat-row">
                <label class="tgl"><input type="checkbox" id="ac-tt-on" onchange="onPlatToggle('tt')"><span class="tgl-track"></span></label>
-               <input type="text" id="ac-tt" class="modal-input plat-input" placeholder="TikTok link" disabled>
+               <input type="text" id="ac-tt" class="modal-input plat-input" placeholder="TikTok link" disabled
+                      onblur="acCheckOne('tt')" oninput="acClearErr('tt')">
              </div>
+             <div class="plat-err" id="ac-tt-err"></div>
              <div class="plat-hint">Turn on every platform this creative went live on. A platform left off is recorded as not used.</div>
            </div>
 
@@ -622,6 +627,7 @@ function clearFilters(){
 
 window.addEventListener('load', () => setTimeout(syncFilterPills, 400));
 </script>
+  <script src="/js/links.js"></script>
   <script src="/js/dashboard.js"></script>
   <script src="/js/creators.js"></script>
   <script src="/js/kpi-dashboard.js"></script>
