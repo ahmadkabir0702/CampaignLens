@@ -260,3 +260,18 @@ body.al-open { padding-right: var(--al-width); }
 
 /* Inline New chat button for the turn cap */
 .al-inline-btn { margin-top: 8px; }
+
+/* Classified attributes on the expanded card, in plain words. */
+.al-expand-tags { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 10px; }
+.al-tag {
+  display: inline-flex; align-items: baseline; gap: 5px;
+  background: var(--white); border: 1px solid var(--line);
+  border-radius: var(--r-pill); padding: 3px 10px; font-size: 12px;
+}
+.al-tag-key { color: var(--ink-400); }
+.al-tag-val { color: var(--ink-900); font-weight: 500; }
+
+/* Comparison tags on group tiles: stronger, similar, weaker. */
+.al-tag-stronger .al-tag-val { color: var(--pos); }
+.al-tag-weaker .al-tag-val { color: var(--neg); }
+.al-tag-similar .al-tag-val { color: var(--ink-500); }
