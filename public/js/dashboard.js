@@ -1107,24 +1107,23 @@ function syncPlatFields({ clearOff = true } = {}) {
   });
 }
 
-// Mirrors the server's id rule so the field shows what will actually be
-// created. The server still decides, and appends a stamp if the id is taken.
 const DESCRIPTION_MAX = 20;
 function slugForId(s) {
   return String(s || '').toUpperCase().replace(/&/g, 'AND')
     .replace(/[^A-Z0-9]+/g, '').slice(0, DESCRIPTION_MAX);
 }
 
+// Mirrors the server's id rule. The trailing number is allocated on save from
+// a per-brand counter, so it cannot be known here; #### stands in for it.
 function previewCreativeId() {
   const el = document.getElementById('ac-id-preview');
   if (!el) return;
   const type = (document.getElementById('ac-type') || {}).value;
   const desc = (document.getElementById('ac-description') || {}).value;
   const slug = slugForId(desc);
-  if (!slug) { el.innerHTML = 'No description: the ID will be auto-generated.'; return; }
   const code = type === 'Others Say' ? 'OS' : 'BS';
   const brand = (typeof BRAND_NAME !== 'undefined' && BRAND_NAME ? BRAND_NAME : 'BRAND').toUpperCase();
-  el.innerHTML = `ID will be <b>${brand}_${code}_${slug}</b>`;
+  el.innerHTML = `ID will be <b>${brand}_${code}_${slug}####</b>, with the number assigned on save.`;
 }
 
 function onPlatToggle(k) {
