@@ -1147,7 +1147,6 @@ function acReadForm() {
     description: (document.getElementById('ac-description') || {}).value || '',
     campaign: document.getElementById('ac-campaign').value,
     type: document.getElementById('ac-type').value,
-    date: document.getElementById('ac-date').value,
     repurposed: document.getElementById('ac-repurposed').value || 'No',
     originalId: document.getElementById('ac-original-id').value || '',
     plats,
@@ -1156,17 +1155,67 @@ function acReadForm() {
 
 // Returns an error string, or null when the form is good to review.
 function acValidate(f) {
-  if (!f.date) return 'Select a date.';
   if (!f.campaign) return 'Select a campaign.';
   if (!f.type) return 'Select a category.';
   const anyOn = AC_PLATS.some(p => f.plats[p.k].on);
   if (!anyOn) return 'Turn on at least one platform. A creative with no links cannot have stats.';
+  let bad = false;
   for (const p of AC_PLATS) {
     const v = f.plats[p.k];
-    if (v.on && !v.link) return `${p.label} is on but has no link. Add the link or turn it off.`;
-    if (v.on && !/^https?:\/\//i.test(v.link)) return `${p.label} link should start with http:// or https://`;
+    if (!v.on) { acSetErr(p.k, ''); continue; }
+    if (!v.link) { acSetErr(p.k, 'Add the link or turn this platform off.'); bad = true; continue; }
+    const r = window.CLLinks.validate(p.k, v.link);
+    // needsResolve is not an error: the server follows the redirect.
+    if (!r.ok && !r.needsResolve) { acSetErr(p.k, r.error); bad = true; }
+    else acSetErr(p.k, '');
   }
-  return null;
+  return bad ? 'Fix the highlighted links.' : null;
+}
+
+// ---- inline link errors -------------------------------------------------
+function acSetErr(k, msg) {
+  const el = document.getElementById(`ac-${k}-err`);
+  const input = document.getElementById(`ac-${k}`);
+  if (el) { el.textContent = msg || ''; el.style.display = msg ? 'block' : 'none'; }
+  if (input) input.classList.toggle('plat-input-bad', !!msg);
+}
+function acClearErr(k) { acSetErr(k, ''); }
+
+// Instant format check on blur. Duplicates and short-link resolution need
+// the server, so those are checked when Review is pressed.
+function acCheckOne(k) {
+  const box = document.getElementById(`ac-${k}-on`);
+  const input = document.getElementById(`ac-${k}`);
+  if (!box || !box.checked || !input || !input.value.trim()) return;
+  const r = window.CLLinks.validate(k, input.value);
+  acSetErr(k, (!r.ok && !r.needsResolve) ? r.error : '');
+}
+
+// Server check: resolves short links, catches duplicates. Returns true when
+// every link passes, having written each field's error under it.
+async function acServerCheck(f) {
+  const body = {};
+  AC_PLATS.forEach(p => { if (f.plats[p.k].on) body[p.k] = f.plats[p.k].link; });
+  let data;
+  try {
+    const r = await fetch('/api/check-links', {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(body),
+    });
+    data = await r.json();
+    if (!r.ok) throw new Error(data.error || 'HTTP ' + r.status);
+  } catch (e) {
+    alert('Could not check the links: ' + e.message);
+    return false;
+  }
+  for (const p of AC_PLATS) {
+    const res = data.fields && data.fields[p.k];
+    acSetErr(p.k, res && !res.ok ? res.error : '');
+    // Show the cleaned link, so a short TikTok link visibly becomes the
+    // full one before the user confirms.
+    if (res && res.ok && res.url) document.getElementById(`ac-${p.k}`).value = res.url;
+  }
+  return !!data.ok;
 }
 
 function acRenderReview(f) {
@@ -1174,7 +1223,6 @@ function acRenderReview(f) {
   const offCount = AC_PLATS.filter(p => !f.plats[p.k].on).length;
   return `<div class="rv">
     <h4>Check before submitting</h4>
-    ${line('Date', f.date)}
     ${f.description ? line('Description', f.description) : ''}
     ${line('Campaign', f.campaign)}
     ${line('Category', f.type)}
@@ -1195,7 +1243,7 @@ function backToEdit() {
     el.style.display = '';
   });
   document.querySelectorAll('#addCreativeForm .plat-rows').forEach(el => el.style.display = '');
-  ['ac-date', 'ac-campaign', 'ac-type', 'ac-repurposed', 'ac-original-id'].forEach(id => {
+  ['ac-campaign', 'ac-type', 'ac-repurposed', 'ac-original-id'].forEach(id => {
     const el = document.getElementById(id);
     if (el && el.dataset.acHidden === '1') { el.style.display = el.dataset.acDisplay || ''; delete el.dataset.acHidden; }
   });
@@ -1218,11 +1266,19 @@ async function submitCreative(e) {
   // First press validates and shows the review. Nothing is sent yet.
   if (!AC_REVIEWED) {
     const err = acValidate(f);
-    if (err) { alert(err); return; }
+    if (err) { if (err !== 'Fix the highlighted links.') alert(err); return; }
+    const btn = document.getElementById('ac-confirm-btn');
+    const label = btn.innerText;
+    btn.disabled = true; btn.innerText = 'Checking links…';
+    const linksOk = await acServerCheck(f);
+    btn.disabled = false; btn.innerText = label;
+    if (!linksOk) return;
+    // The check may have rewritten links to their full form.
+    Object.assign(f, acReadForm());
     const rv = document.getElementById('ac-review');
     rv.innerHTML = acRenderReview(f);
     rv.style.display = 'block';
-    ['ac-date', 'ac-campaign', 'ac-type', 'ac-repurposed', 'ac-original-id'].forEach(id => {
+    ['ac-campaign', 'ac-type', 'ac-repurposed', 'ac-original-id'].forEach(id => {
       const el = document.getElementById(id);
       if (el && el.style.display !== 'none') { el.dataset.acDisplay = el.style.display; el.dataset.acHidden = '1'; el.style.display = 'none'; }
     });
@@ -1235,7 +1291,6 @@ async function submitCreative(e) {
 
   const campaign = f.campaign;
   const type = f.type;
-  const date = f.date;
   const ig = f.plats.ig.on ? f.plats.ig.link : '';
   const fb = f.plats.fb.on ? f.plats.fb.link : '';
   const tt = f.plats.tt.on ? f.plats.tt.link : '';
@@ -1271,7 +1326,7 @@ async function submitCreative(e) {
     const res = await fetch('/api/add-creative', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ campaign, type, date, ig, fb, tt, repurposed, originalId, description, brand: BRAND_NAME }),
+      body: JSON.stringify({ campaign, type, ig, fb, tt, repurposed, originalId, description, brand: BRAND_NAME }),
       signal: AbortSignal.timeout(120000)
     });
     clearTimeout(t1); clearTimeout(t2); clearTimeout(t3); clearTimeout(t4);
@@ -1282,6 +1337,13 @@ async function submitCreative(e) {
       // polling theatre — the analysis takes minutes and the result arrives
       // by email, so say what happened and let the user get on with it.
       showQueuedConfirmation(result);
+    } else if (result.fieldErrors) {
+      // The server's link check disagreed with the browser, most likely a
+      // duplicate added by someone else a moment ago. Show it where it belongs.
+      progressContainer.style.display = 'none';
+      resetSubmitUI(0);
+      backToEdit();
+      Object.entries(result.fieldErrors).forEach(([k, msg]) => acSetErr(k, msg));
     } else {
       setProgress(100, 'Failed: ' + (result.error || 'Unknown error'), '#A32040');
       progressBar.style.background = '#A32040';
@@ -1427,10 +1489,11 @@ function resetAddCreativeForm() {
   if (rv) { rv.innerHTML = ''; rv.style.display = 'none'; }
   AC_PLATS.forEach(p => {
     const t = document.getElementById(`ac-${p.k}-on`); if (t) t.checked = false;
+    acSetErr(p.k, '');
   });
   syncPlatFields();
   document.querySelectorAll('#addCreativeForm .plat-rows').forEach(el => el.style.display = '');
-  ['ac-date', 'ac-campaign', 'ac-type'].forEach(id => {
+  ['ac-campaign', 'ac-type'].forEach(id => {
     const el = document.getElementById(id); if (el) { el.style.display = ''; delete el.dataset.acHidden; }
   });
   const back = document.getElementById('ac-back-btn');
