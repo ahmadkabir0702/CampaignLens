@@ -445,15 +445,9 @@ app.get('/api/brands', async (req, res) => {
     }
 
     // The creative_id is typed by hand into ad names after the pipe, so it has
-    // to be short and ideally readable. A description gives BRAND_BS_SHANUDRIE
-    // instead of BRAND_BS_VNYW8R; without one it falls back to the stamp.
-    //
-    // The stamp is Date.now() in base36, last 6 chars. Six base36 characters
-    // only span 25 days before the values repeat, so the stamp alone is not a
-    // safe unique key over time — every id is checked against the table below
-    // and disambiguated if it is already taken.
+    // to be short and readable. A description gives BRAND_BS_SHANUDRIE0042
+    // instead of BRAND_BS_0042; either way the trailing number keeps it unique.
     const typeCode = type === 'Brand Say' ? 'BS' : 'OS';
-    const stamp = () => Date.now().toString(36).slice(-6).toUpperCase();
     const prefix = `${brand.toUpperCase()}_${typeCode}`;
 
     const slug = String(description || '')
@@ -488,10 +482,39 @@ app.get('/api/brands', async (req, res) => {
       return rows.length > 0;
     };
 
-    let creativeId = slug ? `${prefix}_${slug}` : `${prefix}_${stamp()}`;
-    for (let i = 0; i < 6 && await isTaken(creativeId); i++) {
-      creativeId = slug ? `${prefix}_${slug}_${stamp()}` : `${prefix}_${stamp()}`;
-      if (i > 0) creativeId += String(i + 1);
+    // Every id ends in a per-brand number, attached with NO separator:
+    //   PONDS_BS_SHANUDRIE6SEC0042   or   PONDS_OS_0043
+    //
+    // Two reasons, both about the paid matchers. They find the creative in an
+    // ad name with /[A-Z0-9]+_(?:BS|OS)_[A-Z0-9]+/, and that last part stops at
+    // the first underscore. The old clash suffix was _M3K9ZQ, so a clashed id
+    // was read back as the ORIGINAL creative and its spend booked against it.
+    // No underscore means the matcher always reads the whole id.
+    //
+    // The number comes from an atomic counter, so uniqueness no longer depends
+    // on checking the table first: two people adding the same description at
+    // the same moment still get different numbers.
+    const nextNumber = async () => {
+      const { rows } = await query(
+        `insert into creative_id_counters (brand_id, last_n) values ($1, 1)
+         on conflict (brand_id) do update
+           set last_n = creative_id_counters.last_n + 1
+         returning last_n`, [brand]);
+      return String(rows[0].last_n).padStart(4, '0');
+    };
+    const buildId = (n) => `${prefix}_${slug}${n}`;
+
+    let creativeId;
+    try {
+      creativeId = buildId(await nextNumber());
+      // Backstop only. An old id can still collide in rare cases, such as an
+      // old description ending in four digits (PROMO2024 vs PROMO + 2024).
+      for (let i = 0; i < 6 && await isTaken(creativeId); i++) {
+        creativeId = buildId(await nextNumber());
+      }
+    } catch (err) {
+      console.error('[add-creative] could not allocate id:', err.message);
+      return res.status(500).json({ error: 'Could not create an id for this creative. Try again.' });
     }
 
     const videoLink = ig || tt || fb;
