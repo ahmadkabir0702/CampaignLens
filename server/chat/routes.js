@@ -17,13 +17,16 @@ const { handlers } = require('./toolHandlers');
 
 const { warmAll } = require('./snapshot');
 const { prewarmAll } = require('./prewarm');
+const { generateAll: generateInsights } = require('./insights');
 const rateLimitMod = require('./rateLimit');
 
 module.exports = function mountChatRoutes(app) {
-  // ---- Pipeline hook, no session. n8n calls this after each run. ------
-  // Protected by a shared secret in the X-Warm-Secret header. Set
-  // ASK_LENS_WARM_SECRET in Render. Rebuilds every brand snapshot and
-  // prunes stale answer-cache rows.
+  // ---- Optional pipeline hook, no session. -----------------------------
+  // Snapshots refresh themselves on first use after new data lands, so
+  // this endpoint is NOT required. Wiring n8n to call it after each run
+  // just moves the rebuild and pre-warm to pipeline time instead of the
+  // first question of the day. Protected by X-Warm-Secret; set
+  // ASK_LENS_WARM_SECRET in Render to enable it.
   app.post('/api/chat/warm', express.json(), async (req, res) => {
     const secret = process.env.ASK_LENS_WARM_SECRET;
     if (!secret) return res.status(503).json({ error: 'ASK_LENS_WARM_SECRET not configured.' });
@@ -32,8 +35,13 @@ module.exports = function mountChatRoutes(app) {
       const results = await warmAll({ quiet: true });
       const failed = results.filter((r) => r.error);
       res.status(failed.length ? 207 : 200).json({ ok: !failed.length, results, prewarm: 'started' });
-      // Pre-warm after responding so n8n is not kept waiting on ~50 model calls.
-      setImmediate(() => { prewarmAll({ quiet: false }).catch((e) => console.error('[prewarm]', e.message)); });
+      // Everything below runs after the response, so n8n is never kept waiting.
+      // Order matters: findings must exist before pre-warmed answers are
+      // generated, or the cached answers will not cite them.
+      setImmediate(async () => {
+        try { await generateInsights({ quiet: false }); } catch (e) { console.error('[insights]', e.message); }
+        try { await prewarmAll({ quiet: false }); } catch (e) { console.error('[prewarm]', e.message); }
+      });
     } catch (err) {
       console.error('[ask-lens/warm]', err.message);
       res.status(500).json({ error: 'Warm failed.' });
