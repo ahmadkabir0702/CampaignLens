@@ -910,3 +910,18 @@ select:focus,.search-input:focus,.modal-input:focus{outline:none;border-color:va
 }
 .so-approve-title{font:500 13.5px var(--font);color:var(--ink-900)}
 .so-approve-sub{font:400 12px var(--font);color:var(--ink-500);margin-top:2px}
+
+/* Inline link errors in the add-creative form. Same red the form already
+   uses for a failed submission, so it reads as the same kind of problem. */
+.plat-err {
+  display: none;
+  margin: -4px 0 10px 50px;
+  font-size: 12px;
+  line-height: 1.4;
+  color: #A32040;
+}
+.plat-input-bad,
+.plat-input-bad:focus {
+  border-color: #A32040 !important;
+  outline-color: #A32040;
+}
