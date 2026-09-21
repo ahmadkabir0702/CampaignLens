@@ -16,6 +16,22 @@ const fs = require('fs');
 const bcrypt = require('bcryptjs');
 const { query, brandsForUser, assertBrandAllowed } = require('./db');
 const { checkLinks } = require('./link-check');
+const { checkContent } = require('./content-check');
+
+// Review runs the content check; Confirm needs the same answer a moment later.
+// Caching by the normalised links means each link is scraped once per add,
+// not twice. Entries expire so a stale answer is never reused for long.
+const CONTENT_TTL_MS = 20 * 60 * 1000;
+const contentCache = new Map();
+async function contentFor(links) {
+  const key = JSON.stringify({ ig: links.ig || null, tt: links.tt || null, fb: links.fb || null });
+  const hit = contentCache.get(key);
+  if (hit && Date.now() - hit.at < CONTENT_TTL_MS) return hit.result;
+  const result = await checkContent(links);
+  contentCache.set(key, { at: Date.now(), result });
+  if (contentCache.size > 500) contentCache.delete(contentCache.keys().next().value);
+  return result;
+}
 // Prompt + response schema live in worker.js so the queue, the regenerate
 // endpoint and the upload test page all analyse videos identically.
 const { buildPrompt, normaliseTimeline, RESPONSE_SCHEMA } = require('./worker');
@@ -402,6 +418,8 @@ app.get('/api/brands', async (req, res) => {
     try {
       const { ig, fb, tt } = req.body || {};
       const result = await checkLinks(app, query, { ig, fb, tt });
+      // Only worth comparing videos once every link is individually valid.
+      if (result.ok) result.content = await contentFor(result.links);
       return res.json(result);
     } catch (err) {
       console.error('[check-links]', err.message);
@@ -443,6 +461,19 @@ app.get('/api/brands', async (req, res) => {
       console.error('[add-creative] link check failed:', err.message);
       return res.status(500).json({ error: 'Could not verify the links. Try again.' });
     }
+
+    // Are the links the same video? Duration first, caption second.
+    // A clear mismatch is a warning the person must confirm, not a block:
+    // creators sometimes post a different edit per platform on purpose.
+    const content = await contentFor({ ig, fb, tt });
+    if (content.verdict === 'different' && !req.body.content_confirmed) {
+      return res.status(409).json({
+        error: 'These links look like different videos.',
+        contentWarning: content.warning, content });
+    }
+    // Overriding a mismatch lets the creative in, but it is not treated as
+    // proof the links are one video, so it never joins creators.
+    const linkVerdict = content.verdict === 'different' ? 'different_confirmed' : content.verdict;
 
     // The creative_id is typed by hand into ad names after the pipe, so it has
     // to be short and readable. A description gives BRAND_BS_SHANUDRIE0042
@@ -515,6 +546,23 @@ app.get('/api/brands', async (req, res) => {
     } catch (err) {
       console.error('[add-creative] could not allocate id:', err.message);
       return res.status(500).json({ error: 'Could not create an id for this creative. Try again.' });
+    }
+
+    // Record whether the links were proven to be one video. Creator matching
+    // reads this: handles on one creative are only joined as the same person
+    // when the verdict is 'same', so a wrong link cannot merge two creators.
+    try {
+      await query(
+        `insert into creative_link_checks (creative_id, verdict, analysed_platform, details)
+         values ($1, $2, $3, $4)
+         on conflict (creative_id) do update
+           set verdict = excluded.verdict, analysed_platform = excluded.analysed_platform,
+               details = excluded.details, checked_at = now()`,
+        [creativeId, linkVerdict, content.analysed || null, JSON.stringify(content)]);
+    } catch (err) {
+      // Never block an add over bookkeeping. The creative just will not be
+      // used as evidence for joining creators.
+      console.error('[add-creative] could not record link check:', err.message);
     }
 
     const videoLink = ig || tt || fb;
@@ -741,6 +789,7 @@ app.get('/api/brands', async (req, res) => {
       // the coordinator can see their own link is broken.
       const { rows } = await query(
         `select c.creative_id, c.campaign, c.creator_profile, c.creator_handle,
+                c.ig_handle, c.tt_handle, c.fb_handle,
                 c.duration_s, c.ig_link, c.fb_link, c.tt_link,
                 c.date, c.posted_at, c.created_at, c.format, c.content_hook,
                 c.tracking_mode,

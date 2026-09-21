@@ -69,17 +69,6 @@
   .tab { padding: 7px 14px; border-radius: 6px; border: 1px solid var(--line); cursor: pointer; font-weight: 500; }
   .tab.on { background: var(--ink-900); color: #fff; border-color: var(--ink-900); }
   .tab.off { opacity: .45; }
-  .cbx-wrap { position: relative; }
-  .cbx-list { position: absolute; z-index: 20; left: 0; right: 0; top: 100%; margin-top: 4px;
-              background: #fff; border: 1px solid var(--line); border-radius: 8px;
-              box-shadow: 0 8px 24px rgba(26,26,79,.10); max-height: 260px; overflow-y: auto;
-              display: none; }
-  .cbx-list.show { display: block; }
-  .cbx-opt { padding: 9px 12px; cursor: pointer; font-size: 13px; }
-  .cbx-opt:hover, .cbx-opt.active { background: var(--bg); }
-  .cbx-opt .cbx-name { font-weight: 500; }
-  .cbx-opt .cbx-plats { font-size: 11px; color: var(--ink-500); margin-top: 2px; }
-  .cbx-empty { padding: 12px; font-size: 13px; color: var(--ink-500); }
   .plats-form { margin-top: 14px; display: grid; gap: 10px; }
   .plat-row { display: flex; align-items: center; gap: 12px; }
   .plat-row .plat-name { width: 84px; flex: none; font-size: 13px; color: var(--ink-700); }
@@ -103,6 +92,10 @@
   @media (max-width: 640px) { .stats-grid { grid-template-columns: 1fr 1fr; } }
   .plat-err { display: none; margin: -2px 0 4px 96px; font-size: 12px; line-height: 1.4; color: #A32040; }
   .plat-row input.bad, .plat-row input.bad:focus { border-color: #A32040; outline-color: #A32040; }
+  .content-warn { margin-top: 12px; padding: 12px 14px; border-radius: 8px; background: var(--bad-bg);
+                  border: 1px solid #F0C4C1; color: var(--bad); font-size: 13px; line-height: 1.45; }
+  .content-sub { margin-top: 6px; }
+  .content-note { margin-top: 12px; font-size: 12px; color: var(--ink-500); }
 </style>
 </head>
 <body>
@@ -123,13 +116,8 @@
 
   <section class="card">
     <h2>Add influencer content</h2>
+    <div class="sub" style="margin:-6px 0 12px">The creator is picked up from the post automatically. Just choose the campaign and add the links.</div>
     <div class="grid">
-      <div class="cbx-wrap">
-        <label>Creator</label>
-        <input id="f_creator" autocomplete="off" placeholder="Pick a campaign first" disabled>
-        <div id="creatorList" class="cbx-list"></div>
-        <input type="hidden" id="f_creator_id">
-      </div>
       <div><label>Campaign</label><select id="f_campaign"><option value="" disabled selected>Select campaign</option></select></div>
     </div>
     <div class="plats-form">
@@ -222,92 +210,6 @@ async function loadCampaigns() {
 }
 
 // ── creator picker ────────────────────────────────────────────────────────
-// Creators are scoped to the campaign, so the campaign must be chosen first.
-// The list is a filtered combobox rather than a plain select: with a few
-// hundred creators a native dropdown is unusable without search.
-let CREATORS = [], CREATOR_IDX = -1;
-
-$('f_campaign').addEventListener('change', loadCreators);
-
-async function loadCreators() {
-  const opt = $('f_campaign').selectedOptions[0];
-  const campaignId = opt ? opt.dataset.id : '';
-  const inp = $('f_creator');
-  CREATORS = []; $('f_creator_id').value = ''; inp.value = '';
-
-  if (!campaignId) {
-    inp.disabled = true;
-    inp.placeholder = 'No creators are assigned to this campaign';
-    return;
-  }
-  inp.disabled = false; inp.placeholder = 'Loading creators…';
-  try {
-    CREATORS = await fetch('/api/creators?brand=' + encodeURIComponent(BRAND) +
-                           '&campaign_id=' + encodeURIComponent(campaignId)).then(r => r.json());
-    inp.placeholder = CREATORS.length
-      ? `Search ${CREATORS.length} creator${CREATORS.length > 1 ? 's' : ''}…`
-      : 'No creators are assigned to this campaign';
-    inp.disabled = !CREATORS.length;
-  } catch (e) {
-    inp.disabled = true; inp.placeholder = 'Could not load creators';
-  }
-}
-
-const PLAT_SHORT = { ig: 'Instagram', fb: 'Facebook', tt: 'TikTok', yt: 'YouTube', other: 'Other' };
-
-function renderCreatorList(filter) {
-  const box = $('creatorList');
-  const q = (filter || '').trim().toLowerCase();
-  const hits = q ? CREATORS.filter(c => c.name.toLowerCase().includes(q)) : CREATORS;
-  if (!hits.length) {
-    box.innerHTML = `<div class="cbx-empty">${q ? 'No creator matches that name.' : 'No creators assigned.'}</div>`;
-  } else {
-    box.innerHTML = hits.map((c, i) => {
-      const plats = (c.profiles || []).map(p => PLAT_SHORT[p.platform] || p.platform).join(' · ');
-      return `<div class="cbx-opt${i === CREATOR_IDX ? ' active' : ''}" data-id="${c.id}" data-name="${esc(c.name)}">
-                <div class="cbx-name">${esc(c.name)}</div>
-                ${plats ? `<div class="cbx-plats">${esc(plats)}</div>` : ''}
-              </div>`;
-    }).join('');
-    [...box.querySelectorAll('.cbx-opt')].forEach(el => {
-      el.onmousedown = ev => {            // mousedown: fires before blur
-        ev.preventDefault();
-        pickCreator(el.dataset.id, el.dataset.name);
-      };
-    });
-  }
-  box.classList.add('show');
-}
-
-function pickCreator(id, name) {
-  $('f_creator_id').value = id;
-  $('f_creator').value = name;
-  $('creatorList').classList.remove('show');
-  CREATOR_IDX = -1;
-}
-
-$('f_creator').addEventListener('input', e => {
-  $('f_creator_id').value = '';   // typing invalidates the previous pick
-  CREATOR_IDX = -1;
-  renderCreatorList(e.target.value);
-});
-$('f_creator').addEventListener('focus', e => { if (CREATORS.length) renderCreatorList(e.target.value); });
-$('f_creator').addEventListener('blur', () => setTimeout(() => $('creatorList').classList.remove('show'), 120));
-$('f_creator').addEventListener('keydown', e => {
-  const opts = [...$('creatorList').querySelectorAll('.cbx-opt')];
-  if (!opts.length) return;
-  if (e.key === 'ArrowDown') { e.preventDefault(); CREATOR_IDX = Math.min(CREATOR_IDX + 1, opts.length - 1); }
-  else if (e.key === 'ArrowUp') { e.preventDefault(); CREATOR_IDX = Math.max(CREATOR_IDX - 1, 0); }
-  else if (e.key === 'Enter' && CREATOR_IDX >= 0) {
-    e.preventDefault();
-    const el = opts[CREATOR_IDX];
-    return pickCreator(el.dataset.id, el.dataset.name);
-  } else if (e.key === 'Escape') { return $('creatorList').classList.remove('show'); }
-  else return;
-  opts.forEach((o, i) => o.classList.toggle('active', i === CREATOR_IDX));
-  opts[CREATOR_IDX].scrollIntoView({ block: 'nearest' });
-});
-
 // ── list ──────────────────────────────────────────────────────────────────
 // State of one platform on one creative.
 //   synced   the sync has written numbers for it
@@ -318,6 +220,25 @@ function platState(c, p) {
   if (st && (st.views != null || st.likes != null || st.comments != null)) return 'synced';
   if ((c.errors || []).some(e => e.platform === p)) return 'error';
   return 'waiting';
+}
+
+// The creator comes from the post itself. A roster match shows the person's
+// name; each platform's handle is listed because they can differ.
+function creatorCell(c) {
+  const hs = [['ig', c.ig_handle], ['tt', c.tt_handle], ['fb', c.fb_handle]].filter(x => x[1]);
+  if (!hs.length) return '<span class="sub">Picked up on first sync</span>';
+
+  // The creator this is filed under. When handles from another creative
+  // proved this is the same person, that shows here even though this post's
+  // own handle is different.
+  const m = String(c.creator_profile || '')
+    .match(/instagram\.com\/([^/?#]+)|tiktok\.com\/@([^/?#]+)|facebook\.com\/([^/?#]+)/i);
+  const filedAs = m ? (m[1] || m[2] || m[3]).toLowerCase() : null;
+  const own = hs.map(x => String(x[1]).toLowerCase());
+
+  return hs.map(([p, h]) => `<div class="sub">${PLAT[p]} @${esc(h)}</div>`).join('')
+    + (filedAs && !own.includes(filedAs)
+        ? `<div class="sub">Same creator as @${esc(filedAs)}</div>` : '');
 }
 
 function linksOf(c) { return ['ig', 'fb', 'tt'].filter(p => c[p + '_link']); }
@@ -359,7 +280,7 @@ async function load() {
       const links = linksOf(c);
       return `<tr>
         <td><div class="id">${esc(c.creative_id)}</div><div class="sub">${esc(c.campaign || '')}${c.format ? ' · ' + esc(c.format.replace('_', ' ')) : ''}</div></td>
-        <td>${esc(c.creator_handle ? '@' + c.creator_handle : (c.creator_profile || '—'))}</td>
+        <td>${creatorCell(c)}</td>
         <td>${c.date ? fmtD(c.date) : '—'}</td>
         <td>${fmtDT(c.created_at)}</td>
         <td><span class="badge ${c._s.k}">${c._s.label}</span></td>
@@ -383,6 +304,8 @@ async function load() {
 // different from leaving a box blank by accident.
 const PLATS = [ {k:'ig',label:'Instagram'}, {k:'fb',label:'Facebook'}, {k:'tt',label:'TikTok'} ];
 let REVIEWED = false;
+// Result of comparing the links' videos at Review.
+let CONTENT = null;
 
 // The checkbox is the single source of truth for whether a link field is
 // editable, so no reset path can leave a toggle on with its box disabled.
@@ -409,8 +332,6 @@ function readForm() {
     label: p.label,
   });
   return {
-    creator: $('f_creator').value.trim(),
-    creatorId: $('f_creator_id').value || null,
     campaign: $('f_campaign').value,
     plats,
   };
@@ -418,7 +339,6 @@ function readForm() {
 
 function validate(f) {
   if (!f.campaign) return 'Select a campaign.';
-  if (!f.creatorId) return 'Pick a creator from the list. If they are missing, they need assigning to this campaign first.';
   if (!PLATS.some(p => f.plats[p.k].on)) return 'Turn on at least one platform. Content with no links cannot have stats.';
   let bad = false;
   for (const p of PLATS) {
@@ -457,14 +377,25 @@ async function serverCheck(f) {
     setErr(p.k, res && !res.ok ? res.error : '');
     if (res && res.ok && res.url) $('f_' + p.k).value = res.url;
   }
+  CONTENT = data.content || null;
   return !!data.ok;
+}
+
+function contentBlock() {
+  const c = CONTENT;
+  if (!c) return '';
+  if (c.verdict === 'different') {
+    return `<div class="content-warn"><b>These links look like different videos.</b> ${esc(c.warning || '')}
+      <div class="content-sub">Go back and check the links, or add it anyway if they really are the same content.</div></div>`;
+  }
+  if (c.note) return `<div class="content-note">${esc(c.note)}</div>`;
+  return '';
 }
 
 function renderReview(f) {
   const line = (k, v, off) => `<div class="rv-line"><span class="rv-k">${esc(k)}</span><span class="rv-v ${off ? 'rv-off' : ''}">${esc(v)}</span></div>`;
   const off = PLATS.filter(p => !f.plats[p.k].on).length;
   return `<div class="rv"><h4>Check before submitting</h4>
-    ${line('Creator', f.creator)}
     ${line('Campaign', f.campaign)}
     ${PLATS.map(p => line(p.label, f.plats[p.k].on ? f.plats[p.k].link : 'Not used', !f.plats[p.k].on)).join('')}
     ${off ? `<div class="rv-warn">${off} platform${off > 1 ? 's' : ''} recorded as not used. Go back if that is wrong.</div>` : ''}
@@ -474,6 +405,7 @@ function renderReview(f) {
 
 function setEditMode() {
   REVIEWED = false;
+  CONTENT = null;
   $('review').style.display = 'none';
   document.querySelectorAll('.grid, .plats-form').forEach(el => el.style.display = '');
   $('backBtn').style.display = 'none';
@@ -499,28 +431,36 @@ $('addBtn').onclick = async () => {
       return;
     }
     Object.assign(f, readForm());
-    $('review').innerHTML = renderReview(f);
+    $('review').innerHTML = renderReview(f) + contentBlock();
     $('review').style.display = 'block';
     document.querySelectorAll('.grid, .plats-form').forEach(el => el.style.display = 'none');
     $('backBtn').style.display = '';
-    $('addBtn').textContent = 'Confirm and add';
-    m.textContent = 'Check the details above, then confirm.';
+    const differs = CONTENT && CONTENT.verdict === 'different';
+    $('addBtn').textContent = differs ? 'Add anyway' : 'Confirm and add';
+    m.textContent = differs ? 'The links look like different videos. Check them before adding.'
+                            : 'Check the details above, then confirm.';
     REVIEWED = true;
     return;
   }
 
   const body = {
     brand_id: BRAND, type: 'Others Say',
-    creator: f.creator, creator_id: f.creatorId,
     campaign: f.campaign,
     ig: f.plats.ig.on ? f.plats.ig.link : null,
     fb: f.plats.fb.on ? f.plats.fb.link : null,
     tt: f.plats.tt.on ? f.plats.tt.link : null,
+    content_confirmed: !!(CONTENT && CONTENT.verdict === 'different'),
   };
   $('addBtn').disabled = true; m.textContent = 'Submitting…';
   try {
     const r = await fetch('/api/add-creative', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
     const j = await r.json();
+    if (j.contentWarning) {
+      CONTENT = j.content || { verdict: 'different', warning: j.contentWarning };
+      $('review').innerHTML = renderReview(readForm()) + contentBlock();
+      $('addBtn').textContent = 'Add anyway';
+      throw new Error('The links look like different videos. Check them, or press Add anyway.');
+    }
     if (j.fieldErrors) {
       setEditMode();
       Object.entries(j.fieldErrors).forEach(([k, msg]) => setErr(k, msg));
@@ -531,10 +471,9 @@ $('addBtn').onclick = async () => {
     m.textContent = j.queued
       ? 'Queued. The video is being analysed and will appear below in a few minutes. Numbers start syncing on their own within about 30 minutes.'
       : 'Added. Numbers start syncing on their own within about 30 minutes.';
-    ['f_creator', 'f_creator_id', 'f_ig', 'f_fb', 'f_tt'].forEach(id => $(id).value = '');
+    ['f_ig', 'f_fb', 'f_tt'].forEach(id => $(id).value = '');
     PLATS.forEach(p => setErr(p.k, ''));
     $('f_campaign').selectedIndex = 0;
-    loadCreators();
     PLATS.forEach(p => { $('f_' + p.k + '_on').checked = false; });
     syncPlatFields();
     setEditMode();
