@@ -90,9 +90,48 @@ const RESPONSE_SCHEMA = {
         required: ['t', 'd'],
       },
     },
+    // ---- Ask Lens creative attributes ----------------------------------
+    // Structured dimensions so "what type of hooks work for us" is a computed
+    // crosstab, not a guess over free text. Enums match the CHECK constraints
+    // in migration 003 exactly; a mismatch will fail the insert loudly.
+    content_intent: {
+      type: 'string',
+      enum: ['educate', 'entertain', 'demonstrate', 'prove', 'announce', 'inspire', 'promote_offer'],
+    },
+    narrative_structure: {
+      type: 'string',
+      enum: ['problem_solution', 'story', 'tips', 'demo', 'montage', 'testimonial_arc', 'performance'],
+    },
+    hook_device: {
+      type: 'string',
+      enum: ['question', 'bold_claim', 'problem', 'product_reveal', 'face_to_camera',
+             'motion', 'text_overlay', 'sound', 'before_after', 'unexpected_visual'],
+    },
+    hook_subject: { type: 'string', enum: ['person', 'product', 'text', 'scene'] },
+    hook_pace: { type: 'string', enum: ['single_shot', 'fast_cut'] },
+    opens_with_product: { type: 'boolean' },
+    opens_with_face: { type: 'boolean' },
+    has_text_overlay: { type: 'boolean' },
+    timeline_attrs: {
+      type: 'array',
+      items: {
+        type: 'object',
+        properties: {
+          t: { type: 'number' },
+          on_screen: { type: 'string', enum: ['person', 'product', 'text', 'scene', 'mixed'] },
+          audio: { type: 'string', enum: ['speech', 'music', 'both', 'silent'] },
+          product_visible: { type: 'boolean' },
+        },
+        required: ['t', 'on_screen', 'audio', 'product_visible'],
+      },
+    },
   },
-  required: ['duration', 'format', 'product_role', 'format_note', 'hook', 'timeline'],
-  propertyOrdering: ['duration', 'format', 'product_role', 'format_note', 'hook', 'timeline'],
+  required: ['duration', 'format', 'product_role', 'format_note', 'hook', 'timeline',
+             'content_intent', 'narrative_structure', 'hook_device', 'hook_subject', 'hook_pace',
+             'opens_with_product', 'opens_with_face', 'has_text_overlay', 'timeline_attrs'],
+  propertyOrdering: ['duration', 'format', 'product_role', 'format_note', 'hook', 'timeline',
+                     'content_intent', 'narrative_structure', 'hook_device', 'hook_subject', 'hook_pace',
+                     'opens_with_product', 'opens_with_face', 'has_text_overlay', 'timeline_attrs'],
 };
 
 function buildPrompt(hintDuration) {
@@ -131,6 +170,47 @@ Cover EVERY window in order. Do NOT merge, skip or group windows — a window wh
 TRANSCRIBE IN THE LANGUAGE SPOKEN. Sri Lankan content is often in Sinhala or Tamil, sometimes mixed with English in the same line. Write the words in the language they are sung or spoken in, using that language's own script, and do not translate them. Never leave words out because they are not in English.
 
 LYRICS COUNT AS SPEECH. In a music video the lyrics are the content, so a window over a sung line must contain that line. Descriptions like "she sings into a microphone", "the chorus plays" or "rap section performed" without the words are not acceptable on their own — the words are what is being asked for. Instrumental passages with no vocals are the one exception; say so plainly for those windows.
+
+"content_intent": what job this creative is doing. Exactly one of:
+  "educate" (teaches the viewer something they did not know),
+  "entertain" (the point is enjoyment: music, comedy, spectacle),
+  "demonstrate" (shows the product working or being used),
+  "prove" (evidence that it works: results, before and after, a test),
+  "announce" (news: a launch, a campaign, an event),
+  "inspire" (aspiration, emotion, identity),
+  "promote_offer" (a specific offer, price, contest or promotion).
+
+"narrative_structure": how the creative is built. Exactly one of
+  "problem_solution", "story", "tips", "demo", "montage", "testimonial_arc", "performance".
+
+For the next five keys, judge ONLY the first 3 seconds. Ignore everything after 3 seconds.
+
+"hook_device": the opening move. Exactly one of:
+  "question" (asks the viewer something, spoken or on screen),
+  "bold_claim" (a strong statement or promise),
+  "problem" (shows a problem or pain point),
+  "product_reveal" (the product is the first thing shown),
+  "face_to_camera" (a person addresses the viewer directly),
+  "motion" (movement, dance or action carries the open),
+  "text_overlay" (on-screen text is the primary opening element),
+  "sound" (a distinctive sound or music sting leads),
+  "before_after" (a contrast or transformation is set up immediately),
+  "unexpected_visual" (something surprising or unusual).
+  Pick the single device that does the most work. If two apply, choose the one a viewer would notice first.
+
+"hook_subject": what is mainly on screen in the first 3 seconds. One of "person", "product", "text", "scene".
+
+"hook_pace": "single_shot" if the first 3 seconds are one continuous shot, "fast_cut" if there is more than one cut.
+
+"opens_with_product": true if the product is visible within the first 3 seconds.
+"opens_with_face": true if a human face is visible within the first 3 seconds.
+"has_text_overlay": true if on-screen text appears anywhere in the video.
+
+"timeline_attrs": the same windows as "timeline", structured. Use exactly the same number of entries and the same "t" values as "timeline". Each object:
+  { "t": <same window start as the timeline entry>,
+    "on_screen": the dominant thing on screen, one of "person", "product", "text", "scene", "mixed",
+    "audio": one of "speech", "music", "both", "silent",
+    "product_visible": true if the product is visible in that window }
 
 Return only the JSON object. No markdown, no commentary.`;
 }
@@ -390,6 +470,53 @@ function normaliseTimeline(raw) {
 }
 
 // ── The job ───────────────────────────────────────────────────────────────────
+/**
+ * Derived creative metrics from the structured timeline. Computed here in
+ * code, never asked of the model: this is exactly the arithmetic that goes
+ * wrong silently when a model does it.
+ */
+function deriveTimelineMetrics(attrs) {
+  if (!Array.isArray(attrs) || !attrs.length) {
+    return { timeToProduct: null, productPct: null, cutsPer10s: null };
+  }
+  const sorted = [...attrs]
+    .map((a) => ({ ...a, t: Number(a.t) }))
+    .filter((a) => Number.isFinite(a.t))
+    .sort((a, b) => a.t - b.t);
+  if (!sorted.length) return { timeToProduct: null, productPct: null, cutsPer10s: null };
+  const step = sorted.length > 1 ? (sorted[1].t - sorted[0].t) || 2 : 2;
+  const first = sorted.find((a) => a.product_visible === true);
+  const productPct = Math.round(sorted.filter((a) => a.product_visible === true).length / sorted.length * 100);
+  let changes = 0;
+  for (let i = 1; i < sorted.length; i += 1) if (sorted[i].on_screen !== sorted[i - 1].on_screen) changes += 1;
+  const runtime = sorted.length * step;
+  const cutsPer10s = runtime > 0 ? Math.round((changes / runtime) * 10 * 10) / 10 : null;
+  return { timeToProduct: first ? first.t : null, productPct, cutsPer10s };
+}
+
+/**
+ * The attribute values that go into the creatives row. Shared by the live
+ * pipeline and the backfill so both write identical data.
+ */
+function attributeColumns(a) {
+  const attrs = Array.isArray(a.timeline_attrs) ? a.timeline_attrs : [];
+  const d = deriveTimelineMetrics(attrs);
+  return {
+    content_intent: a.content_intent || null,
+    narrative_structure: a.narrative_structure || null,
+    hook_device: a.hook_device || null,
+    hook_subject: a.hook_subject || null,
+    hook_pace: a.hook_pace || null,
+    opens_with_product: typeof a.opens_with_product === 'boolean' ? a.opens_with_product : null,
+    opens_with_face: typeof a.opens_with_face === 'boolean' ? a.opens_with_face : null,
+    has_text_overlay: typeof a.has_text_overlay === 'boolean' ? a.has_text_overlay : null,
+    timeline_attrs: JSON.stringify(attrs),
+    time_to_product_s: d.timeToProduct,
+    product_screen_pct: d.productPct,
+    cuts_per_10s: d.cutsPer10s,
+  };
+}
+
 function makeProcessor(ai) {
   return async function processJob(job) {
     const d = job.data;
@@ -479,27 +606,48 @@ function makeProcessor(ai) {
         }
       }
 
+      const at = attributeColumns(a);
       await query(
         `insert into creatives
            (creative_id, brand_id, date, campaign, type, is_repurposed,
             original_creative_id, content_type, ig_link, fb_link, tt_link,
             content_hook, duration_s, segments,
-            format, product_role, format_note, creator_profile, creator_id)
+            format, product_role, format_note, creator_profile, creator_id,
+            content_intent, narrative_structure, hook_device, hook_subject, hook_pace,
+            opens_with_product, opens_with_face, has_text_overlay,
+            timeline_attrs, time_to_product_s, product_screen_pct, cuts_per_10s, attrs_version)
          values ($1,$2,coalesce($3::date, current_date),$4,$5,$6,$7,'Video',
                  $8,$9,$10,$11,$12,$13,
-                 $14,$15,$16,$17,$18)
+                 $14,$15,$16,$17,$18,
+                 $19,$20,$21,$22,$23,$24,$25,$26,$27,$28,$29,$30,1)
          on conflict (creative_id) do update set
            content_hook = excluded.content_hook,
            duration_s = coalesce(excluded.duration_s, creatives.duration_s),
            segments = excluded.segments,
            format = excluded.format,
            product_role = excluded.product_role,
-           format_note = excluded.format_note`,
+           format_note = excluded.format_note,
+           content_intent = excluded.content_intent,
+           narrative_structure = excluded.narrative_structure,
+           hook_device = excluded.hook_device,
+           hook_subject = excluded.hook_subject,
+           hook_pace = excluded.hook_pace,
+           opens_with_product = excluded.opens_with_product,
+           opens_with_face = excluded.opens_with_face,
+           has_text_overlay = excluded.has_text_overlay,
+           timeline_attrs = excluded.timeline_attrs,
+           time_to_product_s = excluded.time_to_product_s,
+           product_screen_pct = excluded.product_screen_pct,
+           cuts_per_10s = excluded.cuts_per_10s,
+           attrs_version = 1`,
         [creativeId, d.brand, d.date, d.campaign, d.type, d.repurposed,
          d.originalId, d.ig, d.fb, d.tt,
          a.hook, safeDur, JSON.stringify(timeline),
          a.format || null, a.product_role || null, a.format_note || null,
-         d.creator || null, d.creatorId || null]
+         d.creator || null, d.creatorId || null,
+         at.content_intent, at.narrative_structure, at.hook_device, at.hook_subject, at.hook_pace,
+         at.opens_with_product, at.opens_with_face, at.has_text_overlay,
+         at.timeline_attrs, at.time_to_product_s, at.product_screen_pct, at.cuts_per_10s]
       );
 
       console.log(`[worker] ${creativeId}: analysed ${platform} (${safeDur === null ? '?' : safeDur}s, ${timeline.length} segments) and added`);
@@ -605,7 +753,45 @@ function attachShutdown(worker, connection) {
   process.on('SIGINT',  () => shutdown('SIGINT'));
 }
 
-module.exports = { startWorker, buildPrompt, normaliseTimeline, RESPONSE_SCHEMA, analyseVideo };
+/**
+ * Re-classify one existing creative. Used by scripts/backfill-attributes.js.
+ * Reuses the exact same download and analyse path as the live pipeline so
+ * backfilled and new creatives are directly comparable. Only the attribute
+ * columns are written; nothing else on the row changes.
+ */
+async function classifyExisting(ai, row) {
+  const link = row.tt_link || row.ig_link || row.fb_link;
+  if (!link) throw new Error('no media link on this creative');
+  let videoPath = null;
+  try {
+    const meta = await resolveMediaUrl(link);
+    videoPath = path.join(os.tmpdir(), `backfill_${row.creative_id}.mp4`);
+    await streamToFile(meta.download_url, videoPath);
+    const hint = typeof meta.duration === 'number' ? meta.duration : (row.duration_s ? Number(row.duration_s) : null);
+    const a = await analyseVideo(ai, videoPath, hint);
+    if (!a.hook_device) throw new Error('analysis returned no hook_device');
+    const at = attributeColumns(a);
+    await query(
+      `update creatives set
+         content_intent=$2, narrative_structure=$3, hook_device=$4, hook_subject=$5, hook_pace=$6,
+         opens_with_product=$7, opens_with_face=$8, has_text_overlay=$9,
+         timeline_attrs=$10, time_to_product_s=$11, product_screen_pct=$12, cuts_per_10s=$13,
+         attrs_version=1
+       where creative_id=$1`,
+      [row.creative_id, at.content_intent, at.narrative_structure, at.hook_device, at.hook_subject, at.hook_pace,
+       at.opens_with_product, at.opens_with_face, at.has_text_overlay,
+       at.timeline_attrs, at.time_to_product_s, at.product_screen_pct, at.cuts_per_10s]
+    );
+    return { ...at, cost_usd: a._usage ? a._usage.cost_usd : null };
+  } finally {
+    if (videoPath) { try { fs.unlinkSync(videoPath); } catch (e) {} }
+  }
+}
+
+module.exports = {
+  startWorker, buildPrompt, normaliseTimeline, RESPONSE_SCHEMA, analyseVideo,
+  classifyExisting, attributeColumns, deriveTimelineMetrics,
+};
 
 // Standalone mode: node worker.js
 if (require.main === module) {
