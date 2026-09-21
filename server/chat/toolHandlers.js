@@ -48,6 +48,10 @@ async function loadMerged(pool, brand) {
       `select c.${C.id} as id, c.${C.hook} as hook, c.${C.format} as format, c.${C.type} as type,
               c.${C.campaign} as campaign, c.${C.isRepurposed} as is_repurposed, c.${C.parentId} as parent_id,
               c.${C.productRole} as product_role, c.${C.durationS} as duration_s, cr.${CR.name} as creator,
+              c.${C.publishedAt} as published_at,
+              c.content_intent, c.narrative_structure, c.hook_device, c.hook_subject, c.hook_pace,
+              c.opens_with_product, c.opens_with_face, c.has_text_overlay,
+              c.time_to_product_s, c.product_screen_pct, c.cuts_per_10s,
               coalesce(c.${C.ttLink}, c.${C.igLink}, c.${C.fbLink}) as permalink
        from ${T.creatives} c
        left join ${T.creators} cr on cr.${CR.id} = c.${C.creatorId}
@@ -67,7 +71,14 @@ async function loadMerged(pool, brand) {
       id: c.id, name: displayLabel(c.id, c.hook), short: shortName(c.id), hook: c.hook,
       format: c.format, type: c.type, campaign: c.campaign, creator: c.creator,
       origin: c.is_repurposed ? 'repurposed' : 'original', parent_id: c.parent_id,
-      product_role: c.product_role, duration_s: c.duration_s, permalink: c.permalink, boosted: true, ...m,
+      product_role: c.product_role, duration_s: c.duration_s, permalink: c.permalink,
+      published_at: c.published_at, content_intent: c.content_intent,
+      narrative_structure: c.narrative_structure, hook_device: c.hook_device,
+      hook_subject: c.hook_subject, hook_pace: c.hook_pace,
+      opens_with_product: c.opens_with_product, opens_with_face: c.opens_with_face,
+      has_text_overlay: c.has_text_overlay, time_to_product_s: c.time_to_product_s,
+      product_screen_pct: c.product_screen_pct, cuts_per_10s: c.cuts_per_10s,
+      boosted: true, ...m,
     });
   }
   return out;
@@ -82,6 +93,7 @@ function slim(r, metric) {
   return {
     id: r.id, cqr: r.cqr, hook_rate: r.hook_rate, hook_q: r.hook_q, hold_rate: r.hold_rate, hold_q: r.hold_q,
     platforms: r.platforms, type: r.type, format: r.format, is_active: r.is_active,
+    hook_device: r.hook_device, content_intent: r.content_intent,
     ...(metric && !['cqr', 'hook_rate', 'hold_rate'].includes(metric) ? { [metric]: r[metric] } : {}),
   };
 }
@@ -107,6 +119,14 @@ async function rank_creatives(args, ctx) {
   if (args.campaign) rows = rows.filter((r) => (r.campaign || '').toLowerCase().includes(String(args.campaign).toLowerCase()));
   if (args.creator) rows = rows.filter((r) => (r.creator || '').toLowerCase().includes(String(args.creator).toLowerCase()));
   if (args.active !== undefined) rows = rows.filter((r) => !!r.is_active === !!args.active);
+  for (const dim of ['content_intent', 'narrative_structure', 'hook_device', 'hook_subject', 'hook_pace']) {
+    if (args[dim]) rows = rows.filter((r) => r[dim] === args[dim]);
+  }
+  if (args.published_after) rows = rows.filter((r) => r.published_at && String(r.published_at) >= args.published_after);
+
+  // A filtered set below the minimum group size is not reportable as a pattern.
+  const { MIN_GROUP } = require('./analytics');
+  const belowMinGroup = rows.length > 0 && rows.length < MIN_GROUP;
 
   if (metric === 'cqr') {
     rows.sort(rankCmp);
@@ -122,6 +142,7 @@ async function rank_creatives(args, ctx) {
       ranked_by: metric === 'cqr' ? 'cqr, then hook_rate, then hold_rate' : metric,
       direction: wantBest ? 'best' : 'worst',
       volume_floor_impressions: floor, excluded_below_floor: excluded,
+      ...(belowMinGroup ? { warning: `Only ${rows.length} creatives match. That is below the minimum of ${MIN_GROUP}. List them if asked, but do not describe them as a pattern.` } : {}),
       rows: rows.map((r) => slim(r, metric)),
     }),
     records: Object.fromEntries(rows.map((r) => [r.id, r])),
