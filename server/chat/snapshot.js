@@ -1,394 +1,803 @@
 /**
- * Ask Lens - snapshot generator (v3, full table)
+ * worker.js — background creative processor
  *
- * One compact line per boosted creative carrying everything the Hub knows:
- * CQR, hook/hold with Strong/Weak qualifiers, retention curve, duration,
- * platforms, type, format, campaign, creator, active flag, spend, reach,
- * and the structured Insights diagnosis. Plus rollups, organic, boost
- * workflow, and the brand's own benchmarks.
+ * Does everything /api/add-creative used to do inline, minus the initial row
+ * insert (which stays in the route so the creative appears immediately):
  *
- * Reads the same views creatives.js reads and applies its merge rules.
+ *   1. resolve a CDN link via RapidAPI
+ *   2. stream the mp4 to a temp file
+ *   3. upload to Gemini, wait for processing
+ *   4. ask for hook + a fixed-interval timeline + duration
+ *   5. write the analysis back to `creatives`
+ *
+ * Runs two ways, same code:
+ *   - in-process, started from server.js (default — no extra Render service)
+ *   - standalone, `node worker.js`, when you want a dedicated service
+ *
+ * At ~17 videos a day the in-process worker is free and sufficient. Splitting
+ * it out later is a start command, not a rewrite.
  */
+const fs = require('fs');
+const os = require('os');
+const path = require('path');
+const axios = require('axios');
+const { Worker } = require('bullmq');
+const IORedis = require('ioredis');
+const { query } = require('./db');
+const { notifySuccess, notifyFailure } = require('./notify');
 
-const crypto = require('crypto');
-const S = require('./schema.config');
-const { getPool } = require('./db');
+// Gemini model. Google retires these on their own schedule — 2.5-flash was
+// pulled for new users — so it is an env var, changeable without a deploy.
+const GEMINI_MODEL = process.env.GEMINI_MODEL || 'gemini-3.6-flash';
 
-const T = S.tables, C = S.creative, P = S.paidView, O = S.organicView, OR = S.organicRawCols;
-const OB = S.organicBest, B = S.boost, TH = S.thresholds, CR = S.creator;
+// Cost levers, all env-tunable so they can be tried without a deploy.
+//   GEMINI_THINKING_BUDGET  thinking tokens bill at OUTPUT rates. Describing
+//                           what is on screen needs little reasoning, so a low
+//                           budget is cheaper and faster. -1 = model default,
+//                           0 = off where the model allows it.
+//   GEMINI_MEDIA_RESOLUTION video input is ~60% of the cost. 'low' cuts it
+//                           substantially; the trade is small on-screen text.
+const THINKING_BUDGET = process.env.GEMINI_THINKING_BUDGET === undefined
+  ? null : Number(process.env.GEMINI_THINKING_BUDGET);
+const MEDIA_RESOLUTION = process.env.GEMINI_MEDIA_RESOLUTION || null;
 
-function assertBrand(b) { if (!S.brands.includes(b)) throw new Error(`Unknown brand: ${b}`); return b; }
-const num = (v) => (v === null || v === undefined ? 0 : Number(v));
-const r1 = (v) => (v === null || v === undefined ? null : Math.round(Number(v) * 10) / 10);
-const r0 = (v) => (v === null || v === undefined ? null : Math.round(Number(v)));
-// Retention points are percentages. Anything outside 0-100 is a bad row, not a signal.
-const pctPt = (v) => { if (v === null || v === undefined) return null; const n = Number(v); return isFinite(n) && n >= 0 && n <= 100 ? Math.round(n) : null; };
-const fmtCount = (v) => { if (v === null || v === undefined) return 'n/a'; const n = Number(v); return n >= 1e6 ? `${(n / 1e6).toFixed(1)}M` : n >= 1e3 ? `${(n / 1e3).toFixed(0)}k` : String(Math.round(n)); };
-const fmtPct = (v, d = 1) => (v === null || v === undefined ? 'n/a' : `${Number(v).toFixed(d)}%`);
-const money = (v) => (v === null || v === undefined ? 'n/a' : `${fmtCount(v)} ${S.currency}`);
-const avg = (xs) => { const a = xs.filter((v) => v !== null && v !== undefined); return a.length ? a.reduce((s, v) => s + Number(v), 0) / a.length : null; };
-const clip = (s, n) => (s ? String(s).replace(/\s+/g, ' ').trim().slice(0, n) : '');
+const RAPIDAPI_HOST = process.env.RAPIDAPI_HOST
+  || 'instagram-tiktok-youtube-downloader.p.rapidapi.com';
 
-function shortName(id) {
-  const m = String(id).match(/Video(\d+)_(BrandSay|OthersSay)/);
-  if (m) return `Video${m[1]} ${m[2] === 'BrandSay' ? 'Brand Say' : 'Others Say'}`;
-  const parts = String(id).split('_');
-  return parts.length >= 4 ? `${parts[1]} · ${parts[2]} · ${parts[3]}` : String(id);
-}
-/** Human label: first words of the content hook, falling back to the id. */
-function displayLabel(id, hook) {
-  const words = clip(hook, 200).split(' ').filter(Boolean);
-  if (words.length >= 3) return words.slice(0, 7).join(' ') + (words.length > 7 ? '…' : '');
-  return shortName(id);
-}
-function bestCqr(list) { return list.filter(Boolean).sort((a, b) => (S.cqrRank[a] ?? 9) - (S.cqrRank[b] ?? 9))[0] || 'Invalid'; }
-function rankCmp(a, b) {
-  const c = (S.cqrRank[a.cqr] ?? 9) - (S.cqrRank[b.cqr] ?? 9); if (c) return c;
-  const h = num(b.hook_rate) - num(a.hook_rate); if (h) return h;
-  return num(b.hold_rate) - num(a.hold_rate);
-}
+// Segment granularity. Fixed intervals, not scene changes: retention data is
+// time-indexed, so to say "hold rate collapses at 6s and here is what was on
+// screen at 6s" the descriptions have to sit on the same time grid.
+const SEG_SECONDS = Number(process.env.SEGMENT_SECONDS || 2);
+const MAX_SEGMENTS = Number(process.env.MAX_SEGMENTS || 60);
 
-// ---------------------------------------------------------------
-// Queries
-// ---------------------------------------------------------------
-
-async function qCreatives(pool, brand) {
-  const { rows } = await pool.query(
-    `select c.${C.id} as id, c.${C.hook} as hook, c.${C.format} as format, c.${C.productRole} as product_role,
-            c.${C.type} as type, c.${C.campaign} as campaign, c.${C.isRepurposed} as is_repurposed,
-            c.${C.parentId} as parent_id, c.${C.publishedAt} as published_at, c.${C.durationS} as duration_s,
-            cr.${CR.name} as creator,
-            coalesce(c.${C.ttLink}, c.${C.igLink}, c.${C.fbLink}) as permalink
-     from ${T.creatives} c
-     left join ${T.creators} cr on cr.${CR.id} = c.${C.creatorId}
-     where c.${C.brand} = $1`, [brand]);
-  return new Map(rows.map((r) => [r.id, r]));
+/**
+ * Widen the interval rather than truncating long videos. A 149s video at 2s
+ * needs 75 windows; capping at 60 described only the first 120s and left the
+ * last 29 unanalysed. Stepping to 3s covers the whole thing in 50 windows,
+ * which also keeps output tokens — and the model's tendency to give up on
+ * long lists — under control.
+ */
+function stepFor(duration) {
+  if (!duration || duration <= 0) return SEG_SECONDS;
+  let step = SEG_SECONDS;
+  while (Math.ceil(duration / step) > MAX_SEGMENTS) step += 1;
+  return step;
 }
 
-async function qPaid(pool, view, brand, platform) {
-  const { rows } = await pool.query(
-    `select ${P.creativeId} as id, ${P.spend} as spend, ${P.reach} as reach, ${P.impressions} as impressions,
-            ${P.hookRate} as hook_rate, ${P.holdRate} as hold_rate, ${P.hookQ} as hook_q, ${P.holdQ} as hold_q,
-            ${P.vtr} as vtr, ${P.avgWatchTime} as avg_watch_time, ${P.cqr} as cqr, ${P.isActive} as is_active,
-            ${P.durationS} as duration_s, ${P.w25} as w25, ${P.w50} as w50, ${P.w75} as w75, ${P.w100} as w100,
-            ${P.verdict} as verdict, ${P.working} as working, ${P.notWorking} as not_working,
-            ${P.action} as action, ${P.actionType} as action_type, ${P.priority} as priority,
-            ${P.confidence} as confidence, ${P.actionStatus} as action_status
-     from ${view} where ${P.brand} = $1 and ${P.creativeId} is not null`, [brand]);
-  return rows.map((r) => ({ ...r, platform }));
+// Structured output. responseMimeType alone asks for JSON without saying what
+// shape; a schema constrains it, which is what stops the model returning an
+// object where an array is expected or renaming keys.
+const RESPONSE_SCHEMA = {
+  type: 'object',
+  properties: {
+    duration: { type: 'number' },
+    format: {
+      type: 'string',
+      enum: ['music_video', 'product_demo', 'talking_head', 'testimonial',
+             'lifestyle', 'tutorial', 'ugc', 'animation', 'other'],
+    },
+    product_role: { type: 'string', enum: ['hero', 'featured', 'incidental', 'absent'] },
+    format_note: { type: 'string' },
+    hook: { type: 'string' },
+    timeline: {
+      type: 'array',
+      items: {
+        type: 'object',
+        properties: {
+          t: { type: 'number' },
+          d: { type: 'string' },
+        },
+        required: ['t', 'd'],
+      },
+    },
+    // ---- Ask Lens creative attributes ----------------------------------
+    // Structured dimensions so "what type of hooks work for us" is a computed
+    // crosstab, not a guess over free text. Enums match the CHECK constraints
+    // in migration 003 exactly; a mismatch will fail the insert loudly.
+    content_intent: {
+      type: 'string',
+      enum: ['educate', 'entertain', 'demonstrate', 'prove', 'announce', 'inspire', 'promote_offer'],
+    },
+    narrative_structure: {
+      type: 'string',
+      enum: ['problem_solution', 'story', 'tips', 'demo', 'montage', 'testimonial_arc', 'performance'],
+    },
+    hook_device: {
+      type: 'string',
+      enum: ['question', 'bold_claim', 'problem', 'product_reveal', 'face_to_camera',
+             'motion', 'text_overlay', 'sound', 'before_after', 'unexpected_visual'],
+    },
+    hook_subject: { type: 'string', enum: ['person', 'product', 'text', 'scene'] },
+    hook_pace: { type: 'string', enum: ['single_shot', 'fast_cut'] },
+    opens_with_product: { type: 'boolean' },
+    opens_with_face: { type: 'boolean' },
+    has_text_overlay: { type: 'boolean' },
+    timeline_attrs: {
+      type: 'array',
+      items: {
+        type: 'object',
+        properties: {
+          t: { type: 'number' },
+          on_screen: { type: 'string', enum: ['person', 'product', 'text', 'scene', 'mixed'] },
+          audio: { type: 'string', enum: ['speech', 'music', 'both', 'silent'] },
+          product_visible: { type: 'boolean' },
+        },
+        required: ['t', 'on_screen', 'audio', 'product_visible'],
+      },
+    },
+  },
+  required: ['duration', 'format', 'product_role', 'format_note', 'hook', 'timeline',
+             'content_intent', 'narrative_structure', 'hook_device', 'hook_subject', 'hook_pace',
+             'opens_with_product', 'opens_with_face', 'has_text_overlay', 'timeline_attrs'],
+  propertyOrdering: ['duration', 'format', 'product_role', 'format_note', 'hook', 'timeline',
+                     'content_intent', 'narrative_structure', 'hook_device', 'hook_subject', 'hook_pace',
+                     'opens_with_product', 'opens_with_face', 'has_text_overlay', 'timeline_attrs'],
+};
+
+function buildPrompt(hintDuration) {
+  const dur = hintDuration && hintDuration > 0 ? hintDuration : null;
+  const step = stepFor(dur);
+  const n = dur ? Math.ceil(dur / step) : null;
+
+  return `Watch this video carefully and describe it on a fixed time grid.
+
+Return ONE JSON object with these keys:
+
+"duration": the exact length of the video in seconds (number).
+
+"format": what kind of video this is. Exactly one of:
+  "music_video" — a song is the primary content and someone performs it on screen or as the audio.
+  "product_demo" — the product and how it is used or what it does is the main subject.
+  "talking_head" — a person addresses the camera directly for most of the runtime.
+  "testimonial" — a person recounts their own experience with the product.
+  "lifestyle" — mood, scenery and daily-life moments; the product is incidental to the scene.
+  "tutorial" — the video teaches steps, a routine or a how-to.
+  "ugc" — casual, handheld, creator-style footage.
+  "animation" — animated or motion graphics with no live footage.
+  "other" — none of the above fit.
+
+"product_role": how present the product is. Exactly one of "hero" (the product is the main subject and on screen most of the time), "featured" (it has a clear moment but is not the subject throughout), "incidental" (it appears briefly or as a prop), "absent" (it never appears on screen).
+
+"format_note": one sentence explaining the classification, naming who is on screen and what they are doing in relation to the brand. Example: "Original song performed by the artist on screen; the lotion appears as a prop in the closing scene." If someone sings, say so here and do not describe the singing as speech.
+
+"hook": 1-2 sentences describing the opening hook — what grabs attention in the first two seconds.
+
+"timeline": an array of ${n ? `exactly ${n}` : ''} objects, one per ${step}-second window, covering the whole video from 0 to the end with no gaps. Each object:
+  { "t": <window start in seconds, a multiple of ${step}>,
+    "d": "<one sentence, present tense, describing what is on screen and what is said or heard in that window>" }
+Cover EVERY window in order. Do NOT merge, skip or group windows — a window where little happens still gets its own entry saying so. ${n ? `The array must contain ${n} entries: t = 0, ${step}, ${step * 2}, and so on up to ${(n - 1) * step}.` : ''} If a window is visually similar to the one before, say what changed rather than repeating the text. Name what matters for performance: who is on screen, what they do, on-screen text, product visibility, scene cuts, and audio or voiceover. When someone speaks or sings, write the actual words as close to verbatim as you can make out — do not just note that speech or a voiceover is happening. If a word is genuinely unclear, give your best guess followed by a question mark rather than skip it.
+
+TRANSCRIBE IN THE LANGUAGE SPOKEN. Sri Lankan content is often in Sinhala or Tamil, sometimes mixed with English in the same line. Write the words in the language they are sung or spoken in, using that language's own script, and do not translate them. Never leave words out because they are not in English.
+
+LYRICS COUNT AS SPEECH. In a music video the lyrics are the content, so a window over a sung line must contain that line. Descriptions like "she sings into a microphone", "the chorus plays" or "rap section performed" without the words are not acceptable on their own — the words are what is being asked for. Instrumental passages with no vocals are the one exception; say so plainly for those windows.
+
+"content_intent": what job this creative is doing. Exactly one of:
+  "educate" (teaches the viewer something they did not know),
+  "entertain" (the point is enjoyment: music, comedy, spectacle),
+  "demonstrate" (shows the product working or being used),
+  "prove" (evidence that it works: results, before and after, a test),
+  "announce" (news: a launch, a campaign, an event),
+  "inspire" (aspiration, emotion, identity),
+  "promote_offer" (a specific offer, price, contest or promotion).
+
+"narrative_structure": how the creative is built. Exactly one of
+  "problem_solution", "story", "tips", "demo", "montage", "testimonial_arc", "performance".
+
+For the next five keys, judge ONLY the first 3 seconds. Ignore everything after 3 seconds.
+
+"hook_device": the opening move. Exactly one of:
+  "question" (asks the viewer something, spoken or on screen),
+  "bold_claim" (a strong statement or promise),
+  "problem" (shows a problem or pain point),
+  "product_reveal" (the product is the first thing shown),
+  "face_to_camera" (a person addresses the viewer directly),
+  "motion" (movement, dance or action carries the open),
+  "text_overlay" (on-screen text is the primary opening element),
+  "sound" (a distinctive sound or music sting leads),
+  "before_after" (a contrast or transformation is set up immediately),
+  "unexpected_visual" (something surprising or unusual).
+  Pick the single device that does the most work. If two apply, choose the one a viewer would notice first.
+
+"hook_subject": what is mainly on screen in the first 3 seconds. One of "person", "product", "text", "scene".
+
+"hook_pace": "single_shot" if the first 3 seconds are one continuous shot, "fast_cut" if there is more than one cut.
+
+"opens_with_product": true if the product is visible within the first 3 seconds.
+"opens_with_face": true if a human face is visible within the first 3 seconds.
+"has_text_overlay": true if on-screen text appears anywhere in the video.
+
+"timeline_attrs": the same windows as "timeline", structured. Use exactly the same number of entries and the same "t" values as "timeline". Each object:
+  { "t": <same window start as the timeline entry>,
+    "on_screen": the dominant thing on screen, one of "person", "product", "text", "scene", "mixed",
+    "audio": one of "speech", "music", "both", "silent",
+    "product_visible": true if the product is visible in that window }
+
+Return only the JSON object. No markdown, no commentary.`;
 }
 
-async function qOrganic(pool, brand) {
-  const { rows } = await pool.query(
-    `select o.${OR.creativeId} as id, o.${OR.platform} as platform, o.${OR.views} as views, o.${OR.reach} as reach,
-            o.${OR.totalInteractions} as total_interactions, s.${O.cqr} as cqr,
-            s.${O.engagementRate} as engagement_rate, s.${O.retentionRate} as retention_rate
-     from ${T.organicRaw} o
-     join ${T.creatives} c on c.${C.id} = o.${OR.creativeId}
-     left join ${T.organicScored} s on s.${O.creativeId} = o.${OR.creativeId} and s.${O.platform} = o.${OR.platform}
-     where c.${C.brand} = $1`, [brand]);
-  return rows;
-}
+// ── Step 1: CDN link ──────────────────────────────────────────────────────────
+async function resolveMediaUrl(mediaUrl) {
+  if (!process.env.RAPIDAPI_KEY) throw new Error('RAPIDAPI_KEY is not set.');
 
-async function qBoost(pool, brand) {
-  const { rows } = await pool.query(
-    `select ob.${OB.creativeId} as id, ob.${OB.bestCqr} as best_cqr, ob.${OB.isValidated} as is_validated,
-            bs.${B.isBoosted} as is_boosted, bs.${B.onMeta} as on_meta, bs.${B.onTiktok} as on_tiktok
-     from ${T.organicBest} ob
-     left join ${T.boostStatus} bs on bs.${B.creativeId} = ob.${OB.creativeId}
-     where ob.${OB.brand} = $1`, [brand]);
-  return rows;
-}
+  const { data } = await axios.request({
+    method: 'GET',
+    url: `https://${RAPIDAPI_HOST}/fetch`,
+    params: { url: mediaUrl },
+    headers: {
+      'X-RapidAPI-Key': process.env.RAPIDAPI_KEY,
+      'X-RapidAPI-Host': RAPIDAPI_HOST,
+    },
+    timeout: 60000,
+  });
 
-async function qThresholds(pool, brand) {
-  const { rows } = await pool.query(
-    `select ${TH.platform} as platform, ${TH.metric} as metric, ${TH.minDur} as min_dur, ${TH.maxDur} as max_dur,
-            ${TH.poorLt} as poor_lt, ${TH.goodGte} as good_gte
-     from ${T.thresholds} where ${TH.brand} = $1
-     order by platform, metric, min_dur`, [brand]);
-  return rows;
-}
-
-async function qMonthly(pool, brand) {
-  const { rows } = await pool.query(
-    `select month::text as month, act_spend, act_reach, act_impressions, act_frequency, act_engagement_rate,
-            kpi_spend, kpi_reach, kpi_impressions, kpi_frequency, kpi_engagement_rate
-     from ${T.accountMonthly} where brand_id = $1 order by month desc limit 3`, [brand]);
-  return rows.reverse();
-}
-
-async function qFreshness(pool, brand) {
-  const { rows } = await pool.query(
-    `select max(date)::text as max_date, count(*) as row_count from ${T.paidDaily} where brand_id = $1`, [brand]);
-  return rows[0] || { max_date: null, row_count: 0 };
-}
-
-// ---------------------------------------------------------------
-// Merge, mirroring creatives.js
-// ---------------------------------------------------------------
-
-function mergePaid(meta, tt) {
-  const both = [meta, tt].filter(Boolean);
-  if (!both.length) return null;
-  const pick = (f) => both.map((x) => x[f]);
-  const primary = meta || tt;
-  return {
-    platforms: both.map((x) => x.platform),
-    cqr: bestCqr(pick('cqr')),
-    hook_rate: r1(avg(pick('hook_rate'))), hold_rate: r1(Math.max(...pick('hold_rate').map(num))),
-    hook_q: primary.hook_q || '', hold_q: primary.hold_q || '',
-    vtr: r1(avg(pick('vtr'))), avg_watch_time: r1(avg(pick('avg_watch_time'))),
-    spend: pick('spend').reduce((s, v) => s + num(v), 0),
-    reach: Math.max(...pick('reach').map(num)),
-    impressions: pick('impressions').reduce((s, v) => s + num(v), 0),
-    is_active: both.some((x) => x.is_active),
-    retention: [100, pctPt(primary.hook_rate), pctPt(primary.w25), pctPt(primary.w50), pctPt(primary.w75), pctPt(primary.w100)],
-    verdict: primary.verdict || '', working: primary.working || '', not_working: primary.not_working || '',
-    action: primary.action || '', action_type: primary.action_type || '', priority: primary.priority || '',
-    confidence: primary.confidence || '', action_status: primary.action_status || '',
-    per_platform: Object.fromEntries(both.map((x) => [x.platform, {
-      cqr: x.cqr, hook_rate: r1(x.hook_rate), hold_rate: r1(x.hold_rate), hook_q: x.hook_q, hold_q: x.hold_q,
-      spend: num(x.spend), reach: num(x.reach), impressions: num(x.impressions), is_active: !!x.is_active,
-      retention: [100, pctPt(x.hook_rate), pctPt(x.w25), pctPt(x.w50), pctPt(x.w75), pctPt(x.w100)],
-    }])),
-  };
-}
-
-// ---------------------------------------------------------------
-// Digest
-// ---------------------------------------------------------------
-
-function rollup(rows, keyFn) {
-  const out = {};
-  for (const c of rows) {
-    const k = keyFn(c) || 'unclassified';
-    const g = (out[k] = out[k] || { n: 0, spend: 0, reach: 0, hooks: [], holds: [], good: 0, avg: 0, poor: 0, active: 0 });
-    g.n++; g.spend += num(c.spend); g.reach += num(c.reach); g.hooks.push(c.hook_rate); g.holds.push(c.hold_rate);
-    if (c.cqr === 'Good') g.good++; else if (c.cqr === 'Average') g.avg++; else if (c.cqr === 'Poor') g.poor++;
-    if (c.is_active) g.active++;
+  // The API returns HTTP 200 with ok:false on failure, so the status code
+  // alone is not enough to tell success from failure.
+  if (!data || data.ok === false) {
+    throw new Error(`API rejected the link: ${(data && (data.error || data.message)) || 'unknown reason'}`);
   }
-  for (const g of Object.values(out)) { g.hook_rate = r1(avg(g.hooks)); g.hold_rate = r1(avg(g.holds)); delete g.hooks; delete g.holds; }
+  if (!data.download_url) throw new Error('API returned no download_url.');
+  return data;
+}
+
+// ── Step 2: download ──────────────────────────────────────────────────────────
+async function streamToFile(url, destPath) {
+  // CDN links are signed and short-lived, and Instagram's fbcdn rejects
+  // requests without a browser-ish user agent.
+  const res = await axios({
+    url, method: 'GET', responseType: 'stream',
+    timeout: 180000, maxRedirects: 5,
+    headers: { 'user-agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0 Safari/537.36' },
+  });
+
+  await new Promise((resolve, reject) => {
+    const writer = fs.createWriteStream(destPath);
+    res.data.pipe(writer);
+    writer.on('finish', resolve);
+    writer.on('error', err => {
+      try { if (fs.existsSync(destPath)) fs.unlinkSync(destPath); } catch (e) {}
+      reject(err);
+    });
+  });
+
+  const { size } = fs.statSync(destPath);
+  if (size < 10240) {
+    fs.unlinkSync(destPath);
+    throw new Error('Downloaded file was too small to be a video.');
+  }
+
+  // An image post downloads perfectly well and passes the size check, and is
+  // then sent to Gemini labelled video/mp4. Gemini answers with a 500 INTERNAL
+  // that says nothing about the real problem, and all three job attempts burn
+  // identically. Check what the bytes actually are and say so.
+  const kind = sniffMediaType(destPath);
+  if (kind !== 'video') {
+    fs.unlinkSync(destPath);
+    throw new Error(kind === 'image'
+      ? 'That link is a static image post, not a video. Only videos can be analysed.'
+      : `Downloaded file is not a video (detected: ${kind}).`);
+  }
+  return destPath;
+}
+
+/**
+ * Identify a file from its magic bytes rather than trusting the extension or
+ * the URL: 'video', 'image', or a short label for anything else.
+ */
+function sniffMediaType(filePath) {
+  const fd = fs.openSync(filePath, 'r');
+  const buf = Buffer.alloc(16);
+  try { fs.readSync(fd, buf, 0, 16, 0); } finally { fs.closeSync(fd); }
+
+  // ISO base media (mp4/mov/m4v): 'ftyp' at offset 4
+  if (buf.slice(4, 8).toString('latin1') === 'ftyp') return 'video';
+  if (buf[0] === 0x1A && buf[1] === 0x45 && buf[2] === 0xDF && buf[3] === 0xA3) return 'video'; // webm/mkv
+  if (buf.slice(0, 3).toString('latin1') === 'FLV') return 'video';
+  if (buf.slice(0, 4).toString('latin1') === 'RIFF' && buf.slice(8, 12).toString('latin1') === 'AVI ') return 'video';
+
+  if (buf[0] === 0xFF && buf[1] === 0xD8 && buf[2] === 0xFF) return 'image';                      // jpeg
+  if (buf.slice(0, 8).equals(Buffer.from([0x89,0x50,0x4E,0x47,0x0D,0x0A,0x1A,0x0A]))) return 'image'; // png
+  if (buf.slice(0, 4).toString('latin1') === 'RIFF' && buf.slice(8, 12).toString('latin1') === 'WEBP') return 'image';
+  if (buf.slice(0, 3).toString('latin1') === 'GIF') return 'image';
+  if (buf.slice(4, 12).toString('latin1') === 'ftypavif') return 'image';
+
+  if (buf.slice(0, 5).toString('latin1') === '<!DOC' || buf.slice(0, 5).toString('latin1') === '<html') return 'an HTML page';
+  return 'unrecognised format';
+}
+
+// ── Gemini call wrapper ───────────────────────────────────────────────────────
+// Google returns 500 INTERNAL / 503 UNAVAILABLE intermittently. Left alone one
+// of those fails the whole job, throwing away a download that succeeded. These
+// retry in place, and the error is labelled so a failure says which call broke.
+const GEMINI_TRANSIENT = /\b(429|500|502|503|504)\b|INTERNAL|UNAVAILABLE|RESOURCE_EXHAUSTED|ECONNRESET|ETIMEDOUT|socket hang up/i;
+
+async function geminiCall(label, fn, { tries = 3, baseMs = 5000 } = {}) {
+  let lastErr;
+  for (let attempt = 1; attempt <= tries; attempt++) {
+    try {
+      return await fn();
+    } catch (err) {
+      lastErr = err;
+      const msg = (err && err.message) ? err.message : String(err);
+      const transient = GEMINI_TRANSIENT.test(msg);
+      if (!transient || attempt === tries) {
+        err.message = `Gemini ${label} failed${transient ? ` after ${tries} attempts` : ''}: ${msg}`;
+        throw err;
+      }
+      const wait = baseMs * Math.pow(2, attempt - 1);
+      console.warn(`[gemini] ${label} transient error (attempt ${attempt}/${tries}), retrying in ${wait / 1000}s: ${msg.slice(0, 180)}`);
+      await new Promise(r => setTimeout(r, wait));
+    }
+  }
+  throw lastErr;
+}
+
+// Videos at or under this size are sent inline with the analysis request
+// instead of through the Files API. Gemini caps a request at 20MB total and
+// base64 inflates by about a third, so 12MB of video is the safe ceiling.
+// This matters because the upload and status-poll calls are where the 500
+// INTERNAL errors have been landing: inline removes both of them.
+// Sending the video inline removes the Files API upload and status calls.
+// Off by default: the Files API path is the one that has been running, and
+// the 500s that prompted this turned out to be image posts rather than a
+// problem with it. Set GEMINI_INLINE_MAX_BYTES to enable (12582912 = 12MB).
+const INLINE_MAX_BYTES = Number(process.env.GEMINI_INLINE_MAX_BYTES || 0);
+
+// ── Steps 3-4: Gemini ─────────────────────────────────────────────────────────
+async function analyseVideo(ai, videoPath, hintDuration) {
+  const { size } = fs.statSync(videoPath);
+  const inline = size <= INLINE_MAX_BYTES;
+  let geminiFile = null;
+  let videoPart;
+
+  if (inline) {
+    // No upload, no status poll: the bytes travel with the request.
+    console.log(`[gemini] ${(size / 1048576).toFixed(1)}MB — sending inline (no Files API)`);
+    videoPart = {
+      inlineData: { mimeType: 'video/mp4', data: fs.readFileSync(videoPath).toString('base64') },
+    };
+  } else {
+    console.log(`[gemini] ${(size / 1048576).toFixed(1)}MB — too large for inline, using Files API`);
+    geminiFile = await geminiCall('file upload',
+      () => ai.files.upload({ file: videoPath, mimeType: 'video/mp4' }));
+    let state = await geminiCall('file status', () => ai.files.get({ name: geminiFile.name }));
+    const deadline = Date.now() + 5 * 60 * 1000;
+    while (state.state === 'PROCESSING') {
+      if (Date.now() > deadline) throw new Error('Gemini processing timed out after 5 minutes.');
+      await new Promise(r => setTimeout(r, 3000));
+      state = await geminiCall('file status', () => ai.files.get({ name: geminiFile.name }));
+    }
+    if (state.state === 'FAILED') {
+      // Gemini returns a reason on the file object. Without it every failure
+      // reads the same in the notification, so a transient backend wobble is
+      // indistinguishable from an unsupported codec.
+      const e = state.error || {};
+      const why = e.message || e.reason || (Object.keys(e).length ? JSON.stringify(e) : 'no reason given');
+      throw new Error(`Gemini processing failed: ${why}`);
+    }
+    videoPart = { fileData: { fileUri: geminiFile.uri, mimeType: 'video/mp4' } };
+  }
+
+  if (MEDIA_RESOLUTION) {
+    videoPart.videoMetadata = { mediaResolution: `MEDIA_RESOLUTION_${MEDIA_RESOLUTION.toUpperCase()}` };
+  }
+
+  try {
+    const result = await geminiCall('analysis', () => ai.models.generateContent({
+      model: GEMINI_MODEL,
+      contents: [{ role: 'user', parts: [
+        videoPart,
+        { text: buildPrompt(hintDuration) },
+      ]}],
+      // A 90s video at 2s granularity is ~45 timeline entries plus the four
+      // quartile segments, and thinking tokens count toward this ceiling.
+      config: {
+        responseMimeType: 'application/json',
+        responseSchema: RESPONSE_SCHEMA,
+        maxOutputTokens: 16000,
+        ...(THINKING_BUDGET !== null && Number.isFinite(THINKING_BUDGET)
+          ? { thinkingConfig: { thinkingBudget: THINKING_BUDGET } }
+          : {}),
+      },
+    }));
+    // Log real token usage. Thinking tokens bill at output rates and are the
+    // hardest part of the cost to predict, so measure rather than estimate.
+    const u = result.usageMetadata || {};
+    const inTok = u.promptTokenCount || 0;
+    const outTok = u.candidatesTokenCount || 0;
+    const think = u.thoughtsTokenCount || 0;
+    const IN_RATE = Number(process.env.GEMINI_IN_RATE || 0.75) / 1e6;
+    const OUT_RATE = Number(process.env.GEMINI_OUT_RATE || 3.75) / 1e6;
+    const usage = {
+      model: GEMINI_MODEL,
+      input_tokens: inTok,
+      output_tokens: outTok,
+      thinking_tokens: think,
+      total_tokens: u.totalTokenCount || (inTok + outTok + think),
+      // Thinking tokens bill at output rates.
+      cost_usd: Number((inTok * IN_RATE + (outTok + think) * OUT_RATE).toFixed(6)),
+    };
+    if (inTok || outTok) {
+      console.log(`[gemini] model=${usage.model} in=${inTok} out=${outTok} thinking=${think} ` +
+                  `total=${usage.total_tokens} cost=$${usage.cost_usd.toFixed(4)}`);
+    }
+
+    const parsed = JSON.parse(result.text.replace(/```json|```/g, '').trim());
+    // Non-enumerable so it rides along for callers that want it without ever
+    // showing up in JSON.stringify of the analysis itself.
+    Object.defineProperty(parsed, '_usage', { value: usage, enumerable: false });
+    return parsed;
+  } finally {
+    // Only the Files API path leaves anything to clean up.
+    if (geminiFile) {
+      try { await ai.files.delete({ name: geminiFile.name }); } catch (e) {}
+    }
+  }
+}
+
+/**
+ * Models drift on shape: t may come back as "0", "0s" or "00:04", and windows
+ * can arrive out of order or duplicated. Normalise to { t: <number>, d: <string> }
+ * sorted and de-duplicated, so anything reading this can trust the grid.
+ */
+function normaliseTimeline(raw) {
+  if (!Array.isArray(raw)) return [];
+  const seen = new Set();
+  const out = [];
+
+  for (const item of raw) {
+    if (!item) continue;
+    const d = String(item.d || item.desc || item.description || '').trim();
+    if (!d) continue;
+
+    let t = item.t !== undefined ? item.t : (item.start !== undefined ? item.start : item.time);
+    if (typeof t === 'string') {
+      const mmss = t.match(/^(\d+):(\d+(?:\.\d+)?)$/);
+      t = mmss ? Number(mmss[1]) * 60 + Number(mmss[2]) : parseFloat(t.replace(/[^\d.]/g, ''));
+    }
+    t = Number(t);
+    if (!Number.isFinite(t) || t < 0) continue;
+
+    t = Math.round(t * 10) / 10;
+    if (seen.has(t)) continue;
+    seen.add(t);
+    out.push({ t, d });
+  }
+
+  out.sort((x, y) => x.t - y.t);
+  // No hard slice: stepFor already bounds the count, and truncating here
+  // would silently drop the end of a video the model described correctly.
   return out;
 }
 
-function creativeLine(c) {
-  const plats = (c.platforms || []).map((p) => S.platformLabels[p] || p).join('+');
-  const ret = (c.retention || []).map((v) => (v === null ? '-' : v)).join('/');
-  const bits = [
-    c.id, c.cqr,
-    `hook ${fmtPct(c.hook_rate)}${c.hook_q ? ' ' + c.hook_q : ''}`,
-    `hold ${fmtPct(c.hold_rate)}${c.hold_q ? ' ' + c.hold_q : ''}`,
-    `ret ${ret}`,
-    c.duration_s ? `${Math.round(c.duration_s)}s` : null,
-    plats, c.type || null, c.format || 'unclassified',
-    c.campaign ? `camp:${clip(c.campaign, 30)}` : null,
-    c.creator ? `creator:${clip(c.creator, 24)}` : null,
-    c.is_active ? 'ACTIVE' : 'STOPPED',
-    `spend ${fmtCount(c.spend)}`, `reach ${fmtCount(c.reach)}`,
-    c.origin === 'repurposed' ? `repurposed of ${c.parent_id || '?'}` : null,
-  ].filter(Boolean);
-  const lines = [bits.join(' | ')];
-  if (c.working || c.not_working || c.action) {
-    const d = [];
-    if (c.working) d.push(`works: ${clip(c.working, 90)}`);
-    if (c.not_working) d.push(`not: ${clip(c.not_working, 90)}`);
-    if (c.action) d.push(`do: ${clip(c.action, 90)}${c.priority ? ` [${c.priority}]` : ''}${c.action_status ? ` (${c.action_status})` : ''}`);
-    lines.push('    ' + d.join(' | '));
+// ── The job ───────────────────────────────────────────────────────────────────
+/**
+ * Derived creative metrics from the structured timeline. Computed here in
+ * code, never asked of the model: this is exactly the arithmetic that goes
+ * wrong silently when a model does it.
+ */
+function deriveTimelineMetrics(attrs) {
+  if (!Array.isArray(attrs) || !attrs.length) {
+    return { timeToProduct: null, productPct: null, cutsPer10s: null };
   }
-  return lines.join('\n');
+  const sorted = [...attrs]
+    .map((a) => ({ ...a, t: Number(a.t) }))
+    .filter((a) => Number.isFinite(a.t))
+    .sort((a, b) => a.t - b.t);
+  if (!sorted.length) return { timeToProduct: null, productPct: null, cutsPer10s: null };
+  const step = sorted.length > 1 ? (sorted[1].t - sorted[0].t) || 2 : 2;
+  const first = sorted.find((a) => a.product_visible === true);
+  const productPct = Math.round(sorted.filter((a) => a.product_visible === true).length / sorted.length * 100);
+  let changes = 0;
+  for (let i = 1; i < sorted.length; i += 1) if (sorted[i].on_screen !== sorted[i - 1].on_screen) changes += 1;
+  const runtime = sorted.length * step;
+  const cutsPer10s = runtime > 0 ? Math.round((changes / runtime) * 10 * 10) / 10 : null;
+  return { timeToProduct: first ? first.t : null, productPct, cutsPer10s };
 }
 
-function renderDigest(x) {
-  const label = S.brandLabels[x.brand] || x.brand;
-  const L = [];
-  L.push(`SNAPSHOT: ${label} | lifetime per creative | paid data through ${x.freshness.max_date || 'unknown'}`);
-  L.push('');
-  L.push('HOW TO RANK');
-  L.push('Best performing means best CQR first, then hook rate, then hold rate. Then engagement rate, reach, video views.');
-  L.push('Strong/Weak next to hook and hold are this brand\'s own duration-aware judgments. Use those words.');
-  L.push('CTR, VTR, CPM, CPC are vanity here: never volunteer them.');
-  L.push('');
-
-  if (x.thresholds.length || x.monthly.length) {
-    L.push(`BENCHMARKS (this brand's own, the only benchmarks you may cite)`);
-    for (const t of x.thresholds) {
-      const dur = (t.min_dur !== null || t.max_dur !== null) ? ` for ${num(t.min_dur)}-${t.max_dur === null ? '∞' : num(t.max_dur)}s` : '';
-      L.push(`${S.platformLabels[t.platform] || t.platform} ${t.metric}${dur}: Poor below ${fmtPct(t.poor_lt)}, Good from ${fmtPct(t.good_gte)}`);
-    }
-    const m = x.monthly[x.monthly.length - 1];
-    if (m) L.push(`Monthly plan ${m.month.slice(0, 7)}: spend ${money(m.kpi_spend)}, reach ${fmtCount(m.kpi_reach)}, impressions ${fmtCount(m.kpi_impressions)}, frequency ${m.kpi_frequency ?? 'n/a'}, ER ${fmtPct(m.kpi_engagement_rate, 2)}`);
-    L.push('');
-  }
-
-  L.push('PAID TOTALS');
-  L.push(`${x.paid.length} boosted creatives (${x.activeCount} active) | spend ${money(x.totals.spend)} | reach ${fmtCount(x.totals.reach)} | impressions ${fmtCount(x.totals.impressions)}`);
-  L.push(`CQR mix: ${x.cqrMix.Good} Good, ${x.cqrMix.Average} Average, ${x.cqrMix.Poor} Poor, ${x.cqrMix.Invalid} Invalid`);
-  L.push(`Spend by CQR: Good ${money(x.spendByCqr.Good)} | Average ${money(x.spendByCqr.Average)} | Poor ${money(x.spendByCqr.Poor)}`);
-  L.push(`Poor and still ACTIVE: ${x.poorActive.length} creatives, ${money(x.poorActiveSpend)} lifetime spend`);
-  L.push(`Brand avg hook ${fmtPct(x.totals.hook_rate)} | avg hold ${fmtPct(x.totals.hold_rate)}`);
-  L.push('');
-
-  L.push(`ALL BOOSTED CREATIVES, ranked (CQR, hook, hold)${x.tableNote}`);
-  L.push('Format: id | CQR | hook | hold | ret 0s/hook/25%/50%/75%/100% | duration | platforms | type | format | campaign | creator | status | spend | reach');
-  x.table.forEach((c) => L.push(creativeLine(c)));
-  L.push('');
-
-  const roll = (title, obj, labelFn) => {
-    const keys = Object.keys(obj); if (!keys.length) return;
-    L.push(title);
-    for (const k of keys) { const g = obj[k]; L.push(`${labelFn ? labelFn(k) : k}: ${g.n} creatives (${g.active} active), spend ${money(g.spend)}, avg hook ${fmtPct(g.hook_rate)}, avg hold ${fmtPct(g.hold_rate)}, ${g.good} Good / ${g.avg} Avg / ${g.poor} Poor`); }
-    L.push('');
+/**
+ * The attribute values that go into the creatives row. Shared by the live
+ * pipeline and the backfill so both write identical data.
+ */
+function attributeColumns(a) {
+  const attrs = Array.isArray(a.timeline_attrs) ? a.timeline_attrs : [];
+  const d = deriveTimelineMetrics(attrs);
+  return {
+    content_intent: a.content_intent || null,
+    narrative_structure: a.narrative_structure || null,
+    hook_device: a.hook_device || null,
+    hook_subject: a.hook_subject || null,
+    hook_pace: a.hook_pace || null,
+    opens_with_product: typeof a.opens_with_product === 'boolean' ? a.opens_with_product : null,
+    opens_with_face: typeof a.opens_with_face === 'boolean' ? a.opens_with_face : null,
+    has_text_overlay: typeof a.has_text_overlay === 'boolean' ? a.has_text_overlay : null,
+    timeline_attrs: JSON.stringify(attrs),
+    time_to_product_s: d.timeToProduct,
+    product_screen_pct: d.productPct,
+    cuts_per_10s: d.cutsPer10s,
   };
-  roll('BY PLATFORM (paid)', x.byPlatform, (k) => S.platformLabels[k] || k);
-  roll('BY TYPE (paid)', x.byType);
-  roll('BY FORMAT (paid)', x.byFormat);
-  roll('BY CAMPAIGN (paid)', x.byCampaign);
-  if (Object.keys(x.byCreator).length) roll('BY CREATOR (Others Say, paid)', x.byCreator);
-
-  if (x.organic.length) {
-    L.push('ORGANIC (lifetime per post, not date filtered)');
-    L.push(`${x.organicSummary.n} posts | views ${fmtCount(x.organicSummary.views)} | reach ${fmtCount(x.organicSummary.reach)} | CQR ${x.organicSummary.good} Good / ${x.organicSummary.avg} Average / ${x.organicSummary.poor} Poor`);
-    for (const p of S.organicPlatforms) { const s = x.organicByPlatform[p]; if (s && s.n) L.push(`${S.platformLabels[p]}: ${s.n} posts, views ${fmtCount(s.views)}, avg ER ${fmtPct(s.engagement_rate, 2)}, ${s.good} Good`); }
-    L.push('Top organic by CQR then views:');
-    x.organicTop.forEach((o) => L.push(`${o.id} | ${o.platform} | ${o.cqr || 'unscored'} | views ${fmtCount(o.views)} | ER ${fmtPct(o.engagement_rate, 2)} | retention ${fmtPct(o.retention_rate)}`));
-    L.push('');
-  }
-
-  L.push('BOOST WORKFLOW');
-  if (x.validatedUnboosted.length) {
-    L.push(`Validated organic posts NOT yet boosted (${x.validatedUnboosted.length}): ${x.validatedUnboosted.map((v) => `${v.id} (${v.best_cqr})`).join(', ')}`);
-    L.push('The dashboard flags these after 48h. These are the boost candidates.');
-  } else L.push('Every validated organic post is boosted.');
-  L.push('');
-
-  if (x.monthly.length) {
-    L.push('BRAND MONTHLY, actual vs plan (KPI tab)');
-    x.monthly.forEach((m) => L.push(`${m.month.slice(0, 7)}: spend ${money(m.act_spend)} vs ${money(m.kpi_spend)} | reach ${fmtCount(m.act_reach)} vs ${fmtCount(m.kpi_reach)} | impr ${fmtCount(m.act_impressions)} vs ${fmtCount(m.kpi_impressions)} | freq ${m.act_frequency ?? 'n/a'} vs ${m.kpi_frequency ?? 'n/a'} | ER ${fmtPct(m.act_engagement_rate, 2)} vs ${fmtPct(m.kpi_engagement_rate, 2)}`));
-    L.push('');
-  }
-
-  L.push('RANKING RULES');
-  L.push(`Creatives under ${fmtCount(x.floor)} lifetime impressions are excluded from rankings; ${x.excluded} excluded. Not-boosted creatives have no paid row.`);
-  L.push('');
-  L.push('DATA GAPS');
-  L.push('Paid engagement rate is Meta only until TikTok engagement columns are populated. Organic ER covers all platforms.');
-  L.push('Paid figures are lifetime. For anything over time use get_series (spend, reach, impressions, video_views). Hook, hold and CQR have no daily series.');
-  L.push('');
-  L.push('NOT IN THIS SNAPSHOT');
-  L.push(`Daily or weekly series. Full per-platform retention curves (get_creative). Any brand other than ${label}. Never estimate a number not written above.`);
-  return L.join('\n');
 }
 
-// ---------------------------------------------------------------
-// Build
-// ---------------------------------------------------------------
+function makeProcessor(ai) {
+  return async function processJob(job) {
+    const d = job.data;
+    const { mediaUrl, platform } = d;
+    // let, not const: a collision with a different creative reassigns this below.
+    let creativeId = d.creativeId;
+    let videoPath = null;
 
-async function buildSnapshot(brand, _r, opts = {}) {
-  assertBrand(brand);
-  const pool = opts.pool || getPool();
-  const [creatives, metaRows, ttRows, organicRows, boostRows, thresholds, monthly, freshness] = await Promise.all([
-    qCreatives(pool, brand), qPaid(pool, T.paidMeta, brand, 'meta'), qPaid(pool, T.paidTiktok, brand, 'tiktok'),
-    qOrganic(pool, brand), qBoost(pool, brand), qThresholds(pool, brand), qMonthly(pool, brand), qFreshness(pool, brand),
-  ]);
-  const metaBy = new Map(metaRows.map((r) => [r.id, r])), ttBy = new Map(ttRows.map((r) => [r.id, r]));
-  const boostBy = new Map(boostRows.map((r) => [r.id, r]));
+    try {
+      await job.updateProgress({ step: 'resolving', pct: 10 });
+      const meta = await resolveMediaUrl(mediaUrl);
 
-  const paid = [], records = {};
-  for (const [id, c] of creatives) {
-    const m = mergePaid(metaBy.get(id), ttBy.get(id));
-    const bs = boostBy.get(id);
-    const rec = {
-      id, name: displayLabel(id, c.hook), short: shortName(id), hook: c.hook, format: c.format,
-      product_role: c.product_role, type: c.type, campaign: c.campaign, creator: c.creator,
-      origin: c.is_repurposed ? 'repurposed' : 'original', parent_id: c.parent_id,
-      published_at: c.published_at, duration_s: c.duration_s ?? (m && m.duration_s), permalink: c.permalink,
-      boosted: !!m, is_validated: !!(bs && bs.is_validated), organic_best_cqr: bs ? bs.best_cqr : null,
-      ...(m || {}),
-    };
-    records[id] = rec;
-    if (m) paid.push(rec);
-  }
+      await job.updateProgress({ step: 'downloading', pct: 30 });
+      videoPath = path.join(os.tmpdir(), `creative_${job.id}.mp4`);
+      await streamToFile(meta.download_url, videoPath);
 
-  const organic = organicRows.map((o) => ({ id: o.id, platform: o.platform, views: num(o.views), reach: num(o.reach), total_interactions: num(o.total_interactions), cqr: o.cqr, engagement_rate: r1(o.engagement_rate), retention_rate: r1(o.retention_rate) }));
-  for (const o of organic) { if (records[o.id]) { records[o.id].organic = records[o.id].organic || {}; records[o.id].organic[o.platform] = o; } }
+      await job.updateProgress({ step: 'analysing', pct: 60 });
+      const a = await analyseVideo(ai, videoPath, typeof meta.duration === 'number' ? meta.duration : null);
 
-  const totals = { spend: paid.reduce((s, c) => s + num(c.spend), 0), reach: paid.reduce((s, c) => s + num(c.reach), 0), impressions: paid.reduce((s, c) => s + num(c.impressions), 0), hook_rate: r1(avg(paid.map((c) => c.hook_rate))), hold_rate: r1(avg(paid.map((c) => c.hold_rate))) };
-  const floor = Math.max(S.volumeFloor.absoluteMin, Math.round(totals.impressions * S.volumeFloor.relativeShare));
-  const eligible = paid.filter((c) => num(c.impressions) >= floor);
-  const ranked = [...eligible].sort(rankCmp);
+      // A partial analysis is not worth storing — the dashboard labels
+      // segments by position, so a missing one mislabels the rest.
+      if (!a.hook || !String(a.hook).trim()) {
+        throw new Error('Analysis incomplete — no hook returned.');
+      }
 
-  // Table: everything if small; else top/bottom plus most recent.
-  let table = ranked, tableNote = '';
-  if (ranked.length > S.tableCap.maxRows) {
-    const tb = S.tableCap.topBottom;
-    const keep = new Set([...ranked.slice(0, tb), ...ranked.slice(-tb)].map((c) => c.id));
-    const recent = [...ranked].sort((a, b) => String(b.published_at || '').localeCompare(String(a.published_at || ''))).filter((c) => !keep.has(c.id)).slice(0, S.tableCap.maxRows - 2 * tb);
-    recent.forEach((c) => keep.add(c.id));
-    table = ranked.filter((c) => keep.has(c.id));
-    tableNote = ` (showing ${table.length} of ${ranked.length}: top ${tb}, bottom ${tb}, most recent; call rank_creatives for others)`;
-  }
+      const timeline = normaliseTimeline(a.timeline);
+      if (!timeline.length) {
+        throw new Error('Analysis incomplete — no timeline returned.');
+      }
 
-  const cqrMix = { Good: 0, Average: 0, Poor: 0, Invalid: 0 }, spendByCqr = { Good: 0, Average: 0, Poor: 0, Invalid: 0 };
-  for (const c of paid) { const k = cqrMix[c.cqr] !== undefined ? c.cqr : 'Invalid'; cqrMix[k]++; spendByCqr[k] += num(c.spend); }
-  const poorActive = paid.filter((c) => c.cqr === 'Poor' && c.is_active);
-  const poorActiveSpend = poorActive.reduce((s, c) => s + num(c.spend), 0);
+      // Models save output tokens by grouping windows ("0:14-0:30: she keeps
+      // talking"). That returns valid JSON with a sparse timeline, which would
+      // otherwise be stored as if complete. Check coverage against duration
+      // and fail the job so the retry gets another go.
+      const durForCheck = (typeof meta.duration === 'number' && meta.duration > 0)
+        ? meta.duration
+        : (Number.isFinite(parseFloat(a.duration)) ? parseFloat(a.duration) : null);
 
-  const byPlatform = {};
-  for (const p of S.platforms) {
-    const rows = paid.filter((c) => c.per_platform && c.per_platform[p]).map((c) => ({ ...c.per_platform[p], is_active: c.per_platform[p].is_active }));
-    if (rows.length) byPlatform[p] = rollup(rows, () => p)[p];
-  }
-  const byType = rollup(paid, (c) => c.type), byFormat = rollup(paid, (c) => c.format), byCampaign = rollup(paid, (c) => c.campaign);
-  const byCreator = rollup(paid.filter((c) => c.creator), (c) => c.creator);
+      if (durForCheck) {
+        const step = stepFor(durForCheck);
+        const expected = Math.ceil(durForCheck / step);
+        // 70%: allows a window or two of slack at the tail without accepting
+        // a timeline that has clearly been collapsed.
+        if (timeline.length < Math.floor(expected * 0.7)) {
+          throw new Error(
+            `Timeline too sparse — got ${timeline.length} windows for ${durForCheck.toFixed(0)}s, ` +
+            `expected about ${expected} at ${step}s. The model grouped intervals.`
+          );
+        }
+        const lastCovered = timeline[timeline.length - 1].t + step;
+        if (lastCovered < durForCheck * 0.8) {
+          throw new Error(
+            `Timeline stops at ${lastCovered.toFixed(0)}s of ${durForCheck.toFixed(0)}s — incomplete coverage.`
+          );
+        }
+      }
 
-  const organicSummary = { n: organic.length, views: organic.reduce((s, o) => s + o.views, 0), reach: organic.reduce((s, o) => s + o.reach, 0), good: organic.filter((o) => o.cqr === 'Good').length, avg: organic.filter((o) => o.cqr === 'Average').length, poor: organic.filter((o) => o.cqr === 'Poor').length };
-  const organicByPlatform = {};
-  for (const p of S.organicPlatforms) { const rows = organic.filter((o) => o.platform === p); organicByPlatform[p] = { n: rows.length, views: rows.reduce((s, o) => s + o.views, 0), engagement_rate: r1(avg(rows.map((o) => o.engagement_rate))), good: rows.filter((o) => o.cqr === 'Good').length }; }
-  const organicTop = [...organic].sort((a, b) => ((S.cqrRank[a.cqr] ?? 9) - (S.cqrRank[b.cqr] ?? 9)) || (b.views - a.views)).slice(0, 5);
-  const validatedUnboosted = boostRows.filter((r) => r.is_validated && !r.is_boosted);
+      // Gemini estimates duration by watching, and that drives the retention
+      // denominator. Anything outside 1-600s is a bad read, not a long video.
+      // The API's own duration wins when it gives one: TikTok does, Instagram
+      // returns null.
+      const apiDur = typeof meta.duration === 'number' ? meta.duration : null;
+      const aiDur = parseFloat(a.duration);
+      const guess = apiDur !== null ? apiDur : (Number.isFinite(aiDur) ? aiDur : null);
+      const safeDur = guess !== null && guess >= 1 && guess <= 600 ? guess : null;
 
-  // Cohort records so [[cohort:...]] markers render real numbers.
-  const cohort = (kind, obj) => { for (const [k, g] of Object.entries(obj)) records[`cohort:${kind}:${k}`] = { id: `cohort:${kind}:${k}`, kind, key: k, ...g }; };
-  cohort('platform', byPlatform); cohort('type', byType); cohort('format', byFormat); cohort('campaign', byCampaign); cohort('creator', byCreator);
+      // Insert the complete row only now. Nothing reaches the database
+      // without descriptions, so a failed job leaves no half-creative behind.
+      await job.updateProgress({ step: 'saving', pct: 90 });
+      // The upsert below makes a retry of this same job idempotent, which is
+      // what it is for. But if the id has been taken by a *different*
+      // creative since this job was queued, that same upsert would overwrite
+      // someone else's row. Claim a fresh id in that case rather than
+      // destroying it.
+      const { rows: held } = await query(
+        'select ig_link, fb_link, tt_link from creatives where creative_id = $1',
+        [creativeId]);
+      if (held.length) {
+        const mine = [d.ig, d.fb, d.tt].filter(Boolean);
+        const theirs = [held[0].ig_link, held[0].fb_link, held[0].tt_link].filter(Boolean);
+        const sameCreative = mine.some(l => theirs.includes(l));
+        if (!sameCreative) {
+          const suffix = Date.now().toString(36).slice(-6).toUpperCase();
+          const taken = creativeId;
+          creativeId = `${creativeId}_${suffix}`;
+          console.warn(`[worker] ${taken} was claimed by another creative — using ${creativeId}`);
+        }
+      }
 
-  records.brand = { id: 'brand', name: S.brandLabels[brand], ...totals, cqr_mix: cqrMix, active: paid.filter((c) => c.is_active).length, boosted: paid.length };
-  records.__meta = { freshness: freshness.max_date, generated_at: new Date().toISOString() };
+      const at = attributeColumns(a);
+      await query(
+        `insert into creatives
+           (creative_id, brand_id, date, campaign, type, is_repurposed,
+            original_creative_id, content_type, ig_link, fb_link, tt_link,
+            content_hook, duration_s, segments,
+            format, product_role, format_note, creator_profile, creator_id,
+            content_intent, narrative_structure, hook_device, hook_subject, hook_pace,
+            opens_with_product, opens_with_face, has_text_overlay,
+            timeline_attrs, time_to_product_s, product_screen_pct, cuts_per_10s, attrs_version)
+         values ($1,$2,coalesce($3::date, current_date),$4,$5,$6,$7,'Video',
+                 $8,$9,$10,$11,$12,$13,
+                 $14,$15,$16,$17,$18,
+                 $19,$20,$21,$22,$23,$24,$25,$26,$27,$28,$29,$30,1)
+         on conflict (creative_id) do update set
+           content_hook = excluded.content_hook,
+           duration_s = coalesce(excluded.duration_s, creatives.duration_s),
+           segments = excluded.segments,
+           format = excluded.format,
+           product_role = excluded.product_role,
+           format_note = excluded.format_note,
+           content_intent = excluded.content_intent,
+           narrative_structure = excluded.narrative_structure,
+           hook_device = excluded.hook_device,
+           hook_subject = excluded.hook_subject,
+           hook_pace = excluded.hook_pace,
+           opens_with_product = excluded.opens_with_product,
+           opens_with_face = excluded.opens_with_face,
+           has_text_overlay = excluded.has_text_overlay,
+           timeline_attrs = excluded.timeline_attrs,
+           time_to_product_s = excluded.time_to_product_s,
+           product_screen_pct = excluded.product_screen_pct,
+           cuts_per_10s = excluded.cuts_per_10s,
+           attrs_version = 1`,
+        [creativeId, d.brand, d.date, d.campaign, d.type, d.repurposed,
+         d.originalId, d.ig, d.fb, d.tt,
+         a.hook, safeDur, JSON.stringify(timeline),
+         a.format || null, a.product_role || null, a.format_note || null,
+         d.creator || null, d.creatorId || null,
+         at.content_intent, at.narrative_structure, at.hook_device, at.hook_subject, at.hook_pace,
+         at.opens_with_product, at.opens_with_face, at.has_text_overlay,
+         at.timeline_attrs, at.time_to_product_s, at.product_screen_pct, at.cuts_per_10s]
+      );
 
-  const version = crypto.createHash('sha256').update([brand, freshness.max_date, freshness.row_count, paid.length, organic.length, boostRows.length].join('|')).digest('hex').slice(0, 12);
-  const body = renderDigest({ brand, freshness, paid, activeCount: paid.filter((c) => c.is_active).length, totals, cqrMix, spendByCqr, poorActive, poorActiveSpend, table, tableNote, byPlatform, byType, byFormat, byCampaign, byCreator, organic, organicSummary, organicByPlatform, organicTop, validatedUnboosted, thresholds, monthly, floor, excluded: paid.length - eligible.length });
+      console.log(`[worker] ${creativeId}: analysed ${platform} (${safeDur === null ? '?' : safeDur}s, ${timeline.length} segments) and added`);
 
-  return { brand, range_days: 0, period_start: '1970-01-01', period_end: freshness.max_date || new Date().toISOString().slice(0, 10), version, body, records, token_estimate: Math.ceil(body.length / 3.6), floor };
+      notifySuccess({
+        creativeId, brand: d.brand, campaign: d.campaign, platform,
+        duration: safeDur, hook: a.hook,
+        addedBy: d.addedBy, addedByName: d.addedByName, addedByEmail: d.addedByEmail,
+      }).catch(e => console.error('[worker] notify:', e.message));
+      return {
+        status: 'completed', creativeId, platform,
+        hook: a.hook || null,
+        timelineCount: timeline.length,
+        duration: safeDur,
+        caption: meta.caption || '',
+        thumbnail: meta.thumbnail_url || '',
+      };
+    } finally {
+      // Temp file only — nothing is served from disk, so there is no reason to
+      // keep it, and Render's filesystem is ephemeral anyway.
+      if (videoPath && fs.existsSync(videoPath)) {
+        try { fs.unlinkSync(videoPath); } catch (e) {}
+      }
+    }
+  };
 }
 
-async function generateAndStore(brand, r, opts = {}) {
-  const pool = opts.pool || getPool();
-  const s = await buildSnapshot(brand, r, opts);
-  const { rows } = await pool.query(
-    `insert into brand_snapshots (brand, range_days, period_start, period_end, version, body, records, token_estimate)
-     values ($1,$2,$3,$4,$5,$6,$7,$8)
-     on conflict (brand, range_days, version) do update set body = excluded.body, records = excluded.records, period_end = excluded.period_end, generated_at = now()
-     returning *`,
-    [s.brand, s.range_days, s.period_start, s.period_end, s.version, s.body, JSON.stringify(s.records), s.token_estimate]);
-  return rows[0];
-}
-
-async function getSnapshot(brand, _r, opts = {}) {
-  assertBrand(brand);
-  const pool = opts.pool || getPool();
-  const { rows } = await pool.query(`select * from brand_snapshots where brand = $1 and range_days = 0 order by generated_at desc limit 1`, [brand]);
-  return rows.length ? rows[0] : generateAndStore(brand, 0, opts);
-}
-
-async function warmAll(opts = {}) {
-  const pool = opts.pool || getPool();
-  const results = [];
-  for (const brand of S.brands) {
-    try { const row = await generateAndStore(brand, 0, { pool }); results.push({ brand, version: row.version, tokens: row.token_estimate }); }
-    catch (err) { console.error(`[snapshot] ${brand} failed:`, err.message); results.push({ brand, error: err.message }); }
+// ── Start ─────────────────────────────────────────────────────────────────────
+function startWorker(ai) {
+  if (!process.env.REDIS_URL) {
+    console.log('[worker] REDIS_URL not set — worker not started.');
+    return null;
   }
-  await pool.query('select prune_answer_cache()');
-  if (!opts.quiet) console.table(results);
-  return results;
+  if (!ai) {
+    console.warn('[worker] No Gemini client available — jobs will fail at the analysis step.');
+  }
+
+  const connection = new IORedis(process.env.REDIS_URL, { maxRetriesPerRequest: null });
+  connection.on('error', e => console.error('[worker] redis:', e.message));
+
+  const worker = new Worker('creative-downloads', makeProcessor(ai), {
+    connection,
+    concurrency: Number(process.env.WORKER_CONCURRENCY || 2),
+    // A deploy kills the process mid-job. Without these, BullMQ treats the
+    // silence as a failed attempt and burns a retry on a job that was never
+    // actually broken. lockDuration must exceed the longest analysis; a
+    // 5-minute Gemini wait plus download and upload fits inside 10.
+    lockDuration: 10 * 60 * 1000,
+    stalledInterval: 30 * 1000,
+    maxStalledCount: 3,
+  });
+
+  // A job whose worker vanished is not a real failure: it never got to run.
+  worker.on('stalled', (jobId) => {
+    console.warn(`[worker] job ${jobId} stalled (worker restarted mid-job) — requeueing`);
+  });
+
+  worker.on('failed', (job, err) => {
+    if (!job) return;
+    const attempts = job.opts && job.opts.attempts ? job.opts.attempts : 1;
+    console.error(`[worker] job ${job.id} failed (attempt ${job.attemptsMade}/${attempts}): ${err.message}`);
+    // Only notify once the retries are exhausted — otherwise a transient
+    // rate-limit sends three emails for one creative.
+    if (job.attemptsMade >= attempts) {
+      notifyFailure({
+        creativeId: job.data.creativeId, brand: job.data.brand,
+        campaign: job.data.campaign, link: job.data.mediaUrl,
+        error: err.message, attempts,
+        addedByName: job.data.addedByName, addedByEmail: job.data.addedByEmail,
+      }).catch(e => console.error('[worker] notify:', e.message));
+    }
+  });
+  worker.on('completed', job => console.log(`[worker] job ${job.id} completed`));
+
+  attachShutdown(worker, connection);
+
+  console.log('[worker] active and listening for background download tasks');
+  return worker;
 }
 
-module.exports = { buildSnapshot, generateAndStore, getSnapshot, warmAll, assertBrand, shortName, displayLabel, mergePaid, rankCmp };
+// ── Graceful shutdown ─────────────────────────────────────────────────────────
+// Render sends SIGTERM on every deploy and waits ~30s before SIGKILL. Without
+// a handler the process dies mid-job, the analysis is lost, and the attempt is
+// counted against the job's retries. worker.close() stops taking new work and
+// waits for what is already running, so a deploy during a batch costs a short
+// wait instead of failed creatives.
+function attachShutdown(worker, connection) {
+  let closing = false;
+  const shutdown = async (signal) => {
+    if (closing) return;
+    closing = true;
+    console.log(`[worker] ${signal} received — finishing in-flight jobs, no new ones accepted`);
+    try {
+      await worker.close();            // waits for active jobs
+      console.log('[worker] all in-flight jobs finished');
+    } catch (e) {
+      console.error('[worker] shutdown error:', e.message);
+    }
+    try { await connection.quit(); } catch (e) { /* redis already gone */ }
+    process.exit(0);
+  };
+  process.on('SIGTERM', () => shutdown('SIGTERM'));
+  process.on('SIGINT',  () => shutdown('SIGINT'));
+}
+
+/**
+ * Re-classify one existing creative. Used by scripts/backfill-attributes.js.
+ * Reuses the exact same download and analyse path as the live pipeline so
+ * backfilled and new creatives are directly comparable. Only the attribute
+ * columns are written; nothing else on the row changes.
+ */
+async function classifyExisting(ai, row) {
+  const link = row.tt_link || row.ig_link || row.fb_link;
+  if (!link) throw new Error('no media link on this creative');
+  let videoPath = null;
+  try {
+    const meta = await resolveMediaUrl(link);
+    videoPath = path.join(os.tmpdir(), `backfill_${row.creative_id}.mp4`);
+    await streamToFile(meta.download_url, videoPath);
+    const hint = typeof meta.duration === 'number' ? meta.duration : (row.duration_s ? Number(row.duration_s) : null);
+    const a = await analyseVideo(ai, videoPath, hint);
+    if (!a.hook_device) throw new Error('analysis returned no hook_device');
+    const at = attributeColumns(a);
+    await query(
+      `update creatives set
+         content_intent=$2, narrative_structure=$3, hook_device=$4, hook_subject=$5, hook_pace=$6,
+         opens_with_product=$7, opens_with_face=$8, has_text_overlay=$9,
+         timeline_attrs=$10, time_to_product_s=$11, product_screen_pct=$12, cuts_per_10s=$13,
+         attrs_version=1
+       where creative_id=$1`,
+      [row.creative_id, at.content_intent, at.narrative_structure, at.hook_device, at.hook_subject, at.hook_pace,
+       at.opens_with_product, at.opens_with_face, at.has_text_overlay,
+       at.timeline_attrs, at.time_to_product_s, at.product_screen_pct, at.cuts_per_10s]
+    );
+    return { ...at, cost_usd: a._usage ? a._usage.cost_usd : null };
+  } finally {
+    if (videoPath) { try { fs.unlinkSync(videoPath); } catch (e) {} }
+  }
+}
+
+module.exports = {
+  startWorker, buildPrompt, normaliseTimeline, RESPONSE_SCHEMA, analyseVideo,
+  classifyExisting, attributeColumns, deriveTimelineMetrics,
+};
+
+// Standalone mode: node worker.js
+if (require.main === module) {
+  const { GoogleGenAI } = require('@google/genai');
+  const ai = process.env.GEMINI_API_KEY
+    ? new GoogleGenAI({ apiKey: process.env.GEMINI_API_KEY })
+    : null;
+  startWorker(ai);
+}
