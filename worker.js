@@ -104,8 +104,9 @@ const RESPONSE_SCHEMA = {
     },
     hook_device: {
       type: 'string',
-      enum: ['question', 'bold_claim', 'problem', 'product_reveal', 'face_to_camera',
-             'motion', 'text_overlay', 'sound', 'before_after', 'unexpected_visual'],
+      enum: ['question', 'bold_claim', 'problem', 'product_reveal', 'product_in_use',
+             'face_to_camera', 'dance_performance', 'everyday_moment', 'text_overlay',
+             'sound', 'before_after', 'unexpected_visual'],
     },
     hook_subject: { type: 'string', enum: ['person', 'product', 'text', 'scene'] },
     hook_pace: { type: 'string', enum: ['single_shot', 'fast_cut'] },
@@ -171,32 +172,42 @@ TRANSCRIBE IN THE LANGUAGE SPOKEN. Sri Lankan content is often in Sinhala or Tam
 
 LYRICS COUNT AS SPEECH. In a music video the lyrics are the content, so a window over a sung line must contain that line. Descriptions like "she sings into a microphone", "the chorus plays" or "rap section performed" without the words are not acceptable on their own — the words are what is being asked for. Instrumental passages with no vocals are the one exception; say so plainly for those windows.
 
-"content_intent": what job this creative is doing. Exactly one of:
-  "educate" (teaches the viewer something they did not know),
-  "entertain" (the point is enjoyment: music, comedy, spectacle),
-  "demonstrate" (shows the product working or being used),
-  "prove" (evidence that it works: results, before and after, a test),
-  "announce" (news: a launch, a campaign, an event),
-  "inspire" (aspiration, emotion, identity),
-  "promote_offer" (a specific offer, price, contest or promotion).
+"content_intent": the main job this creative is doing. Exactly one of:
+  "educate" (Teaches something: tells the viewer something they did not know),
+  "entertain" (Entertains: the point is enjoyment, such as music, comedy or spectacle),
+  "demonstrate" (Shows it working: the product being used or working),
+  "prove" (Proves results: evidence it works, such as results, a test, before and after),
+  "announce" (Announces news: a launch, a campaign, an event),
+  "inspire" (Builds emotion: aspiration, feeling, identity),
+  "promote_offer" (Promotes an offer: a deal, price, contest or promotion).
+  RULE: if the video contains a contest, deal, price or offer, choose "promote_offer",
+  even if it is also entertaining or emotional. An offer is the job it is doing.
 
-"narrative_structure": how the creative is built. Exactly one of
-  "problem_solution", "story", "tips", "demo", "montage", "testimonial_arc", "performance".
+"narrative_structure": how the creative is built. Exactly one of:
+  "problem_solution" (Problem then solution), "story" (Tells a story: characters and a narrative),
+  "tips" (Tips or how-to), "demo" (Product demo: walks through the product),
+  "montage" (Montage: a string of clips), "testimonial_arc" (Testimonial or review: someone vouches for it),
+  "performance" (Performance: built around a dance, song or show).
 
 For the next five keys, judge ONLY the first 3 seconds. Ignore everything after 3 seconds.
 
-"hook_device": the opening move. Exactly one of:
-  "question" (asks the viewer something, spoken or on screen),
-  "bold_claim" (a strong statement or promise),
-  "problem" (shows a problem or pain point),
-  "product_reveal" (the product is the first thing shown),
-  "face_to_camera" (a person addresses the viewer directly),
-  "motion" (movement, dance or action carries the open),
-  "text_overlay" (on-screen text is the primary opening element),
-  "sound" (a distinctive sound or music sting leads),
-  "before_after" (a contrast or transformation is set up immediately),
-  "unexpected_visual" (something surprising or unusual).
-  Pick the single device that does the most work. If two apply, choose the one a viewer would notice first.
+"hook_device": the opening move, the thing that grabs attention in the first 3 seconds. Exactly one of:
+  "question" (Asks a question: poses a question, spoken or on screen),
+  "bold_claim" (Bold claim: opens with a strong statement or promise),
+  "problem" (Shows a problem: opens on a pain point the product solves),
+  "product_reveal" (Opens on the product: the pack or product itself is the first thing you see),
+  "product_in_use" (Product in use: someone using or applying the product),
+  "face_to_camera" (Talks to camera: a person speaks directly to the viewer),
+  "dance_performance" (Dance or performance: dancing, singing or choreography),
+  "everyday_moment" (Everyday moment: a relatable real-life scene, people going about their day),
+  "text_overlay" (Text on screen: on-screen text is what grabs attention),
+  "sound" (Music or sound led: a song, beat or sound effect leads the opening),
+  "before_after" (Before and after: sets up a contrast or transformation immediately),
+  "unexpected_visual" (Surprising visual: something unexpected or unusual).
+  RULE: most videos do several of these at once. Choose the ONE a viewer notices first.
+  Movement alone is not a hook: decide what the movement IS. People dancing is
+  "dance_performance"; someone applying the product is "product_in_use"; people in an
+  ordinary situation is "everyday_moment".
 
 "hook_subject": what is mainly on screen in the first 3 seconds. One of "person", "product", "text", "scene".
 
