@@ -162,7 +162,9 @@ function build({ brand, paid, organic, boost, thresholds, monthly, freshness }) 
   }
 
   // ---- Media waste --------------------------------------------
-  const waste = paid.filter((c) => c.cqr === 'Poor' && c.is_active)
+  // Waste only counts creatives that actually delivered. A Poor creative with
+  // 300 impressions and 60 LKR of spend is noise, not media waste.
+  const waste = eligible.filter((c) => c.cqr === 'Poor' && c.is_active)
     .sort((a, b) => num(b.spend) - num(a.spend));
   const wasteSpend = waste.reduce((s, c) => s + num(c.spend), 0);
 

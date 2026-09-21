@@ -30,6 +30,7 @@ const MIN_EVIDENCE = 5;   // never write a finding on fewer creatives than this
 const HYPOTHESES = [
   {
     id: 'hook_device',
+    guide: 'Name the strongest and weakest opening device with their hook rates, and say whether the spread is large enough to act on.',
     question: 'Which opening device produces the strongest hook rates, and is the gap real?',
     evidence: (an) => {
       const d = an.dims.hook_device;
@@ -40,6 +41,7 @@ const HYPOTHESES = [
   },
   {
     id: 'content_intent',
+    guide: 'Name the best and worst performing intent with their Good share and hook rate. If the spread is small, say intent does not separate performance here.',
     question: 'Does what the creative is trying to do (educate, entertain, demonstrate) predict how it performs?',
     evidence: (an) => {
       const d = an.dims.content_intent;
@@ -50,6 +52,7 @@ const HYPOTHESES = [
   },
   {
     id: 'brandsay_vs_otherssay',
+    guide: 'Compare the two groups on hook rate, hold rate and Good share. Say which is stronger on each, or that they perform alike.',
     question: 'Do creator-made (OthersSay) creatives hook or hold differently from brand-made (BrandSay)?',
     evidence: (an) => {
       const rep = an.dims.type.groups.filter((g) => !g.tooFew);
@@ -59,6 +62,7 @@ const HYPOTHESES = [
   },
   {
     id: 'spend_quality',
+    guide: 'State what share of spend goes to Good and to Poor creatives. If wasteCount is 0, say spend is going to quality. If it is above 0, name the count and wasteSpend.',
     question: 'Is spend concentrated on the creatives that actually perform?',
     evidence: (an) => {
       const total = an.spendByCqr.Good + an.spendByCqr.Average + an.spendByCqr.Poor;
@@ -73,6 +77,7 @@ const HYPOTHESES = [
   },
   {
     id: 'retention',
+    guide: 'Say between which points most creatives lose the most viewers, and what is most often on screen at that moment.',
     question: 'Where do creatives lose viewers, and is there a common cause?',
     evidence: (an) => {
       if (an.retention.drops.length < MIN_EVIDENCE) return null;
@@ -86,6 +91,7 @@ const HYPOTHESES = [
   },
   {
     id: 'platform_fit',
+    guide: 'Compare Meta and TikTok on hook rate and Good share, and say how many creatives are rated differently across the two platforms.',
     question: 'Does the same creative perform differently on Meta and TikTok, and what does that say about the cuts?',
     evidence: (an) => {
       const split = an.anomalies.find((a) => a.kind === 'platform_disagree');
@@ -96,6 +102,7 @@ const HYPOTHESES = [
   },
   {
     id: 'creator',
+    guide: 'Name the creator with the highest Good share and any with a clearly lower one, with their numbers.',
     question: 'Which creators deliver consistently, and which are inconsistent?',
     evidence: (an) => {
       const rep = an.dims.creator.groups.filter((g) => !g.tooFew);
@@ -105,6 +112,7 @@ const HYPOTHESES = [
   },
   {
     id: 'action',
+    guide: 'Recommend exactly ONE next step, chosen from the evidence: a top action, the waste list, the unboosted count, or the strongest discriminating dimension. Say why using its numbers. Do not claim anything is absent from the data.',
     question: 'What is the single highest-value change the team could make next?',
     evidence: (an) => {
       const topActions = an.top.filter((c) => c.action).slice(0, 5).map((c) => ({ id: c.id, action: c.action, priority: c.priority }));
@@ -181,20 +189,39 @@ Rules:
 - Where the evidence shows a dimension does not separate performance, say so plainly. A null finding is useful.
 - Plain, direct wording. No flourishes. No em dashes. No emoji.
 - Do not recommend anything the evidence does not support.
+- Never claim something is absent, missing or not present unless the evidence explicitly shows it (an empty list, a zero count).
+- Describe relationships correctly: more creatives is more, a higher rate is higher. Re-read each comparison before finishing.
 
 Return only the finding text.`;
 
-const VERIFY_PROMPT = `You are checking a finding against the evidence it was written from.
+const VERIFY_PROMPT = `You are checking a finding against the evidence it was written from. Call the verdict tool with your result.
 
-Return ONLY a JSON object: {"ok": true} or {"ok": false, "reason": "<short reason>"}.
+Mark it NOT ok only if the finding:
+- states a number that does not appear in the evidence, or a number with the wrong unit
+- makes a claim the evidence does not support
+- contradicts the evidence, including getting a comparison backwards (calling more "fewer", higher "lower")
+- claims something is absent or missing when the evidence does not explicitly show that
+- recommends something the evidence gives no basis for
 
-Mark it not ok if the finding:
-- states any number that does not appear in the evidence
-- claims a comparison the evidence does not contain
-- recommends something the evidence does not support
-- describes a pattern in fewer creatives than the evidence shows
+Mark it ok otherwise. In particular these are NOT errors:
+- leaving out numbers or groups; a finding does not need to mention everything
+- choosing to focus on one pattern over another
+- reasonable plain-language framing of what the numbers show
 
-Numbers must match exactly. A finding saying "about 60%" when the evidence says 57 is not ok.`;
+Numbers must match the evidence exactly as written, units included.`;
+
+const VERDICT_TOOL = {
+  name: 'verdict',
+  description: 'Record whether the finding is supported by the evidence.',
+  input_schema: {
+    type: 'object',
+    properties: {
+      ok: { type: 'boolean' },
+      reason: { type: 'string', description: 'If not ok, one short sentence naming the specific problem.' },
+    },
+    required: ['ok'],
+  },
+};
 
 /** Pull every number out of a string, for a cheap deterministic pre-check. */
 function numbersIn(text) {
@@ -214,20 +241,27 @@ async function writeFinding(h, evidence) {
   const res = await client.messages.create({
     model: WRITER_MODEL, max_tokens: 300,
     system: WRITER_PROMPT,
-    messages: [{ role: 'user', content: `Question: ${h.question}\n\nEvidence:\n${JSON.stringify(evidence, null, 1)}` }],
+    messages: [{ role: 'user', content: `Question: ${h.question}\n\nWhat a good answer covers: ${h.guide || 'the clearest pattern in the evidence.'}\n\nEvidence:\n${JSON.stringify(evidence, null, 1)}` }],
   });
   return res.content.filter((b) => b.type === 'text').map((b) => b.text).join('').trim();
 }
 
 async function verifyFinding(body, evidence) {
   const res = await client.messages.create({
-    model: S.model, max_tokens: 150,
+    model: S.model, max_tokens: 200,
     system: VERIFY_PROMPT,
+    tools: [VERDICT_TOOL],
+    tool_choice: { type: 'tool', name: 'verdict' },
     messages: [{ role: 'user', content: `Finding:\n${body}\n\nEvidence:\n${JSON.stringify(evidence)}` }],
   });
+  const call = res.content.find((b) => b.type === 'tool_use' && b.name === 'verdict');
+  if (call && typeof call.input.ok === 'boolean') return call.input;
+  // Belt and braces: a forced tool call should always return, but never let a
+  // parsing hiccup silently drop a finding without saying so.
   const text = res.content.filter((b) => b.type === 'text').map((b) => b.text).join('');
-  try { return JSON.parse(text.replace(/```json|```/g, '').trim()); }
-  catch { return { ok: false, reason: 'verifier returned unparseable output' }; }
+  const m = text.match(/\{[\s\S]*\}/);
+  if (m) { try { const j = JSON.parse(m[0]); if (typeof j.ok === 'boolean') return j; } catch (e) { /* fall through */ } }
+  return { ok: false, reason: 'verifier gave no verdict' };
 }
 
 /** Generate and store verified findings for one brand. */
