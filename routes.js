@@ -15,6 +15,7 @@ const os = require('os');
 const fs = require('fs');
 const bcrypt = require('bcryptjs');
 const { query, brandsForUser, assertBrandAllowed } = require('./db');
+const { checkLinks } = require('./link-check');
 // Prompt + response schema live in worker.js so the queue, the regenerate
 // endpoint and the upload test page all analyse videos identically.
 const { buildPrompt, normaliseTimeline, RESPONSE_SCHEMA } = require('./worker');
@@ -395,9 +396,26 @@ app.get('/api/brands', async (req, res) => {
     }
   }
 
+  // Inline feedback for the add forms. Same rules add-creative enforces, so
+  // what the form shows as valid is exactly what the server will accept.
+  app.post('/api/check-links', async (req, res) => {
+    try {
+      const { ig, fb, tt } = req.body || {};
+      const result = await checkLinks(app, query, { ig, fb, tt });
+      return res.json(result);
+    } catch (err) {
+      console.error('[check-links]', err.message);
+      return res.status(500).json({ error: 'Could not check links. Try again.' });
+    }
+  });
+
  app.post('/api/add-creative', async (req, res) => {
     const adder = await resolveAdder(req);
-    const { campaign, type, date, ig, fb, tt, repurposed, originalId, creator, creator_id, description } = req.body;
+    // date is no longer taken from the form. The real post date comes from the
+    // platform on first sync; until then the row gets today as a placeholder.
+    const { campaign, type, repurposed, originalId, creator, creator_id, description } = req.body;
+    const date = null;
+    let ig, fb, tt;
     let brand;
     try { brand = resolveBrand(req); }
     catch (err) { return res.status(403).json({ error: err.message }); }
@@ -406,6 +424,25 @@ app.get('/api/brands', async (req, res) => {
       return res.status(400).json({ error: 'Invalid Type selected.' });
     }
     if (!campaign) return res.status(400).json({ error: 'Campaign is required.' });
+
+    // Links are checked here as well as in the browser. The browser check is
+    // a convenience; this is the one that counts, since it cannot be skipped.
+    // Every link is normalised, so what gets stored is always parseable by the
+    // matchers, and short TikTok links are resolved to carry the video id.
+    let normalised;
+    try {
+      const lc = await checkLinks(app, query, { ig: req.body.ig, fb: req.body.fb, tt: req.body.tt });
+      if (!lc.ok) {
+        const fieldErrors = {};
+        for (const [k, v] of Object.entries(lc.fields)) if (!v.ok) fieldErrors[k] = v.error;
+        return res.status(400).json({ error: 'Fix the highlighted links.', fieldErrors });
+      }
+      normalised = lc.links;
+      ig = normalised.ig || null; fb = normalised.fb || null; tt = normalised.tt || null;
+    } catch (err) {
+      console.error('[add-creative] link check failed:', err.message);
+      return res.status(500).json({ error: 'Could not verify the links. Try again.' });
+    }
 
     // The creative_id is typed by hand into ad names after the pipe, so it has
     // to be short and ideally readable. A description gives BRAND_BS_SHANUDRIE
