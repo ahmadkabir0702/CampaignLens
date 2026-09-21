@@ -166,21 +166,29 @@ function mergePaid(meta, tt) {
 // ---------------------------------------------------------------
 
 const A = require('./analytics');
+const V = require('./vocab');
 
-const fmtGroup = (g, unit) => g.tooFew
-  ? `${g.key}: ${g.n} creatives, TOO FEW to compare`
-  : `${g.key}: ${g.n} creatives, ${g.goodShare}% Good, hook ${fmtPct(g.hook_rate)}, hold ${fmtPct(g.hold_rate)}, ${g.strongHooks}/${g.n} Strong hooks, spend ${money(g.spend)}`;
+const gname = (g) => (g.name && g.name !== g.key ? `${g.name} [${g.key}]` : g.key);
+const singleRating = (g) => (g.good ? 'Good' : g.average ? 'Average' : g.poor ? 'Poor' : 'unrated');
+const vsText = (vs) => (vs ? `CQR ${vs.cqr}, hook ${vs.hook}, hold ${vs.hold}` : 'no comparison');
+const hedge = (g) => (g.early ? ' (early sign)' : '');
+
+// Groups are described by how they compare with the brand overall on CQR,
+// hook and hold. No counts or percentages: the team wants the comparison.
+const fmtGroup = (g) => g.tooFew
+  ? `${gname(g)}: one example only, rated ${singleRating(g)}. Not enough to compare.`
+  : `${gname(g)}: ${vsText(g.vs)}${hedge(g)}.`;
 
 function renderDim(L, d) {
   if (!d || !d.groups.length) return;
-  L.push(d.dimension.toUpperCase());
+  L.push(`${d.dimension.toUpperCase()} (each compared with the brand overall)`);
   d.groups.forEach((g) => L.push('  ' + fmtGroup(g)));
-  if (d.spread !== null && Math.abs(d.spread) >= 5) {
-    L.push(`  This dimension separates performance: ${Math.abs(d.spread)} points of hook rate between best and worst.`);
-  } else if (d.spread !== null && d.reportable >= 2) {
-    L.push('  This dimension does not separate performance much. Do not present it as a driver.');
-  } else if (d.reportable < 2) {
-    L.push('  Not enough reportable groups on this dimension to compare.');
+  const ld = d.leaders;
+  if (ld) {
+    const n = (x) => `${x.name}${x.early ? ' (early sign)' : ''}`;
+    L.push(`  Leads on CQR: ${n(ld.cqr)}. Best hook: ${n(ld.hook)}. Best hold: ${n(ld.hold)}. Weakest on CQR: ${n(ld.weakestCqr)}.`);
+  } else {
+    L.push('  Only one group has more than a single creative, so there is nothing to compare it with yet.');
   }
   L.push('');
 }
@@ -188,14 +196,18 @@ function renderDim(L, d) {
 function creativeLine(c) {
   const plats = (c.platforms || []).map((p) => S.platformLabels[p] || p).join('+');
   const ret = (c.retention || []).map((v) => (v === null ? '-' : v)).join('/');
-  const attrs = [c.content_intent, c.narrative_structure, c.hook_device, c.hook_subject, c.hook_pace].filter(Boolean).join('/');
+  const attrs = [
+    c.hook_device && `hook: ${V.label('hook_device', c.hook_device)}`,
+    c.content_intent && `purpose: ${V.label('content_intent', c.content_intent)}`,
+    c.narrative_structure && `structure: ${V.label('narrative_structure', c.narrative_structure)}`,
+  ].filter(Boolean).join(', ');
   const bits = [
     c.id, c.cqr,
     `hook ${fmtPct(c.hook_rate)}${c.hook_q ? ' ' + c.hook_q : ''}`,
     `hold ${fmtPct(c.hold_rate)}${c.hold_q ? ' ' + c.hold_q : ''}`,
     `ret ${ret}`,
     c.duration_s ? `${Math.round(c.duration_s)}s` : null,
-    plats, c.type || null, c.format || 'unclassified',
+    plats, V.label('type', c.type) || null, V.label('format', c.format) || 'Unclassified',
     attrs || null,
     c.creator ? `creator:${clip(c.creator, 20)}` : null,
     c.is_active ? 'ACTIVE' : 'STOPPED',
@@ -213,8 +225,8 @@ function creativeLine(c) {
 }
 
 function compactLine(c) {
-  const attrs = [c.hook_device, c.content_intent].filter(Boolean).join('/');
-  return `${c.id} | ${c.cqr} | h${fmtPct(c.hook_rate)} | ${fmtPct(c.hold_rate)} | ${(c.platforms || []).join('+')} | ${c.type || ''} | ${attrs} | ${c.is_active ? 'A' : 'S'}`;
+  const attrs = [V.label('hook_device', c.hook_device), V.label('content_intent', c.content_intent)].filter(Boolean).join(', ');
+  return `${c.id} | ${c.cqr} | h${fmtPct(c.hook_rate)} | ${fmtPct(c.hold_rate)} | ${(c.platforms || []).map((x) => V.label('platform', x)).join('+')} | ${V.label('type', c.type) || ''} | ${attrs} | ${c.is_active ? 'A' : 'S'}`;
 }
 
 /** Renders the analytics object. No computation happens here. */
@@ -248,11 +260,14 @@ function renderDigest(an, insights) {
   L.push(`  CQR mix: ${an.cqrMix.Good} Good, ${an.cqrMix.Average} Average, ${an.cqrMix.Poor} Poor, ${an.cqrMix.Invalid} Invalid`);
   L.push(`  Spend by CQR: Good ${money(an.spendByCqr.Good)} | Average ${money(an.spendByCqr.Average)} | Poor ${money(an.spendByCqr.Poor)}`);
   L.push(`  Brand avg hook ${fmtPct(an.totals.hook_rate)} (${an.totals.strongHookShare}% Strong) | avg hold ${fmtPct(an.totals.hold_rate)} (${an.totals.strongHoldShare}% Strong)`);
+  L.push(`  Poor creatives: ${an.poorSplit.activeCount} still running on ${money(an.poorSplit.activeSpend)} (current waste), ${an.poorSplit.stoppedCount} stopped after ${money(an.poorSplit.stoppedSpend)} (past spend, already addressed)`);
+  if (an.hookHold.mostlyLose) L.push(`  Where creatives lose people: ${an.hookHold.mostlyLose}.${an.hookHold.manyWeakOnBoth ? ' Many creatives are weak on both hook and hold.' : ''}`);
   L.push('');
 
   if (an.discriminating.length) {
     L.push('WHAT ACTUALLY SEPARATES PERFORMANCE (ranked by how much)');
-    an.discriminating.forEach((d) => L.push(`  ${d.dimension}: ${d.spread} points of hook rate. Best "${d.best}" at ${fmtPct(d.bestHook)}, worst "${d.worst}" at ${fmtPct(d.worstHook)}.`));
+    an.discriminating.forEach((d) => L.push(`  ${d.dimension}: ${d.best} leads, ${d.worst} trails${d.early ? ' (early sign, small groups)' : ''}.`));
+    L.push('  Ranked by CQR first, then hook, then hold. A better hook alone does not make a group better.');
     L.push('  Dimensions not listed here do not separate performance meaningfully.');
     L.push('');
   }
@@ -283,8 +298,8 @@ function renderDigest(an, insights) {
     L.push('CROSSTABS (only cells with enough creatives are shown)');
     an.crosstabs.forEach((x) => {
       L.push(`  ${x.dimensions.join(' x ')}:`);
-      x.cells.slice(0, 8).forEach((c) => L.push(`    ${c.a} + ${c.b}: ${c.n} creatives, ${c.goodShare}% Good, hook ${fmtPct(c.hook_rate)}`));
-      if (x.suppressed) L.push(`    ${x.suppressed} combinations had too few creatives to report.`);
+      x.cells.slice(0, 8).forEach((c) => L.push(`    ${c.aName || c.a} + ${c.bName || c.b}: ${vsText(c.vs)}${c.early ? ' (early sign)' : ''}`));
+      if (x.suppressed) L.push('    Combinations with a single creative are not shown.');
     });
     L.push('');
   }
@@ -320,7 +335,7 @@ function renderDigest(an, insights) {
   if (o.posts) {
     L.push('ORGANIC (lifetime per post, not date filtered)');
     L.push(`  ${o.posts} posts | views ${fmtCount(o.views)} | ${o.good} Good / ${o.average} Average / ${o.poor} Poor`);
-    o.byPlatform.forEach((p) => L.push(`  ${S.platformLabels[p.platform] || p.platform}: ${p.n} posts${p.tooFew ? ' (TOO FEW to compare)' : `, views ${fmtCount(p.views)}, avg ER ${fmtPct(p.engagement_rate, 2)}, ${p.good} Good`}`));
+    o.byPlatform.forEach((p) => L.push(`  ${S.platformLabels[p.platform] || p.platform}: ${p.tooFew ? 'one post only, not comparable' : `CQR ${p.vs.cqr}, engagement ${p.vs.engagement} than organic overall${p.early ? ' (early sign)' : ''}`}`));
     L.push('  Top organic: ' + o.top.map((t) => `${t.id} (${t.cqr || 'unscored'}, ${fmtCount(t.views)} views)`).join(', '));
     L.push('');
   }
@@ -338,7 +353,11 @@ function renderDigest(an, insights) {
   }
 
   L.push('RULES APPLIED TO EVERYTHING ABOVE');
-  L.push(`  Groups under ${an.minGroup} creatives are marked TOO FEW. Say there is not enough data rather than reporting the number.`);
+  L.push('  Groups are compared with the brand overall on CQR, hook and hold: stronger, similar or weaker.');
+  L.push('  Talk about groups in those words. Do not give counts or percentages for groups.');
+  L.push('  CQR matters most, then hook, then hold. A stronger hook alone does not make a group better.');
+  L.push('  "Early sign" marks a small group: say it is an early sign, never a pattern or a rule.');
+  L.push('  "One example only" is a single creative: describe it, never treat it as proof a type works.');
   L.push(`  Creatives under ${fmtCount(an.floor)} lifetime impressions are excluded from rankings; ${an.excluded} excluded.`);
   L.push('  Every number above is computed in code. Do not recalculate, average or estimate anything.');
   L.push('');
@@ -379,6 +398,7 @@ async function buildSnapshot(brand, _r, opts = {}) {
       boosted: !!m, is_validated: !!(bs && bs.is_validated), organic_best_cqr: bs ? bs.best_cqr : null,
       ...(m || {}),
     };
+    rec.labels = V.creativeLabels(rec);
     records[id] = rec;
     if (m) paid.push(rec);
   }
@@ -413,9 +433,9 @@ async function buildSnapshot(brand, _r, opts = {}) {
   const body = renderDigest(an, insights);
 
   // Cohort records so [[cohort:...]] markers resolve to real numbers.
-  for (const d of Object.values(an.dims)) {
+  for (const [field, d] of Object.entries(an.dims)) {
     if (!d || !d.groups) continue;
-    const kind = d.dimension.replace(/\s+/g, '_');
+    const kind = field;
     for (const g of d.groups) records[`cohort:${kind}:${g.key}`] = { id: `cohort:${kind}:${g.key}`, kind, ...g };
   }
   for (const p of S.platforms) {

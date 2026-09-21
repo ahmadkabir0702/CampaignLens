@@ -14,13 +14,42 @@
 
 const Anthropic = require('@anthropic-ai/sdk');
 const S = require('./schema.config');
+const V = require('./vocab');
 const { getPool } = require('./db');
 
 const client = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY });
 
 // Current Sonnet. Same listed price as 4.6. Override with ASK_LENS_WRITER_MODEL.
 const WRITER_MODEL = process.env.ASK_LENS_WRITER_MODEL || 'claude-sonnet-5';
-const MIN_EVIDENCE = 5;   // never write a finding on fewer creatives than this
+// A finding needs at least 2 creatives to compare. Below 5 it is written as
+// an early signal: the writer must say so, and the verifier enforces it.
+const MIN_EVIDENCE = 2;
+
+/** A dimension as word comparisons on CQR, hook and hold. No numbers. */
+function asWords(d) {
+  if (!d || !d.groups) return null;
+  const rep = d.groups.filter((g) => !g.tooFew);
+  if (rep.length < MIN_EVIDENCE) return null;
+  const tag = (x) => (x ? `${x.name}${x.early ? ' (early sign)' : ''}` : null);
+  return {
+    dimension: d.dimension,
+    comparedWith: 'the brand overall',
+    groups: rep.slice(0, 8).map((g) => ({
+      name: g.name || g.key,
+      cqr: g.vs ? g.vs.cqr : 'unknown',
+      hook: g.vs ? g.vs.hook : 'unknown',
+      hold: g.vs ? g.vs.hold : 'unknown',
+      sample: g.early ? 'early sign' : 'solid',
+    })),
+    leadsOnCqr: tag(d.leaders && d.leaders.cqr),
+    bestHook: tag(d.leaders && d.leaders.hook),
+    bestHold: tag(d.leaders && d.leaders.hold),
+    weakestOnCqr: tag(d.leaders && d.leaders.weakestCqr),
+    singleExamplesLeftOut: d.groups.some((g) => g.tooFew),
+  };
+}
+
+const SEGMENT_WORDS = { 'hook to 25%': 'between the hook and a quarter of the way in', '25% to 50%': 'between 25% and 50% of the video', '50% to 75%': 'between 50% and 75% of the video', '75% to 100%': 'in the last quarter of the video' };
 
 /**
  * The hypotheses. Each one pulls its own evidence out of the analytics
@@ -30,39 +59,25 @@ const MIN_EVIDENCE = 5;   // never write a finding on fewer creatives than this
 const HYPOTHESES = [
   {
     id: 'hook_device',
-    guide: 'Name the strongest and weakest opening device with their hook rates, and say whether the spread is large enough to act on.',
+    guide: 'Say which opening hook leads on CQR and how it compares on hook and hold. Name the weakest on CQR. Mark early signs as early signs.',
     question: 'Which opening device produces the strongest hook rates, and is the gap real?',
-    evidence: (an) => {
-      const d = an.dims.hook_device;
-      const rep = d.groups.filter((g) => !g.tooFew);
-      if (rep.length < 2) return null;
-      return { dimension: 'hook_device', spread: d.spread, groups: rep.slice(0, 6), total: rep.reduce((s, g) => s + g.n, 0) };
-    },
+    evidence: (an) => asWords(an.dims.hook_device),
   },
   {
     id: 'content_intent',
-    guide: 'Name the best and worst performing intent with their Good share and hook rate. If the spread is small, say intent does not separate performance here.',
+    guide: 'Say which purpose leads on CQR and how it compares on hook and hold. Name the weakest. If purposes compare similarly, say purpose makes little difference here.',
     question: 'Does what the creative is trying to do (educate, entertain, demonstrate) predict how it performs?',
-    evidence: (an) => {
-      const d = an.dims.content_intent;
-      const rep = d.groups.filter((g) => !g.tooFew);
-      if (rep.length < 2) return null;
-      return { dimension: 'content_intent', spread: d.spread, groups: rep.slice(0, 6) };
-    },
+    evidence: (an) => asWords(an.dims.content_intent),
   },
   {
     id: 'brandsay_vs_otherssay',
-    guide: 'Compare the two groups on hook rate, hold rate and Good share. Say which is stronger on each, or that they perform alike.',
+    guide: 'Compare Brand Say and Others Say on CQR, then hook, then hold. Say which is stronger on each, or that they perform alike.',
     question: 'Do creator-made (OthersSay) creatives hook or hold differently from brand-made (BrandSay)?',
-    evidence: (an) => {
-      const rep = an.dims.type.groups.filter((g) => !g.tooFew);
-      if (rep.length < 2) return null;
-      return { dimension: 'type', groups: rep };
-    },
+    evidence: (an) => asWords(an.dims.type),
   },
   {
     id: 'spend_quality',
-    guide: 'State what share of spend goes to Good and to Poor creatives. If wasteCount is 0, say spend is going to quality. If it is above 0, name the count and wasteSpend.',
+    guide: 'First, the lifetime split: what share of spend went to Good creatives and what share to Poor. If Poor received a share comparable to or larger than Good, that is the headline. Second, the present: say how many Poor creatives are still running and their spend (current waste), and separately how many were already stopped (a past inefficiency that has been dealt with). Never call allocation healthy when Poor received a large share, even if none are running now.',
     question: 'Is spend concentrated on the creatives that actually perform?',
     evidence: (an) => {
       const total = an.spendByCqr.Good + an.spendByCqr.Average + an.spendByCqr.Poor;
@@ -71,48 +86,71 @@ const HYPOTHESES = [
         goodShare: Math.round(an.spendByCqr.Good / total * 100),
         poorShare: Math.round(an.spendByCqr.Poor / total * 100),
         spendByCqr: an.spendByCqr, cqrMix: an.cqrMix,
-        wasteCount: an.waste.length, wasteSpend: an.wasteSpend,
+        poorStillRunning: { count: an.poorSplit.activeCount, spend: an.poorSplit.activeSpend },
+        poorAlreadyStopped: { count: an.poorSplit.stoppedCount, spend: an.poorSplit.stoppedSpend },
       };
     },
   },
   {
     id: 'retention',
-    guide: 'Say between which points most creatives lose the most viewers, and what is most often on screen at that moment.',
+    guide: 'Say where most viewers leave after the hook and, if given, what is usually on screen at that point and when the product appears.',
     question: 'Where do creatives lose viewers, and is there a common cause?',
     evidence: (an) => {
       if (an.retention.drops.length < MIN_EVIDENCE) return null;
-      return {
-        n: an.retention.drops.length,
-        bySegment: an.retention.dropBySegment,
-        byScreen: an.retention.dropByScreen,
-        productTiming: an.retention.productTiming,
-      };
+      const top = (o) => Object.entries(o || {}).sort((a, b) => b[1] - a[1])[0];
+      const seg = top(an.retention.dropBySegment);
+      if (!seg) return null;
+      const ev = { mostViewersLeave: SEGMENT_WORDS[seg[0]] || seg[0] };
+      const scr = top(an.retention.dropByScreen);
+      if (scr) ev.mostOftenOnScreenAtThatPoint = scr[0];
+      const t = an.retention.productTiming.avgTimeToProduct;
+      if (t !== null && t !== undefined) ev.productUsuallyAppears = t <= 3 ? 'in the opening seconds' : t <= 8 ? 'early in the video' : 'late in the video';
+      return ev;
     },
   },
   {
     id: 'platform_fit',
-    guide: 'Compare Meta and TikTok on hook rate and Good share, and say how many creatives are rated differently across the two platforms.',
+    guide: 'Compare Meta and TikTok on CQR, then hook, then hold. If they split, one stronger on hook and the other on CQR or hold, say what that means for the cuts on each platform.',
     question: 'Does the same creative perform differently on Meta and TikTok, and what does that say about the cuts?',
     evidence: (an) => {
-      const split = an.anomalies.find((a) => a.kind === 'platform_disagree');
-      const groups = an.dims.platform.groups.filter((g) => !g.tooFew);
-      if (groups.length < 2) return null;
-      return { platforms: groups, disagreeing: split ? split.n : 0, ids: split ? split.ids : [] };
+      const w = asWords(an.dims.platform);
+      if (!w) return null;
+      w.comparedWith = 'the average across both platforms';
+      w.someCreativesRatedDifferentlyByPlatform = an.anomalies.some((a) => a.kind === 'platform_disagree');
+      return w;
     },
   },
   {
     id: 'creator',
-    guide: 'Name the creator with the highest Good share and any with a clearly lower one, with their numbers.',
+    guide: 'Say which creator leads on CQR and which trails, and how they compare on hook and hold.',
     question: 'Which creators deliver consistently, and which are inconsistent?',
+    evidence: (an) => asWords(an.dims.creator),
+  },
+  {
+    id: 'format',
+    guide: 'Say which format leads on CQR and how it compares on hook and hold. Name the weakest. If formats compare similarly, say format makes little difference here.',
+    question: 'Which creative formats perform best for this brand?',
+    evidence: (an) => asWords(an.dims.format),
+  },
+  {
+    id: 'product_role',
+    guide: 'Say whether featuring the product more prominently goes with stronger or weaker CQR, hook and hold, or makes little difference.',
+    question: 'Does featuring the product more prominently help or hurt performance?',
+    evidence: (an) => asWords(an.dims.product_role),
+  },
+  {
+    id: 'hook_hold',
+    guide: 'Say where creatives mostly lose viewers and what that implies: fix the openings, or tighten the middle of the videos.',
+    question: 'Do creatives mostly fail at the opening or in the body?',
     evidence: (an) => {
-      const rep = an.dims.creator.groups.filter((g) => !g.tooFew);
-      if (rep.length < 2) return null;
-      return { creators: rep.slice(0, 8) };
+      const h = an.hookHold;
+      if (h.rated < MIN_EVIDENCE || !h.mostlyLose) return null;
+      return { whereViewersAreLost: h.mostlyLose, manyAreWeakOnBothHookAndHold: h.manyWeakOnBoth };
     },
   },
   {
     id: 'action',
-    guide: 'Recommend exactly ONE next step, chosen from the evidence: a top action, the waste list, the unboosted count, or the strongest discriminating dimension. Say why using its numbers. Do not claim anything is absent from the data.',
+    guide: 'Recommend exactly ONE next step, chosen from the evidence: Poor creatives still running, stopped Good creatives worth relaunching, a top action, the unboosted count, or the strongest discriminating dimension. The team judges CQR first, then hook, then hold: never recommend shifting toward something only because its hook rate is higher if its Good share or hold rate is lower. Say why. Do not claim anything is absent from the data.',
     question: 'What is the single highest-value change the team could make next?',
     evidence: (an) => {
       const topActions = an.top.filter((c) => c.action).slice(0, 5).map((c) => ({ id: c.id, action: c.action, priority: c.priority }));
@@ -120,7 +158,10 @@ const HYPOTHESES = [
         || an.validatedUnboosted.length || topActions.length;
       if (!hasSignal || an.totals.creatives < MIN_EVIDENCE) return null;
       return {
-        discriminating: an.discriminating.slice(0, 3),
+        poorStillRunning: { count: an.poorSplit.activeCount, spend: an.poorSplit.activeSpend },
+        whatSeparatesPerformance: an.discriminating.slice(0, 3).map((d) => ({
+          dimension: d.dimension, leads: d.best, trails: d.worst, ...(d.early ? { sample: 'early sign' } : {}),
+        })),
         anomalies: an.anomalies.map((a) => ({ kind: a.kind, n: a.n, note: a.note, ...(a.spend ? { spend: a.spend } : {}) })),
         wasteSpend: an.wasteSpend, wasteCount: an.waste.length,
         unboosted: an.validatedUnboosted.length,
@@ -163,7 +204,9 @@ function present(value, key = '', parentKey = '') {
   if (typeof value === 'object') {
     const out = {};
     for (const [k, v] of Object.entries(value)) {
-      if (k === 'ids' || k === 'tooFew') continue; // internal, never cited
+      // Internal fields the writer never needs. Codes are dropped in favour of
+      // the plain name, so findings read "Dance or performance", not "dance_performance".
+      if (['ids', 'tooFew', 'key', 'field', 'bestKey', 'worstKey', 'goodScore', 'confidence'].includes(k)) continue;
       // Children inherit this key as context: spendByCqr.Good is a spend figure.
       out[k] = present(v, k, key || parentKey);
     }
@@ -191,6 +234,10 @@ Rules:
 - Do not recommend anything the evidence does not support.
 - Never claim something is absent, missing or not present unless the evidence explicitly shows it (an empty list, a zero count).
 - Describe relationships correctly: more creatives is more, a higher rate is higher. Re-read each comparison before finishing.
+- Groups are compared in words: stronger, similar or weaker than the comparison point, on CQR, hook and hold. Write comparisons that way. Never state counts or percentages for groups; none are given.
+- CQR matters most, then hook, then hold. Lead with CQR. A stronger hook alone does not make a group better.
+- A group marked "early sign" is small. Call it an early sign, never a pattern, trend or rule. "Early signs", "so far" and "worth testing more" fit.
+- A single example is never proof that a type of creative works.
 
 Return only the finding text.`;
 
@@ -202,6 +249,9 @@ Mark it NOT ok only if the finding:
 - contradicts the evidence, including getting a comparison backwards (calling more "fewer", higher "lower")
 - claims something is absent or missing when the evidence does not explicitly show that
 - recommends something the evidence gives no basis for
+- presents a group marked "early sign" as a pattern, trend or rule rather than an early sign
+- treats a single creative as proof that a type works
+- reverses a comparison, for example calling a group stronger on hook when the evidence says weaker
 
 Mark it ok otherwise. In particular these are NOT errors:
 - leaving out numbers or groups; a finding does not need to mention everything
@@ -230,6 +280,7 @@ function numbersIn(text) {
 
 /** Deterministic first pass: any number in the text must exist in the evidence. */
 function numbersReconcile(body, evidence) {
+  body = String(body).replace(/\b(first\s+)?3\s*(seconds?|s)\b/gi, '');
   const inEvidence = new Set(numbersIn(JSON.stringify(evidence)).map((n) => n.toFixed(1)));
   // Allow small integers, they are almost always counts of things listed.
   const claimed = numbersIn(body).filter((n) => n > 2);
@@ -269,6 +320,10 @@ async function generateForBrand(brand, snapshot, opts = {}) {
   const pool = opts.pool || getPool();
   const an = snapshot.analytics;
   const out = { brand, written: 0, skipped: 0, rejected: 0 };
+
+  // Start clean for this data version. Otherwise a question that now skips
+  // would leave its old finding in place, and the chat would keep citing it.
+  await pool.query('delete from brand_insights where brand = $1 and snapshot_ver = $2', [brand, snapshot.version]);
 
   for (const h of HYPOTHESES) {
     let evidence;

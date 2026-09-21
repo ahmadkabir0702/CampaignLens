@@ -6,7 +6,9 @@
  * of error in LLM analytics systems, so it is closed off structurally.
  *
  * Two rules enforced here, not left to the prompt:
- *   1. Minimum group size. A group under MIN_GROUP is marked tooFew and the
+ *   1. Group size is always visible. 5+ is a normal comparison, 2 to 4 is an
+ *      early signal (compared, but labelled), 1 is a single example. Ranking
+ *      weighs small groups cautiously. Previously: a group under MIN_GROUP was marked tooFew and the
  *      renderer prints TOO FEW instead of a number. A three-creative fluke
  *      reported as a trend is how the tool loses trust.
  *   2. Volume floor. Creatives under the impression floor never enter a
@@ -16,8 +18,25 @@
  */
 
 const S = require('./schema.config');
+const V = require('./vocab');
 
+// A group of 5 or more is a normal comparison. 2 to 4 is an early signal:
+// shown and compared, but labelled, and never called a pattern. A single
+// creative is an example, not a group.
 const MIN_GROUP = 5;
+const EARLY_MIN = 2;
+
+/**
+ * Good share adjusted for sample size (Wilson score lower bound, 95%).
+ * Used only for ranking, never shown. It stops 2 Good out of 2 (100%)
+ * outranking 5 Good out of 6 (83%): small groups are weighed cautiously,
+ * but a genuinely strong small group still rises.
+ */
+function goodScore(good, n) {
+  if (!n) return 0;
+  const z = 1.96, p = good / n, z2 = z * z;
+  return (p + z2 / (2 * n) - z * Math.sqrt((p * (1 - p) + z2 / (4 * n)) / n)) / (1 + z2 / n);
+}
 
 const num = (v) => (v === null || v === undefined ? 0 : Number(v));
 const r1 = (v) => (v === null || v === undefined ? null : Math.round(Number(v) * 10) / 10);
@@ -32,6 +51,42 @@ function rankCmp(a, b) {
 }
 
 /**
+ * Compare a group with the brand overall on CQR, hook and hold, in words.
+ * The team wants comparisons, not numbers, so this is what the chat reads.
+ * CQR uses the gap in Good share; hook and hold use a gap relative to the
+ * brand's own average, so a "stronger" means the same thing on any brand.
+ */
+function verdict(diff, threshold) {
+  if (diff === null || !isFinite(diff)) return 'unknown';
+  if (diff >= threshold) return 'stronger';
+  if (diff <= -threshold) return 'weaker';
+  return 'similar';
+}
+
+function compareToBrand(g, base) {
+  const rel = (b) => Math.max(2, Math.abs(num(b)) * 0.10);
+  return {
+    cqr: verdict(num(g.goodShare) - base.good, 15),
+    hook: verdict(g.hook_rate === null ? null : num(g.hook_rate) - base.hook, rel(base.hook)),
+    hold: verdict(g.hold_rate === null ? null : num(g.hold_rate) - base.hold, rel(base.hold)),
+  };
+}
+
+/** Which groups lead and trail on each of CQR, hook and hold. */
+function leadersOf(groups) {
+  const rep = groups.filter((g) => !g.tooFew);
+  if (rep.length < 2) return null;
+  const top = (arr, f) => [...arr].sort(f)[0];
+  const pick = (g) => ({ name: g.name || g.key, key: g.key, early: !!g.early });
+  return {
+    cqr: pick(top(rep, (a, b) => num(b.goodScore) - num(a.goodScore))),
+    hook: pick(top(rep, (a, b) => num(b.hook_rate) - num(a.hook_rate))),
+    hold: pick(top(rep, (a, b) => num(b.hold_rate) - num(a.hold_rate))),
+    weakestCqr: pick(top(rep, (a, b) => num(a.goodScore) - num(b.goodScore))),
+  };
+}
+
+/**
  * One group summary. Carries its own n so the renderer and the model can
  * both see whether it is reportable.
  */
@@ -42,7 +97,10 @@ function summarise(rows, key) {
   const poor = rows.filter((r) => r.cqr === 'Poor').length;
   return {
     key, n,
-    tooFew: n < MIN_GROUP,
+    tooFew: n < EARLY_MIN,                     // a single creative: an example, not a group
+    early: n >= EARLY_MIN && n < MIN_GROUP,    // 2 to 4: compare, but label it
+    confidence: n >= MIN_GROUP ? 'solid' : (n >= EARLY_MIN ? 'early' : 'single'),
+    goodScore: goodScore(rows.filter((r) => r.cqr === 'Good').length, n),
     good, average, poor,
     goodShare: n ? Math.round((good / n) * 100) : null,
     active: rows.filter((r) => r.is_active).length,
@@ -56,8 +114,8 @@ function summarise(rows, key) {
   };
 }
 
-/** Group by one dimension, sorted best first, tooFew groups last. */
-function groupBy(rows, keyFn, label) {
+/** Group by one dimension, sorted best first (sample-size aware), singles last. */
+function groupBy(rows, keyFn, label, field) {
   const buckets = new Map();
   for (const r of rows) {
     const k = keyFn(r);
@@ -65,15 +123,16 @@ function groupBy(rows, keyFn, label) {
     if (!buckets.has(k)) buckets.set(k, []);
     buckets.get(k).push(r);
   }
-  const groups = [...buckets.entries()].map(([k, rs]) => summarise(rs, k));
+  const groups = [...buckets.entries()].map(([k, rs]) => ({ ...summarise(rs, k), name: V.label(field, k), field }));
   groups.sort((a, b) => {
     if (a.tooFew !== b.tooFew) return a.tooFew ? 1 : -1;
-    const g = (b.goodShare ?? -1) - (a.goodShare ?? -1); if (g) return g;
+    const g = num(b.goodScore) - num(a.goodScore); if (g) return g;
     return num(b.hook_rate) - num(a.hook_rate);
   });
   const reportable = groups.filter((g) => !g.tooFew);
   return {
-    dimension: label,
+    dimension: V.title(field, label),
+    field,
     groups,
     reportable: reportable.length,
     // A dimension only "separates" if the best and worst reportable groups
@@ -84,8 +143,8 @@ function groupBy(rows, keyFn, label) {
   };
 }
 
-/** Two dimensions crossed. Only emitted if enough cells clear MIN_GROUP. */
-function crosstab(rows, aFn, bFn, aLabel, bLabel) {
+/** Two dimensions crossed. Cells of 2 or more are shown; small ones are flagged early. */
+function crosstab(rows, aFn, bFn, aLabel, bLabel, aField, bField) {
   const cells = new Map();
   for (const r of rows) {
     const a = aFn(r), b = bFn(r);
@@ -96,12 +155,12 @@ function crosstab(rows, aFn, bFn, aLabel, bLabel) {
   }
   const out = [...cells.entries()].map(([k, rs]) => {
     const [a, b] = k.split('\u0000');
-    return { a, b, ...summarise(rs, a + ' x ' + b) };
+    return { a, b, aName: V.label(aField, a), bName: V.label(bField, b), ...summarise(rs, a + ' x ' + b) };
   });
   const reportable = out.filter((c) => !c.tooFew);
   return {
-    dimensions: [aLabel, bLabel],
-    cells: reportable.sort((x, y) => (y.goodShare ?? -1) - (x.goodShare ?? -1)),
+    dimensions: [V.title(aField, aLabel), V.title(bField, bLabel)],
+    cells: reportable.sort((x, y) => num(y.goodScore) - num(x.goodScore)),
     suppressed: out.length - reportable.length,
     usable: reportable.length >= 2,
   };
@@ -112,7 +171,10 @@ function retentionDrop(c) {
   const r = c.retention || [];
   const labels = ['0s', 'hook', '25%', '50%', '75%', '100%'];
   let worst = null;
-  for (let i = 1; i < r.length; i += 1) {
+  // Start at i = 2: the 0s to hook drop is what hook rate already measures,
+  // and it is the largest drop on almost every video by definition. The
+  // useful signal is where people leave once the hook has done its job.
+  for (let i = 2; i < r.length; i += 1) {
     if (r[i] === null || r[i - 1] === null) continue;
     const d = r[i - 1] - r[i];
     if (!worst || d > worst.drop) worst = { drop: Math.round(d), from: labels[i - 1], to: labels[i] };
@@ -121,7 +183,7 @@ function retentionDrop(c) {
   // Map the quartile boundary to a rough timestamp, then read the timeline.
   const frac = { 'hook': 0.05, '25%': 0.25, '50%': 0.5, '75%': 0.75, '100%': 1 }[worst.to];
   let onScreen = null;
-  if (frac && c.duration_s && Array.isArray(c.timeline_attrs)) {
+  if (frac && c.duration_s && Array.isArray(c.timeline_attrs) && c.timeline_attrs.length) {
     const t = c.duration_s * frac;
     const seg = c.timeline_attrs.reduce((best, s) =>
       (best === null || Math.abs(s.t - t) < Math.abs(best.t - t)) ? s : best, null);
@@ -168,6 +230,35 @@ function build({ brand, paid, organic, boost, thresholds, monthly, freshness }) 
     .sort((a, b) => num(b.spend) - num(a.spend));
   const wasteSpend = waste.reduce((s, c) => s + num(c.spend), 0);
 
+  // Poor spend split: lifetime spend on Poor creatives that are now stopped is
+  // a past inefficiency; Poor creatives still running are current waste.
+  const poorAll = eligible.filter((c) => c.cqr === 'Poor');
+  const poorSplit = {
+    activeCount: poorAll.filter((c) => c.is_active).length,
+    activeSpend: poorAll.filter((c) => c.is_active).reduce((s, c) => s + num(c.spend), 0),
+    stoppedCount: poorAll.filter((c) => !c.is_active).length,
+    stoppedSpend: poorAll.filter((c) => !c.is_active).reduce((s, c) => s + num(c.spend), 0),
+  };
+
+  // Where creatives fail, from the brand's own Strong/Weak judgments.
+  const q = eligible.filter((c) => c.hook_q && c.hold_q);
+  const hookHold = {
+    rated: q.length,
+    bothStrong: q.filter((c) => c.hook_q === 'Strong' && c.hold_q === 'Strong').length,
+    strongHookWeakHold: q.filter((c) => c.hook_q === 'Strong' && c.hold_q === 'Weak').length,
+    weakHookStrongHold: q.filter((c) => c.hook_q === 'Weak' && c.hold_q === 'Strong').length,
+    bothWeak: q.filter((c) => c.hook_q === 'Weak' && c.hold_q === 'Weak').length,
+  };
+
+  hookHold.mostlyLose = (() => {
+    const body = hookHold.strongHookWeakHold, open = hookHold.weakHookStrongHold;
+    if (!body && !open) return null;
+    if (body >= open * 1.5) return 'mostly in the body: openings work but viewers drop off before the end';
+    if (open >= body * 1.5) return 'mostly at the opening: whoever gets past the hook tends to stay';
+    return 'about equally at the opening and in the body';
+  })();
+  hookHold.manyWeakOnBoth = hookHold.rated > 0 && hookHold.bothWeak >= Math.max(hookHold.strongHookWeakHold, hookHold.weakHookStrongHold);
+
   // ---- Anomalies worth surfacing unprompted --------------------
   const anomalies = [];
   const goodStopped = paid.filter((c) => c.cqr === 'Good' && !c.is_active);
@@ -180,60 +271,95 @@ function build({ brand, paid, organic, boost, thresholds, monthly, freshness }) 
   // ---- Dimensions ---------------------------------------------
   const dims = {
     platform: null, // handled separately, per-platform rows not per-creative
-    type: groupBy(eligible, (c) => c.type, 'type'),
-    format: groupBy(eligible, (c) => c.format, 'format'),
-    content_intent: groupBy(eligible, (c) => c.content_intent, 'content intent'),
-    narrative_structure: groupBy(eligible, (c) => c.narrative_structure, 'narrative structure'),
-    hook_device: groupBy(eligible, (c) => c.hook_device, 'hook device'),
-    hook_subject: groupBy(eligible, (c) => c.hook_subject, 'hook subject'),
-    hook_pace: groupBy(eligible, (c) => c.hook_pace, 'hook pace'),
-    product_role: groupBy(eligible, (c) => c.product_role, 'product role'),
-    opens_with_face: groupBy(eligible, (c) => (c.opens_with_face === null || c.opens_with_face === undefined ? null : (c.opens_with_face ? 'opens with a face' : 'no face at open')), 'opens with face'),
-    opens_with_product: groupBy(eligible, (c) => (c.opens_with_product === null || c.opens_with_product === undefined ? null : (c.opens_with_product ? 'opens with product' : 'no product at open')), 'opens with product'),
-    has_text_overlay: groupBy(eligible, (c) => (c.has_text_overlay === null || c.has_text_overlay === undefined ? null : (c.has_text_overlay ? 'has text overlay' : 'no text overlay')), 'text overlay'),
-    origin: groupBy(eligible, (c) => c.origin, 'original vs repurposed'),
-    campaign: groupBy(eligible, (c) => c.campaign, 'campaign'),
-    creator: groupBy(eligible.filter((c) => c.creator), (c) => c.creator, 'creator'),
+    type: groupBy(eligible, (c) => c.type, 'type', 'type'),
+    format: groupBy(eligible, (c) => c.format, 'format', 'format'),
+    content_intent: groupBy(eligible, (c) => c.content_intent, 'content intent', 'content_intent'),
+    narrative_structure: groupBy(eligible, (c) => c.narrative_structure, 'narrative structure', 'narrative_structure'),
+    hook_device: groupBy(eligible, (c) => c.hook_device, 'hook device', 'hook_device'),
+    hook_subject: groupBy(eligible, (c) => c.hook_subject, 'hook subject', 'hook_subject'),
+    hook_pace: groupBy(eligible, (c) => c.hook_pace, 'hook pace', 'hook_pace'),
+    product_role: groupBy(eligible, (c) => c.product_role, 'product role', 'product_role'),
+    opens_with_face: groupBy(eligible, (c) => (c.opens_with_face === null || c.opens_with_face === undefined ? null : (c.opens_with_face ? 'Face in the first 3 seconds' : 'No face at the start')), 'Opens with a face', 'opens_with_face'),
+    opens_with_product: groupBy(eligible, (c) => (c.opens_with_product === null || c.opens_with_product === undefined ? null : (c.opens_with_product ? 'Product in the first 3 seconds' : 'No product at the start')), 'Opens with the product', 'opens_with_product'),
+    has_text_overlay: groupBy(eligible, (c) => (c.has_text_overlay === null || c.has_text_overlay === undefined ? null : (c.has_text_overlay ? 'Uses on-screen text' : 'No on-screen text')), 'Text on screen anywhere', 'has_text_overlay'),
+    origin: groupBy(eligible, (c) => c.origin, 'Original or repurposed', 'origin'),
+    campaign: groupBy(eligible, (c) => c.campaign, 'Campaign', 'campaign'),
+    creator: groupBy(eligible.filter((c) => c.creator), (c) => c.creator, 'Creator', 'creator'),
   };
 
   const byPlatform = {};
   for (const p of S.platforms) {
     const rows = eligible.filter((c) => c.per_platform && c.per_platform[p])
       .map((c) => ({ ...c.per_platform[p], id: c.id, is_active: c.per_platform[p].is_active, hook_q: c.per_platform[p].hook_q, hold_q: c.per_platform[p].hold_q }));
-    if (rows.length) byPlatform[p] = summarise(rows, p);
+    if (rows.length) byPlatform[p] = { ...summarise(rows, p), name: V.label('platform', p), field: 'platform' };
   }
   const platGroups = Object.values(byPlatform);
-  const platRep = platGroups.filter((g) => !g.tooFew).sort((a, b) => num(b.hook_rate) - num(a.hook_rate));
+  const platRep = platGroups.filter((g) => !g.tooFew).sort((a, b) => (num(b.goodScore) - num(a.goodScore)) || (num(b.hook_rate) - num(a.hook_rate)));
   dims.platform = {
-    dimension: 'platform',
+    dimension: V.title('platform'),
+    field: 'platform',
     groups: platRep.concat(platGroups.filter((g) => g.tooFew)),
     reportable: platRep.length,
     spread: platRep.length >= 2 ? r1(num(platRep[0].hook_rate) - num(platRep[platRep.length - 1].hook_rate)) : null,
   };
 
+  // Brand baseline for the word comparisons, on the same eligible set.
+  const base = {
+    good: eligible.length ? eligible.filter((c) => c.cqr === 'Good').length / eligible.length * 100 : 0,
+    hook: avg(eligible.map((c) => c.hook_rate)) || 0,
+    hold: avg(eligible.map((c) => c.hold_rate)) || 0,
+  };
+  // Platforms are per-platform rows, not merged creatives. A merged creative
+  // takes the better of its two platforms, so comparing a single platform to
+  // the merged average makes every platform look weaker. Platforms get their
+  // own baseline: the average across all per-platform rows.
+  const platRows = eligible.flatMap((c) => Object.values(c.per_platform || {}));
+  const platBase = {
+    good: platRows.length ? platRows.filter((r) => r.cqr === 'Good').length / platRows.length * 100 : 0,
+    hook: avg(platRows.map((r) => r.hook_rate)) || 0,
+    hold: avg(platRows.map((r) => r.hold_rate)) || 0,
+  };
+  for (const [field, d] of Object.entries(dims)) {
+    if (!d || !d.groups) continue;
+    const b = field === 'platform' ? platBase : base;
+    for (const g of d.groups) g.vs = compareToBrand(g, b);
+    d.leaders = leadersOf(d.groups);
+  }
+
   // Which dimensions actually separate performance. The renderer leads with
   // these; a dimension that does not separate is noise.
+  // Ranked CQR first, matching the team's hierarchy: the gap in Good share
+  // decides, hook rate breaks ties. Ranking on hook rate alone once
+  // recommended a platform with a higher hook but half the Good share.
   const discriminating = Object.values(dims)
-    .filter((d) => d && d.spread !== null && Math.abs(d.spread) >= 5 && d.reportable >= 2)
-    .sort((a, b) => Math.abs(b.spread) - Math.abs(a.spread))
+    .filter((d) => d && d.reportable >= 2)
     .map((d) => {
-      // Best and worst are decided by hook rate, not list position, or a
-      // dimension sorted on a different key reports them backwards.
-      const byHook = d.groups.filter((g) => !g.tooFew).sort((a, b) => num(b.hook_rate) - num(a.hook_rate));
+      const rep = d.groups.filter((g) => !g.tooFew)
+        .sort((a, b) => (num(b.goodScore) - num(a.goodScore)) || (num(b.hook_rate) - num(a.hook_rate)));
+      const best = rep[0], worst = rep[rep.length - 1];
       return {
         dimension: d.dimension,
-        spread: Math.abs(r1(num(byHook[0].hook_rate) - num(byHook[byHook.length - 1].hook_rate))),
-        best: byHook[0].key, bestHook: byHook[0].hook_rate,
-        worst: byHook[byHook.length - 1].key, worstHook: byHook[byHook.length - 1].hook_rate,
+        field: d.field,
+        goodSpread: Math.round(num(best.goodShare) - num(worst.goodShare)),
+        hookSpread: r1(num(best.hook_rate) - num(worst.hook_rate)),
+        best: best.name || best.key, bestKey: best.key, bestGood: best.goodShare, bestHook: best.hook_rate, bestHold: best.hold_rate,
+        early: !!(best.early || worst.early), bestN: best.n, worstN: worst.n,
+        worst: worst.name || worst.key, worstKey: worst.key, worstGood: worst.goodShare, worstHook: worst.hook_rate, worstHold: worst.hold_rate,
       };
-    });
+    })
+    // Worth naming only if the Good share gap is real, or the hook gap is
+    // large while quality is at least not worse.
+    .filter((d) => d.goodSpread >= 15 || (d.goodSpread >= 0 && Math.abs(d.hookSpread) >= 8))
+    // Solid comparisons first, then early signals, each by size of gap.
+    .sort((a, b) => (a.early - b.early) || (b.goodSpread - a.goodSpread) || (Math.abs(b.hookSpread) - Math.abs(a.hookSpread)));
 
-  // ---- Crosstabs, only the ones that survive MIN_GROUP ---------
+  // ---- Crosstabs: cells of 2 or more, small ones flagged ---------
   const crosstabs = [
-    crosstab(eligible, (c) => c.hook_device, (c) => c.type, 'hook device', 'type'),
-    crosstab(eligible, (c) => c.content_intent, (c) => c.format, 'content intent', 'format'),
-    crosstab(eligible, (c) => c.hook_device, (c) => c.hook_pace, 'hook device', 'hook pace'),
+    crosstab(eligible, (c) => c.hook_device, (c) => c.type, 'hook device', 'type', 'hook_device', 'type'),
+    crosstab(eligible, (c) => c.content_intent, (c) => c.format, 'content intent', 'format', 'content_intent', 'format'),
+    crosstab(eligible, (c) => c.hook_device, (c) => c.hook_pace, 'hook device', 'hook pace', 'hook_device', 'hook_pace'),
   ].filter((x) => x.usable);
+  for (const x of crosstabs) for (const c of x.cells) c.vs = compareToBrand(c, base);
 
   // ---- Retention patterns -------------------------------------
   const drops = eligible.map((c) => ({ id: c.id, ...(retentionDrop(c) || {}) })).filter((d) => d.drop);
@@ -258,7 +384,7 @@ function build({ brand, paid, organic, boost, thresholds, monthly, freshness }) 
     poor: organic.filter((o) => o.cqr === 'Poor').length,
     byPlatform: S.organicPlatforms.map((p) => {
       const rows = organic.filter((o) => o.platform === p);
-      return { platform: p, n: rows.length, tooFew: rows.length < MIN_GROUP,
+      return { platform: p, n: rows.length, tooFew: rows.length < EARLY_MIN, early: rows.length >= EARLY_MIN && rows.length < MIN_GROUP,
         views: rows.reduce((s, o) => s + num(o.views), 0),
         engagement_rate: r1(avg(rows.map((o) => o.engagement_rate))),
         good: rows.filter((o) => o.cqr === 'Good').length };
@@ -266,19 +392,31 @@ function build({ brand, paid, organic, boost, thresholds, monthly, freshness }) 
     top: [...organic].sort((a, b) => (cqrScore(a.cqr) - cqrScore(b.cqr)) || (num(b.views) - num(a.views))).slice(0, 5),
   };
 
+  // Organic platforms compared with organic overall, in words.
+  const orgGood = organic.length ? organic.filter((o) => o.cqr === 'Good').length / organic.length * 100 : 0;
+  const orgEr = avg(organic.map((o) => o.engagement_rate)) || 0;
+  for (const p of organicSummary.byPlatform) {
+    const rows = organic.filter((o) => o.platform === p.platform);
+    const good = rows.length ? p.good / rows.length * 100 : 0;
+    p.vs = {
+      cqr: verdict(good - orgGood, 15),
+      engagement: verdict(p.engagement_rate === null ? null : num(p.engagement_rate) - orgEr, Math.max(0.2, orgEr * 0.10)),
+    };
+  }
+
   const validatedUnboosted = (boost || []).filter((b) => b.is_validated && !b.is_boosted);
 
   return {
     brand, freshness, floor, excluded,
-    totals, cqrMix, spendByCqr,
+    totals, cqrMix, spendByCqr, poorSplit, hookHold,
     ranked, top: ranked.slice(0, 10), bottom: ranked.slice(-10).reverse(),
     waste, wasteSpend, anomalies,
     dims, discriminating, crosstabs,
     retention: { drops, dropBySegment, dropByScreen, productTiming },
     organic: organicSummary, validatedUnboosted,
     thresholds, monthly,
-    minGroup: MIN_GROUP,
+    minGroup: MIN_GROUP, earlyMin: EARLY_MIN, base,
   };
 }
 
-module.exports = { build, groupBy, crosstab, summarise, rankCmp, retentionDrop, MIN_GROUP };
+module.exports = { build, groupBy, crosstab, summarise, rankCmp, retentionDrop, goodScore, compareToBrand, leadersOf, MIN_GROUP, EARLY_MIN };

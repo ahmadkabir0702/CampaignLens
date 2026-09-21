@@ -109,41 +109,84 @@ A creative can run on Meta, TikTok, both, or neither.
 
 ## Creative attributes
 
-Every creative is classified by Gemini at ingest. These are independent
-axes; a creative has one value on each.
+Every creative is classified by Gemini at ingest, on several independent
+questions. A creative has one answer to each. Always use these plain labels
+when talking about them.
 
-- **format** — how it was shot: music_video, product_demo, talking_head,
-  testimonial, lifestyle, tutorial, ugc, animation, other
-- **content_intent** — what job it is doing: educate, entertain,
-  demonstrate, prove, announce, inspire, promote_offer
-- **narrative_structure** — how it is built: problem_solution, story, tips,
-  demo, montage, testimonial_arc, performance
-- **product_role** — how present the product is: hero, featured,
-  incidental, absent
-- **hook_device** — the opening move in the first 3 seconds: question,
-  bold_claim, problem, product_reveal, face_to_camera, motion,
-  text_overlay, sound, before_after, unexpected_visual
-- **hook_subject** — what is on screen at the open: person, product, text,
-  scene
-- **hook_pace** — single_shot or fast_cut
-- **opens_with_product**, **opens_with_face**, **has_text_overlay** — true
-  or false
+**Format**, how it was shot: Music video, Product demo, Talking head,
+Testimonial, Lifestyle, Tutorial, UGC, Animation, Other.
 
-**type** is separate and not classified: BrandSay is brand-produced,
-OthersSay is creator or influencer content.
+**Opening hook**, how the video grabs attention in the first 3 seconds:
+
+- Asks a question: poses a question, spoken or on screen
+- Bold claim: opens with a strong statement or promise
+- Shows a problem: opens on a pain point the product solves
+- Opens on the product: the pack or product is the first thing you see
+- Product in use: someone using or applying the product
+- Talks to camera: a person speaks directly to the viewer
+- Dance or performance: dancing, singing or choreography
+- Everyday moment: a relatable real-life scene
+- Text on screen: on-screen text does the grabbing
+- Music or sound led: a song, beat or sound effect leads
+- Before and after: sets up a contrast or transformation
+- Surprising visual: something unexpected or unusual
+
+When a video does several of these at once, it is classified by the one a
+viewer notices first.
+
+**Purpose**, what job the video is doing: Teaches something, Entertains,
+Shows it working, Proves results, Announces news, Builds emotion, Promotes an
+offer. If a video contains a contest, deal or offer, its purpose is Promotes
+an offer, even when it is also entertaining.
+
+**Structure**, how it is built: Problem then solution, Tells a story, Tips
+or how-to, Product demo, Montage, Testimonial or review, Performance.
+
+**Product role**, how present the product is: Hero, Featured, In the
+background, Absent.
+
+**On screen at the start**: Person, Product, Text or Scene.
+**Opening pace**: One shot or Quick cuts.
+Also recorded: whether the product and a face appear in the first 3 seconds,
+and whether the video uses on-screen text anywhere.
+
+These are independent. Two music videos can have different purposes: one
+promoting a contest, one building emotion. That difference is exactly what
+these fields exist to reveal, so compare within a format as well as across.
+
+**Made by** is separate and not classified: Brand Say is brand-produced,
+Others Say is creator or influencer content.
 
 ---
 
-## The minimum group size rule
+## Comparing groups
 
-**A pattern in fewer than 5 creatives is not a pattern.**
+The team wants comparisons, not numbers. Every group (an opening hook type, a
+purpose, a format, a platform, a creator) is described as **stronger**,
+**similar** or **weaker** than the brand overall on the three things that
+matter, in this order:
 
-Every rollup and crosstab in the snapshot carries its group size. If a
-group is below 5, the snapshot marks it `TOO FEW`. When that happens, say
-there is not enough data to compare rather than reporting the number.
+1. **CQR**
+2. **Hook**
+3. **Hold**
 
-This is not optional caution. Reporting a three-creative fluke as a trend
-is how a tool loses the team's trust.
+A group with a stronger hook but a weaker CQR is not the better group.
+
+Platforms are compared with the average across both platforms, not the brand
+blend, because a creative on both platforms takes the better of the two.
+
+Small groups are shown and compared, but marked:
+
+- **Early sign**: a small group. Worth testing more, never a pattern or rule.
+- **One example only**: a single creative. Describe it, never treat it as
+  proof a type works.
+
+Groups are ranked in a way that weighs small groups cautiously, so two
+creatives that happened to be Good do not outrank a larger group that is
+reliably Good.
+
+Money is the exception: spend and waste are given as amounts, because the team
+acts on them.
 
 ---
 

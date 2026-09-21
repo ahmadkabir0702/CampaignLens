@@ -7,6 +7,7 @@
  */
 
 const S = require('./schema.config');
+const V = require('./vocab');
 const { getPool } = require('./db');
 const { shortName, displayLabel, mergePaid, rankCmp } = require('./snapshot');
 const CR = S.creator;
@@ -93,7 +94,8 @@ function slim(r, metric) {
   return {
     id: r.id, cqr: r.cqr, hook_rate: r.hook_rate, hook_q: r.hook_q, hold_rate: r.hold_rate, hold_q: r.hold_q,
     platforms: r.platforms, type: r.type, format: r.format, is_active: r.is_active,
-    hook_device: r.hook_device, content_intent: r.content_intent,
+    opening_hook: V.label('hook_device', r.hook_device) || null,
+    purpose: V.label('content_intent', r.content_intent) || null,
     ...(metric && !['cqr', 'hook_rate', 'hold_rate'].includes(metric) ? { [metric]: r[metric] } : {}),
   };
 }
@@ -142,7 +144,7 @@ async function rank_creatives(args, ctx) {
       ranked_by: metric === 'cqr' ? 'cqr, then hook_rate, then hold_rate' : metric,
       direction: wantBest ? 'best' : 'worst',
       volume_floor_impressions: floor, excluded_below_floor: excluded,
-      ...(belowMinGroup ? { warning: `Only ${rows.length} creatives match. That is below the minimum of ${MIN_GROUP}. List them if asked, but do not describe them as a pattern.` } : {}),
+      ...(belowMinGroup ? { sample: `Only ${rows.length} creatives match. Compare them if asked, but say it rests on ${rows.length} creatives and call it an early signal, not a pattern.` } : {}),
       rows: rows.map((r) => slim(r, metric)),
     }),
     records: Object.fromEntries(rows.map((r) => [r.id, r])),
