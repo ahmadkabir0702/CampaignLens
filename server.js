@@ -72,20 +72,23 @@ const COORD_ROLE = 'influencer_coordinator';
 const COORD_API = new Set([
   '/api/brands', '/api/switch-brand',
   '/api/others-say-pending', '/api/others-say-stats', '/api/add-creative',
-  '/api/campaigns',
+  '/api/campaigns', '/api/check-links',
 ]);
 // Deny by default: a coordinator may reach their own page, the assets it
 // needs, and the allowlisted APIs. Everything else bounces. Nothing here
 // depends on remembering to name a new page, so adding pages elsewhere in
 // the app cannot accidentally expose them to this role.
 const COORD_ASSET_RE = /^\/(img|fonts)\//;
+// Named individually rather than opening all of /js/, which holds the full
+// dashboard code this role must never load.
+const COORD_SCRIPTS = new Set(['/js/links.js']);
 app.use((req, res, next) => {
   const role = req.session && req.session.role;
   const p = req.path;
   if (role !== COORD_ROLE) return next();
 
   const ok = p === '/coordinator' || p === '/logout'
-    || COORD_ASSET_RE.test(p) || COORD_API.has(p);
+    || COORD_ASSET_RE.test(p) || COORD_SCRIPTS.has(p) || COORD_API.has(p);
   if (ok) return next();
   if (p.startsWith('/api/')) return res.status(403).json({ error: 'Not permitted for this role' });
   return res.redirect('/coordinator');
