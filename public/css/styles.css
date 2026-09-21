@@ -925,3 +925,13 @@ select:focus,.search-input:focus,.modal-input:focus{outline:none;border-color:va
   border-color: #A32040 !important;
   outline-color: #A32040;
 }
+
+/* Warning in the add-creative review step when the links look like
+   different videos. Same red as the other link errors. */
+.rv-content-warn {
+  margin-top: 12px; padding: 12px 14px; border-radius: 6px;
+  background: #FCEBEA; border: 1px solid #F0C4C1; color: #A32040;
+  font-size: 13px; line-height: 1.45;
+}
+.rv-content-sub { margin-top: 6px; color: #7A2A2A; }
+.rv-content-note { margin-top: 12px; font-size: 12px; color: #4A4A75; }
