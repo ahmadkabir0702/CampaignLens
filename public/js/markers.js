@@ -17,8 +17,8 @@
 (function (global) {
   'use strict';
 
-  var KINDS = ['creative', 'metric', 'chart', 'compare', 'cohort'];
-  var COMPLETE = /\[\[(creative|metric|chart|compare|cohort):([^\[\]]*)\]\]/;
+  var KINDS = ['creative', 'metric', 'chart', 'compare', 'cohort', 'element', 'insight'];
+  var COMPLETE = /\[\[(creative|metric|chart|compare|cohort|element|insight):([^\[\]]*)\]\]/;
 
   function parseMarker(kind, body) {
     var parts = String(body).split('|').map(function (s) { return s.trim(); });
@@ -46,6 +46,12 @@
           kind: 'compare',
           ids: parts.join('|').split(',').map(function (s) { return s.trim(); }).filter(Boolean),
         };
+
+      case 'element':
+        return { kind: 'element', key: parts.join('|') };
+
+      case 'insight':
+        return { kind: 'insight', id: parts[0] };
 
       case 'cohort':
         return { kind: 'cohort', key: parts.join('|') };

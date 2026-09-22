@@ -398,6 +398,64 @@
     return card;
   }
 
+  // ---- Element proof: with it vs without it --------------------
+  // The numbers come from the database via the stored record; the chat
+  // never types them. This is the "proof" half of an insight.
+
+  function pct(v) { return v === null || v === undefined ? 'n/a' : Math.round(Number(v)) + '%'; }
+
+  function renderElement(marker, store) {
+    var e = store.get('element:' + marker.key);
+    var card = el('div', 'al-card al-proof');
+    if (!e) { card.appendChild(el('div', 'al-expand-empty', 'Proof not available.')); return card; }
+    card.appendChild(el('div', 'al-proof-title', e.label));
+    var m = e.metric === 'hook' ? 'Hook' : 'Hold';
+    var grid = el('div', 'al-proof-grid');
+    [['With it', e['with']], ['Without it', e.without]].forEach(function (side) {
+      var col = el('div', 'al-proof-col');
+      col.appendChild(el('div', 'al-proof-head', side[0]));
+      var s = side[1] || {};
+      [['Rated Good', pct(s.goodRate)], [m + ' rate', pct(s[e.metric])], ['Creatives', String(s.creatives || 0)]].forEach(function (r) {
+        var row = el('div', 'al-proof-row');
+        row.appendChild(el('span', 'al-proof-k', r[0]));
+        row.appendChild(el('span', 'al-proof-v', r[1]));
+        col.appendChild(row);
+      });
+      grid.appendChild(col);
+    });
+    card.appendChild(grid);
+    var notes = [];
+    if (e.consistency) notes.push(e.consistency.charAt(0).toUpperCase() + e.consistency.slice(1) + '.');
+    if (e.campaignFlag) notes.push('Mostly from one campaign, so it may be the campaign rather than the element.');
+    if (e.early) notes.push('Early sign: small groups.');
+    if (notes.length) card.appendChild(el('div', 'al-proof-note', notes.join(' ')));
+    return card;
+  }
+
+  // ---- Insight card: insight first, then proof, then creatives ---
+
+  function renderInsight(marker, store, ctx) {
+    var c = store.get('insight:' + marker.id);
+    var card = el('div', 'al-insight');
+    if (!c) { card.appendChild(el('div', 'al-expand-empty', 'Insight not available.')); return card; }
+    if (c.top) card.appendChild(el('div', 'al-insight-badge', c.rank === 1 ? 'Top insight' : 'Headline insight'));
+    card.appendChild(el('div', 'al-insight-headline', c.headline));
+    (c.proof || []).forEach(function (key) {
+      var parts = String(key).split(':');
+      if (parts[0] === 'element') card.appendChild(renderElement({ kind: 'element', key: parts.slice(1).join(':') }, store));
+      else if (parts[0] === 'cohort') card.appendChild(renderCohort({ kind: 'cohort', key: parts.slice(1).join(':') }, store, ctx));
+    });
+    if (c.examples && c.examples.length) {
+      var ex = el('div', 'al-insight-examples');
+      ex.appendChild(el('span', 'al-insight-label', 'Examples'));
+      c.examples.forEach(function (id) { ex.appendChild(renderCreative({ kind: 'creative', id: id }, store, ctx)); });
+      card.appendChild(ex);
+    }
+    if (c.why) { var w = el('p', 'al-insight-text'); w.appendChild(el('span', 'al-insight-label', 'Why')); w.appendChild(document.createTextNode(c.why)); card.appendChild(w); }
+    if (c.test) { var t = el('p', 'al-insight-text'); t.appendChild(el('span', 'al-insight-label', 'What to test')); t.appendChild(document.createTextNode(c.test)); card.appendChild(t); }
+    return card;
+  }
+
   function render(marker, store, ctx) {
     switch (marker.kind) {
       case 'creative': return renderCreative(marker, store, ctx);
@@ -405,10 +463,12 @@
       case 'chart':    return renderChart(marker, store, ctx);
       case 'compare':  return renderCompare(marker, store, ctx);
       case 'cohort':   return renderCohort(marker, store, ctx);
+      case 'element':  return renderElement(marker, store, ctx);
+      case 'insight':  return renderInsight(marker, store, ctx);
       default:         return document.createTextNode('');
     }
   }
-  function isBlock(m) { return m.kind === 'chart' || m.kind === 'compare' || m.kind === 'cohort'; }
+  function isBlock(m) { return ['chart', 'compare', 'cohort', 'element', 'insight'].indexOf(m.kind) !== -1; }
 
   global.AskLensCards = { Store: Store, render: render, isBlock: isBlock, formatMetric: formatMetric, metricLabel: metricLabel, platformText: platformText, cqrBadge: cqrBadge, METRICS: METRICS, PLATFORMS: PLATFORMS };
 })(window);

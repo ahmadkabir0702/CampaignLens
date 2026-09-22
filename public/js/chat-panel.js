@@ -76,6 +76,12 @@
     histBtn.type = 'button';
     histBtn.addEventListener('click', toggleHistory);
     actions.appendChild(histBtn);
+    var reviewBtn = el('button', 'al-btn-outline', 'Review');
+    reviewBtn.type = 'button';
+    reviewBtn.hidden = true; // shown only if the server allows this user
+    reviewBtn.title = 'Insights the fact checker rejected';
+    reviewBtn.addEventListener('click', toggleReview);
+    actions.appendChild(reviewBtn);
     var newBtn = el('button', 'al-btn-outline', 'New chat');
     newBtn.type = 'button';
     newBtn.addEventListener('click', function () { startSession(true); });
@@ -154,6 +160,7 @@
       panel: panel, messages: messages, chips: chips,
       input: input, send: send, context: context, history: history,
       usageFill: usageFill, usageText: usageText, usage: usage, stale: stale,
+      reviewBtn: reviewBtn,
     };
 
     document.body.appendChild(panel);
@@ -189,6 +196,7 @@
     document.body.classList.add('al-open');
     syncContext();
     refreshUsage();
+    probeReview();
     if (!state.sessionId) startSession(false);
     setTimeout(function () { nodes.input.focus(); }, 60);
   }
@@ -533,7 +541,7 @@
 
   // Analytical answers come in three labelled parts. Once an answer has
   // finished streaming, set each label in bold so the parts are easy to scan.
-  var SECTION_RE = /^(What the data shows|Why|What to test):\s*/;
+  var SECTION_RE = /^(Insight|What the data shows|Examples|Why|What to test):\s*/;
   function styleSections(body) {
     body.querySelectorAll('.al-para').forEach(function (p) {
       var first = p.firstChild;
@@ -578,6 +586,38 @@
     shell.body.appendChild(btn);
   }
 
+
+  // ---- Review list (admins only) --------------------------------
+  // Insights the fact checker rejected, with its reason, so nothing is lost
+  // silently and an over-strict checker is easy to spot.
+
+  function probeReview() {
+    fetch('/api/chat/review', { credentials: 'same-origin' })
+      .then(function (r) { if (r.ok) nodes.reviewBtn.hidden = false; })
+      .catch(function () {});
+  }
+
+  function toggleReview() {
+    if (!nodes.history.hidden && nodes.history.dataset.mode === 'review') { nodes.history.hidden = true; return; }
+    nodes.history.innerHTML = '';
+    nodes.history.dataset.mode = 'review';
+    nodes.history.hidden = false;
+    fetch('/api/chat/review', { credentials: 'same-origin' })
+      .then(function (r) { return r.ok ? r.json() : { items: [] }; })
+      .then(function (data) {
+        var items = data.items || [];
+        if (!items.length) { nodes.history.appendChild(el('div', 'al-history-empty', 'Nothing rejected in the last 30 days.')); return; }
+        items.forEach(function (it) {
+          var row = el('div', 'al-review-item');
+          row.appendChild(el('div', 'al-review-head', (it.brandLabel || it.brand) + ' · ' + it.topic));
+          if (it.headline) row.appendChild(el('div', 'al-review-card', it.headline));
+          row.appendChild(el('div', 'al-review-why', 'Rejected: ' + (it.reason || 'no reason given')));
+          nodes.history.appendChild(row);
+        });
+      })
+      .catch(function () { nodes.history.appendChild(el('div', 'al-history-empty', 'Could not load the review list.')); });
+  }
+
   // ---- History -------------------------------------------------
 
   function fmtDate(iso) {
@@ -597,11 +637,12 @@
   }
 
   function toggleHistory() {
-    if (!nodes.history.hidden) { nodes.history.hidden = true; return; }
+    if (!nodes.history.hidden && nodes.history.dataset.mode !== 'review') { nodes.history.hidden = true; return; }
     loadHistoryList();
   }
 
   function loadHistoryList() {
+    nodes.history.dataset.mode = 'history';
     nodes.history.innerHTML = '';
     nodes.history.hidden = false;
     fetch('/api/chat/sessions?brand=' + encodeURIComponent(state.getBrand()), { credentials: 'same-origin' })
