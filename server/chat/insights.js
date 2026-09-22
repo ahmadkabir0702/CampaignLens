@@ -23,19 +23,32 @@ const client = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY });
 
 // Current Sonnet. Same listed price as 4.6. Override with ASK_LENS_WRITER_MODEL.
 const WRITER_MODEL = process.env.ASK_LENS_WRITER_MODEL || 'claude-sonnet-5';
+// The checker was the weak link on Haiku: it misread amounts and lacked context.
+// Findings are only rewritten when creatives change, so Sonnet here is cheap.
+const CHECKER_MODEL = process.env.ASK_LENS_CHECKER_MODEL || 'claude-sonnet-5';
 // A finding needs at least 2 creatives to compare. Below 5 it is written as
 // an early signal: the writer must say so, and the verifier enforces it.
 const MIN_EVIDENCE = 2;
 
 /** A dimension as word comparisons on CQR, hook and hold. No numbers. */
-function groupSentence(g) {
+function groupSentence(g, leaders) {
   const vs = g.vs || {};
   const cqr = vs.cqrSize ? `CQR ${vs.cqr} (${vs.cqrSize})` : `CQR ${vs.cqr || 'unknown'}`;
   const hook = `hook ${vs.hookMuch ? 'much ' : ''}${vs.hook || 'unknown'}`;
   const hold = `hold ${vs.holdMuch ? 'much ' : ''}${vs.hold || 'unknown'}`;
-  return `${g.name || g.key}: ${cqr}, ${hook}, ${hold}${g.early ? '. Early sign, small group' : ''}.`;
+  // Where it ranks against the OTHER groups. Kept in the same sentence so the
+  // two kinds of comparison are never read as contradicting each other.
+  const ranks = [];
+  if (leaders) {
+    if (leaders.cqr && leaders.cqr.key === g.key) ranks.push('best on CQR among these groups');
+    if (leaders.hook && leaders.hook.key === g.key) ranks.push('best hook among these groups');
+    if (leaders.hold && leaders.hold.key === g.key) ranks.push('best hold among these groups');
+    if (leaders.weakestCqr && leaders.weakestCqr.key === g.key) ranks.push('weakest on CQR among these groups');
+  }
+  return `${g.name || g.key}: against the brand average, ${cqr}, ${hook}, ${hold}.`
+    + (ranks.length ? ` Ranking against the other groups: ${ranks.join('; ')}.` : '')
+    + (g.early ? ' Early sign, small group.' : '');
 }
-
 /**
  * Two groups compared directly, worked out in code. Without this the writer
  * had to infer "Meta beats TikTok" from two separate comparisons with the
@@ -66,8 +79,8 @@ function asWords(d) {
   const out = {
     dimension: d.dimension,
     comparedWith: 'the brand overall',
-    groups: rep.slice(0, 8).map(groupSentence),
-    leaders: d.leaders ? `Leads on CQR: ${tag(d.leaders.cqr)}. Best hook: ${tag(d.leaders.hook)}. Best hold: ${tag(d.leaders.hold)}. Weakest on CQR: ${tag(d.leaders.weakestCqr)}.` : null,
+    groups: rep.slice(0, 8).map((g) => groupSentence(g, d.leaders)),
+    howToRead: 'Two different comparisons. "Against the brand average" compares each group with the brand overall. "Ranking against the other groups" compares the groups with each other. A group can be the best among these groups and still only similar to the brand average; that is not a contradiction.',
   };
   if (rep.length === 2) out.headToHead = `${rep[0].name} against ${rep[1].name}: ${headToHead({ ...rep[0], name: rep[0].name || rep[0].key }, { ...rep[1], name: rep[1].name || rep[1].key })}`;
   if (d.groups.some((g) => g.tooFew)) out.note = 'Groups with a single creative are left out.';
@@ -109,14 +122,18 @@ const HYPOTHESES = [
   },
   {
     id: 'spend_quality',
-    guide: 'First, the lifetime split: what share of spend went to Good creatives and what share to Poor. If Poor received a share comparable to or larger than Good, that is the headline. Second, the present: say how many Poor creatives are still running and their spend (current waste), and separately how many were already stopped (a past inefficiency that has been dealt with). Never call allocation healthy when Poor received a large share, even if none are running now.',
+    guide: 'First, the lifetime split: say which tier gets the most spend (mostSpendGoesTo, exactly as given), then what share went to Good and to Poor. If Poor received a share comparable to or larger than Good, that is the headline. Second, the present: say how many Poor creatives are still running and their spend (current waste), and separately how many were already stopped (a past inefficiency that has been dealt with). Never call allocation healthy when Poor received a large share, even if none are running now.',
     question: 'Is spend concentrated on the creatives that actually perform?',
     evidence: (an) => {
       const total = an.spendByCqr.Good + an.spendByCqr.Average + an.spendByCqr.Poor;
       if (!total || an.totals.creatives < MIN_EVIDENCE) return null;
       return {
         goodShare: Math.round(an.spendByCqr.Good / total * 100),
+        averageShare: Math.round(an.spendByCqr.Average / total * 100),
         poorShare: Math.round(an.spendByCqr.Poor / total * 100),
+        // Worked out here so the writer never has to compare amounts itself.
+        mostSpendGoesTo: ['Good', 'Average', 'Poor'].sort((a, b) => an.spendByCqr[b] - an.spendByCqr[a])[0] + ' creatives',
+        leastSpendGoesTo: ['Good', 'Average', 'Poor'].sort((a, b) => an.spendByCqr[a] - an.spendByCqr[b])[0] + ' creatives',
         spendByCqr: an.spendByCqr, cqrMix: an.cqrMix,
         poorStillRunning: { count: an.poorSplit.activeCount, spend: an.poorSplit.activeSpend },
         poorAlreadyStopped: { count: an.poorSplit.stoppedCount, spend: an.poorSplit.stoppedSpend },
@@ -286,6 +303,9 @@ Rules:
 - CQR matters most, then hook, then hold. A stronger hook alone does not make something better.
 - Where a head-to-head is given, use it for direct comparisons between the two groups.
 - Something marked early sign is small: call it an early sign, never a pattern or rule.
+- If "What the data shows" rests on an early sign, the Why and What to test parts must keep that caution: "if this early sign holds...", "worth testing to confirm". Never build a general rule on it.
+- Each group sentence has two kinds of comparison: against the brand average, and ranking against the other groups. Keep them apart. Only call a group the best or the weakest if its sentence says so in the ranking part.
+- Where the evidence says which tier gets the most spend, repeat that exactly. Do not work it out from the amounts.
 - A single creative is never proof that a type works.
 - Describe comparisons in the right direction. Re-read each one before finishing.
 - Plain, direct wording. No em dashes, no emoji, no markdown symbols.
@@ -303,6 +323,13 @@ Check the facts. Mark it NOT ok only if:
 - it treats a single creative as proof that a type works
 - the Why part states its explanation as proven fact rather than as likely
 - the advice contradicts the evidence
+
+What the terms mean:
+- Brand Say is brand-made content. Others Say is creator or influencer-made content. Calling Others Say "creator-made" is correct.
+- CQR is the creative quality rating. Good, Average and Poor are its tiers.
+- Each group is compared two different ways. "Against the brand average" (stronger, similar, weaker) compares it with the brand overall. "Ranking against the other groups" (best, weakest among these) compares the groups with each other. A group can be the best among these groups and still similar to the brand average. That is NOT a contradiction; do not reject for it.
+- Where the evidence states which tier gets the most or least spend, that statement is authoritative. Do not re-derive it by comparing amounts yourself.
+- Being more cautious than the evidence requires (for example calling something an early sign when it is not marked one) is not an error.
 
 Group-to-group statements are correct when they follow from the evidence: if one group is stronger and another similar or weaker against the same baseline, the first is stronger than the second. A head-to-head in the evidence is authoritative.
 
@@ -348,20 +375,24 @@ function fingerprint(an) {
   return crypto.createHash('sha256').update(rows.join('|')).digest('hex').slice(0, 16);
 }
 
-async function writeFinding(h, evidence) {
+async function writeFinding(h, evidence, revision) {
+  let content = `Question: ${h.question}\n\nWhat a good answer covers: ${h.guide || 'the clearest pattern in the evidence.'}\n\nEvidence:\n${JSON.stringify(evidence, null, 1)}`;
+  if (revision) {
+    content += `\n\nYour previous draft was rejected by a fact checker.\nDraft: ${revision.draft}\nReason: ${revision.reason}\nWrite a corrected version that fixes exactly that problem and stays true to the evidence.`;
+  }
   const res = await client.messages.create({
     model: WRITER_MODEL, max_tokens: 500,
     // The prompt and playbook are identical on every call in a run, so cache
     // them: calls come back to back, so the 5-minute cache is enough.
     system: [{ type: 'text', text: WRITER_PROMPT, cache_control: { type: 'ephemeral' } }],
-    messages: [{ role: 'user', content: `Question: ${h.question}\n\nWhat a good answer covers: ${h.guide || 'the clearest pattern in the evidence.'}\n\nEvidence:\n${JSON.stringify(evidence, null, 1)}` }],
+    messages: [{ role: 'user', content }],
   });
   return res.content.filter((b) => b.type === 'text').map((b) => b.text).join('').trim();
 }
 
 async function verifyFinding(body, evidence) {
   const res = await client.messages.create({
-    model: S.model, max_tokens: 200,
+    model: CHECKER_MODEL, max_tokens: 200,
     system: VERIFY_PROMPT,
     tools: [VERDICT_TOOL],
     tool_choice: { type: 'tool', name: 'verdict' },
@@ -405,14 +436,22 @@ async function generateForBrand(brand, snapshot, opts = {}) {
 
     const shown = present(evidence);
     try {
-      const body = await writeFinding(h, shown);
-
-      const pre = numbersReconcile(body, shown);
-      let verified = pre.ok, note = pre.ok ? null : `numbers not in evidence: ${pre.bad.join(', ')}`;
-      if (verified) {
-        const v = await verifyFinding(body, shown);
-        verified = !!v.ok; note = v.ok ? null : (v.reason || 'failed verification');
+      const check = async (text) => {
+        const pre = numbersReconcile(text, shown);
+        if (!pre.ok) return { ok: false, reason: `it states numbers that are not in the evidence: ${pre.bad.join(', ')}` };
+        const v = await verifyFinding(text, shown);
+        return { ok: !!v.ok, reason: v.ok ? null : (v.reason || 'failed verification') };
+      };
+      let body = await writeFinding(h, shown);
+      let result = await check(body);
+      // One corrected attempt, told exactly what the checker objected to.
+      if (!result.ok) {
+        const retry = await writeFinding(h, shown, { draft: body, reason: result.reason });
+        const again = await check(retry);
+        if (again.ok) { body = retry; result = again; out.revised = (out.revised || 0) + 1; }
+        else { result = { ok: false, reason: `${result.reason} (and after one revision: ${again.reason})` }; }
       }
+      let verified = result.ok, note = result.reason;
       if (!verified) out.rejected += 1; else out.written += 1;
 
       await pool.query(
