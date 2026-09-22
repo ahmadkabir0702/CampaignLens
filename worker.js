@@ -113,6 +113,15 @@ const RESPONSE_SCHEMA = {
     opens_with_product: { type: 'boolean' },
     opens_with_face: { type: 'boolean' },
     has_text_overlay: { type: 'boolean' },
+    logo_first_3s: { type: 'boolean' },
+    captions: { type: 'boolean' },
+    voiceover: { type: 'boolean' },
+    music: { type: 'boolean' },
+    cta: { type: 'boolean' },
+    language: { type: 'string', enum: ['sinhala', 'tamil', 'english', 'mixed', 'none'] },
+    talent: { type: 'string', enum: ['creator', 'celebrity', 'model', 'everyday_person', 'none'] },
+    production_style: { type: 'string', enum: ['phone_shot', 'polished'] },
+    aspect_ratio: { type: 'string', enum: ['vertical', 'square', 'horizontal'] },
     timeline_attrs: {
       type: 'array',
       items: {
@@ -129,10 +138,10 @@ const RESPONSE_SCHEMA = {
   },
   required: ['duration', 'format', 'product_role', 'format_note', 'hook', 'timeline',
              'content_intent', 'narrative_structure', 'hook_device', 'hook_subject', 'hook_pace',
-             'opens_with_product', 'opens_with_face', 'has_text_overlay', 'timeline_attrs'],
+             'opens_with_product', 'opens_with_face', 'has_text_overlay', 'logo_first_3s', 'captions', 'voiceover', 'music', 'cta', 'language', 'talent', 'production_style', 'aspect_ratio', 'timeline_attrs'],
   propertyOrdering: ['duration', 'format', 'product_role', 'format_note', 'hook', 'timeline',
                      'content_intent', 'narrative_structure', 'hook_device', 'hook_subject', 'hook_pace',
-                     'opens_with_product', 'opens_with_face', 'has_text_overlay', 'timeline_attrs'],
+                     'opens_with_product', 'opens_with_face', 'has_text_overlay', 'logo_first_3s', 'captions', 'voiceover', 'music', 'cta', 'language', 'talent', 'production_style', 'aspect_ratio', 'timeline_attrs'],
 };
 
 function buildPrompt(hintDuration) {
@@ -216,6 +225,15 @@ For the next five keys, judge ONLY the first 3 seconds. Ignore everything after 
 "opens_with_product": true if the product is visible within the first 3 seconds.
 "opens_with_face": true if a human face is visible within the first 3 seconds.
 "has_text_overlay": true if on-screen text appears anywhere in the video.
+"logo_first_3s": true if the brand name or logo is visible within the first 3 seconds.
+"captions": true if spoken words are shown on screen as captions or subtitles.
+"voiceover": true if anyone speaks, on camera or as narration.
+"music": true if music plays at any point.
+"cta": true if the video explicitly asks the viewer to act: buy, visit, enter, comment, follow, tap.
+"language": the main language spoken or written. One of "sinhala", "tamil", "english", "mixed" (more than one used prominently), "none" (no words at all).
+"talent": who is mainly on screen. One of "creator" (an influencer or content creator in their own style), "celebrity" (a well-known public figure), "model" (a styled model or actor), "everyday_person" (a regular person, not styled), "none" (no people).
+"production_style": "phone_shot" if it looks shot on a phone, informal and native to social media, or "polished" if it looks like a professionally produced advert.
+"aspect_ratio": the frame shape. One of "vertical", "square", "horizontal".
 
 "timeline_attrs": the same windows as "timeline", structured. Use exactly the same number of entries and the same "t" values as "timeline". Each object:
   { "t": <same window start as the timeline entry>,
@@ -509,6 +527,20 @@ function deriveTimelineMetrics(attrs) {
  * The attribute values that go into the creatives row. Shared by the live
  * pipeline and the backfill so both write identical data.
  */
+const bool = (v) => (typeof v === 'boolean' ? v : null);
+const pick = (v, allowed) => (allowed.includes(v) ? v : null);
+
+/** Saves the Phase 1 tags. Shared by new uploads and the backfill. */
+async function saveTags(creativeId, at) {
+  await query(
+    `update creatives set
+       logo_first_3s=$2, captions=$3, voiceover=$4, music=$5, cta=$6,
+       language=$7, talent=$8, production_style=$9, aspect_ratio=$10, attrs_version=2
+     where creative_id=$1`,
+    [creativeId, at.logo_first_3s, at.captions, at.voiceover, at.music, at.cta,
+     at.language, at.talent, at.production_style, at.aspect_ratio]);
+}
+
 function attributeColumns(a) {
   const attrs = Array.isArray(a.timeline_attrs) ? a.timeline_attrs : [];
   const d = deriveTimelineMetrics(attrs);
@@ -521,6 +553,17 @@ function attributeColumns(a) {
     opens_with_product: typeof a.opens_with_product === 'boolean' ? a.opens_with_product : null,
     opens_with_face: typeof a.opens_with_face === 'boolean' ? a.opens_with_face : null,
     has_text_overlay: typeof a.has_text_overlay === 'boolean' ? a.has_text_overlay : null,
+    // Phase 1 tags. Anything outside the allowed values is saved as unknown
+    // rather than failing the whole save on the database check.
+    logo_first_3s: bool(a.logo_first_3s),
+    captions: bool(a.captions),
+    voiceover: bool(a.voiceover),
+    music: bool(a.music),
+    cta: bool(a.cta),
+    language: pick(a.language, ['sinhala', 'tamil', 'english', 'mixed', 'none']),
+    talent: pick(a.talent, ['creator', 'celebrity', 'model', 'everyday_person', 'none']),
+    production_style: pick(a.production_style, ['phone_shot', 'polished']),
+    aspect_ratio: pick(a.aspect_ratio, ['vertical', 'square', 'horizontal']),
     timeline_attrs: JSON.stringify(attrs),
     time_to_product_s: d.timeToProduct,
     product_screen_pct: d.productPct,
@@ -661,6 +704,8 @@ function makeProcessor(ai) {
          at.timeline_attrs, at.time_to_product_s, at.product_screen_pct, at.cuts_per_10s]
       );
 
+      await saveTags(creativeId, at);
+
       console.log(`[worker] ${creativeId}: analysed ${platform} (${safeDur === null ? '?' : safeDur}s, ${timeline.length} segments) and added`);
 
       notifySuccess({
@@ -793,6 +838,7 @@ async function classifyExisting(ai, row) {
        at.opens_with_product, at.opens_with_face, at.has_text_overlay,
        at.timeline_attrs, at.time_to_product_s, at.product_screen_pct, at.cuts_per_10s]
     );
+    await saveTags(row.creative_id, at);
     return { ...at, cost_usd: a._usage ? a._usage.cost_usd : null };
   } finally {
     if (videoPath) { try { fs.unlinkSync(videoPath); } catch (e) {} }
@@ -801,7 +847,7 @@ async function classifyExisting(ai, row) {
 
 module.exports = {
   startWorker, buildPrompt, normaliseTimeline, RESPONSE_SCHEMA, analyseVideo,
-  classifyExisting, attributeColumns, deriveTimelineMetrics,
+  classifyExisting, attributeColumns, deriveTimelineMetrics, saveTags,
 };
 
 // Standalone mode: node worker.js
