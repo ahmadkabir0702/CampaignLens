@@ -521,6 +521,7 @@
           .filter(function (t) { return t.type === 'marker'; })
           .map(function (t) { return t.marker; });
 
+        styleSections(shell.body);
         addCopyButton(shell, collected);
         if (markers.length) renderChips(refineChips(markers, text));
         scrollToEnd();
@@ -528,6 +529,22 @@
 
       return pump();
     }
+  }
+
+  // Analytical answers come in three labelled parts. Once an answer has
+  // finished streaming, set each label in bold so the parts are easy to scan.
+  var SECTION_RE = /^(What the data shows|Why|What to test):\s*/;
+  function styleSections(body) {
+    body.querySelectorAll('.al-para').forEach(function (p) {
+      var first = p.firstChild;
+      if (!first || first.nodeType !== 3) return;
+      var m = first.nodeValue.match(SECTION_RE);
+      if (!m) return;
+      first.nodeValue = first.nodeValue.slice(m[0].length);
+      var label = el('span', 'al-section', m[1]);
+      p.insertBefore(label, first);
+      p.classList.add('al-para-section');
+    });
   }
 
   // ---- Copy ----------------------------------------------------
@@ -626,6 +643,7 @@
           toks.forEach(function (t) { appendToken(shell, t, ctx); });
           var last = shell.body.lastElementChild;
           if (last && last.tagName === 'P' && !last.textContent.trim() && !last.children.length) last.remove();
+          styleSections(shell.body);
           addCopyButton(shell, toks);
         });
         scrollToEnd();
