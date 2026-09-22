@@ -275,3 +275,8 @@ body.al-open { padding-right: var(--al-width); }
 .al-tag-stronger .al-tag-val { color: var(--pos); }
 .al-tag-weaker .al-tag-val { color: var(--neg); }
 .al-tag-similar .al-tag-val { color: var(--ink-500); }
+
+/* Analytical answers: the three labels in bold, each part starting fresh. */
+.al-section { display: block; font-weight: 500; color: var(--navy); margin-bottom: 2px; }
+.al-para-section { margin-top: 10px; }
+.al-para-section:first-child { margin-top: 0; }
