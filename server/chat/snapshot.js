@@ -16,7 +16,7 @@ const { getPool } = require('./db');
 
 // Bump this whenever the digest format or the records shape changes.
 // Stored snapshots with a different schema version rebuild on next use.
-const SNAPSHOT_SCHEMA_VERSION = 4;
+const SNAPSHOT_SCHEMA_VERSION = 5;
 
 const T = S.tables, C = S.creative, P = S.paidView, O = S.organicView, OR = S.organicRawCols;
 const OB = S.organicBest, B = S.boost, TH = S.thresholds, CR = S.creator;
@@ -62,6 +62,7 @@ async function qCreatives(pool, brand) {
             c.${C.type} as type, c.${C.campaign} as campaign, c.${C.isRepurposed} as is_repurposed,
             c.${C.parentId} as parent_id, c.${C.publishedAt} as published_at, c.${C.durationS} as duration_s,
             c.segments, c.content_intent, c.narrative_structure, c.hook_device, c.hook_subject, c.hook_pace,
+            c.logo_first_3s, c.captions, c.voiceover, c.music, c.cta, c.language, c.talent, c.production_style, c.aspect_ratio,
             c.opens_with_product, c.opens_with_face, c.has_text_overlay,
             c.timeline_attrs, c.time_to_product_s, c.product_screen_pct, c.cuts_per_10s,
             cr.${CR.name} as creator,
@@ -207,6 +208,17 @@ function renderDim(L, d) {
   L.push('');
 }
 
+/** The Phase 1 tags as a short phrase: what the chat reads instead of frames. */
+function tagLine(c) {
+  const yes = (v, t) => (v === true ? t : null);
+  return [
+    yes(c.opens_with_face, 'face at open'), yes(c.opens_with_product, 'product at open'), yes(c.logo_first_3s, 'logo at open'),
+    yes(c.captions, 'captions'), yes(c.voiceover, 'speech'), yes(c.music, 'music'), yes(c.cta, 'call to action'),
+    c.language && V.label('language', c.language), c.talent && V.label('talent', c.talent),
+    c.production_style && V.label('production_style', c.production_style), c.aspect_ratio && V.label('aspect_ratio', c.aspect_ratio),
+  ].filter(Boolean).join(', ');
+}
+
 function creativeLine(c) {
   const plats = (c.platforms || []).map((p) => S.platformLabels[p] || p).join('+');
   const ret = (c.retention || []).map((v) => (v === null ? '-' : v)).join('/');
@@ -223,6 +235,7 @@ function creativeLine(c) {
     c.duration_s ? `${Math.round(c.duration_s)}s` : null,
     plats, V.label('type', c.type) || null, V.label('format', c.format) || 'Unclassified',
     attrs || null,
+    tagLine(c) || null,
     c.creator ? `creator:${clip(c.creator, 20)}` : null,
     c.is_active ? 'ACTIVE' : 'STOPPED',
     `spend ${fmtCount(c.spend)}`,
@@ -264,8 +277,18 @@ function renderDigest(an, insights) {
   }
 
   if (insights && insights.length) {
-    L.push('VERIFIED FINDINGS (computed and checked against the data; cite these for why and what-next questions)');
-    insights.forEach((i, n) => L.push(`  ${n + 1}. ${i.body}`));
+    L.push('INSIGHT CARDS (checked against the data; the first three are the headline insights)');
+    insights.forEach((i, n) => {
+      const c = i.card;
+      if (c && c.headline) {
+        L.push(`  ${n + 1}. [[insight:${i.id}]] ${c.headline}`);
+        if (c.why) L.push(`     Why: ${c.why}`);
+        if (c.test) L.push(`     Test: ${c.test}`);
+      } else {
+        L.push(`  ${n + 1}. ${i.body}`);
+      }
+    });
+    L.push('  To show one to the user, emit its [[insight:ID]] marker: it renders the full card with proof and examples.');
     L.push('');
   }
 
@@ -278,17 +301,18 @@ function renderDigest(an, insights) {
   if (an.hookHold.mostlyLose) L.push(`  Where creatives lose people: ${an.hookHold.mostlyLose}.${an.hookHold.manyWeakOnBoth ? ' Many creatives are weak on both hook and hold.' : ''}`);
   L.push('');
 
-  if (an.winners && an.winners.statements.length) {
-    L.push(`WHAT THE GOOD CREATIVES SHARE (Good creatives against the rest)${an.winners.early ? ' [early sign: few creatives on one side]' : ''}`);
-    an.winners.statements.forEach((t) => L.push('  ' + t));
-    L.push('  This is the strongest material for why-questions. Explain the likely reason using the creative playbook.');
+  if (an.elements && an.elements.length) {
+    L.push('WHAT MAKES THE DIFFERENCE (each creative element, with it vs without it, ranked by impact)');
+    an.elements.slice(0, 10).forEach((e) => L.push('  ' + A.elementSentence(e)));
+    L.push('  Opening elements are judged on hook, whole-video elements on hold, and every element on CQR.');
+    L.push('  Show the proof for an element with [[element:KEY]], using the key in square brackets.');
     L.push('');
   }
 
   const ex = (c) => {
     L.push(`  ${c.name} [${c.id}]: ${c.rating}. ${c.is}.`);
     if (c.hook) L.push(`    What it is: ${c.hook}`);
-    if (c.opening) L.push(`    Opening seconds: ${c.opening}`);
+    if (c.tags) L.push(`    Tags: ${c.tags}`);
     const tail = [c.product, c.losesPeople && `loses most viewers ${c.losesPeople}`].filter(Boolean);
     if (tail.length) L.push(`    ${tail.join('; ')}.`);
   };
@@ -324,12 +348,7 @@ function renderDigest(an, insights) {
   renderDim(L, an.dims.format);
   renderDim(L, an.dims.type);
   renderDim(L, an.dims.platform);
-  renderDim(L, an.dims.hook_subject);
-  renderDim(L, an.dims.hook_pace);
   renderDim(L, an.dims.product_role);
-  renderDim(L, an.dims.opens_with_face);
-  renderDim(L, an.dims.opens_with_product);
-  renderDim(L, an.dims.has_text_overlay);
   renderDim(L, an.dims.origin);
   renderDim(L, an.dims.campaign);
   renderDim(L, an.dims.creator);
@@ -430,6 +449,8 @@ async function buildSnapshot(brand, _r, opts = {}) {
       origin: c.is_repurposed ? 'repurposed' : 'original', parent_id: c.parent_id,
       published_at: c.published_at, duration_s: c.duration_s ?? (m && m.duration_s), permalink: c.permalink,
       segments: c.segments, content_intent: c.content_intent, narrative_structure: c.narrative_structure,
+      logo_first_3s: c.logo_first_3s, captions: c.captions, voiceover: c.voiceover, music: c.music, cta: c.cta,
+      language: c.language, talent: c.talent, production_style: c.production_style, aspect_ratio: c.aspect_ratio,
       hook_device: c.hook_device, hook_subject: c.hook_subject, hook_pace: c.hook_pace,
       opens_with_product: c.opens_with_product, opens_with_face: c.opens_with_face,
       has_text_overlay: c.has_text_overlay, timeline_attrs: c.timeline_attrs,
@@ -465,7 +486,9 @@ async function buildSnapshot(brand, _r, opts = {}) {
   let insights = [];
   try {
     const { rows } = await pool.query(
-      `select body from brand_insights where brand = $1 and verified = true order by id`,
+      `select id, body, card, impact from brand_insights
+       where brand = $1 and verified = true
+       order by impact desc nulls last, id`,
       [brand]);
     insights = rows;
   } catch (e) { /* table may not exist yet */ }
@@ -484,6 +507,8 @@ async function buildSnapshot(brand, _r, opts = {}) {
   }
 
   records.brand = { id: 'brand', name: S.brandLabels[brand], ...an.totals, cqr_mix: an.cqrMix };
+  for (const e of an.elements || []) records[`element:${e.key}`] = { id: `element:${e.key}`, ...e };
+  for (const i of insights) if (i.card) records[`insight:${i.id}`] = { id: `insight:${i.id}`, ...i.card };
   // The staleness check in getSnapshot compares these three fields. Without
   // them it concludes every stored copy is out of date and rebuilds on every
   // read, which is what happened before this fix.

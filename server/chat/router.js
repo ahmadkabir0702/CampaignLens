@@ -34,4 +34,20 @@ function modelFor(question) {
     : { model: S.model, maxTokens: S.maxTokens, mode: 'lookup' };
 }
 
-module.exports = { isAnalytical, modelFor };
+/**
+ * Extra request settings per model.
+ *
+ * Sonnet 5 (and the other 5-series models) think before answering by
+ * default, and that thinking counts against max_tokens. With limits sized
+ * for a model that does not think, the thinking can use the whole allowance
+ * and leave an empty answer. The analysis here is already done in code, so
+ * the model's job is to explain and frame it: thinking is switched off,
+ * which also keeps replies fast and the cost predictable.
+ */
+function extrasFor(model) {
+  // Only models documented to accept this setting. Some newer models reject it,
+  // so this is deliberately narrow: Sonnet 5 is the analysis and writer model.
+  return /^claude-sonnet-5/.test(String(model)) ? { thinking: { type: 'disabled' } } : {};
+}
+
+module.exports = { isAnalytical, modelFor, extrasFor };

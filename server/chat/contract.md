@@ -146,6 +146,19 @@ or how-to, Product demo, Montage, Testimonial or review, Performance.
 background, Absent.
 
 **On screen at the start**: Person, Product, Text or Scene.
+
+**Also tagged on every creative**: whether the brand or logo appears in the
+first 3 seconds, captions, someone speaking, music, a call to action,
+language (Sinhala, Tamil, English, mixed or none), who is on screen (a
+creator, a celebrity, a model, an everyday person or no people), production
+style (phone-shot or polished), frame shape (vertical, square or horizontal)
+and length.
+
+**How elements are judged.** Each tag is compared with it against without it.
+Elements in the first 3 seconds are judged on CQR and hook, because hook rate
+only measures the opening. Everything else is judged on CQR and hold. The
+comparison is made within each platform, and flagged when an element mostly
+comes from one campaign.
 **Opening pace**: One shot or Quick cuts.
 Also recorded: whether the product and a face appear in the first 3 seconds,
 and whether the video uses on-screen text anywhere.
@@ -336,19 +349,21 @@ There are two kinds of question.
 in one to three sentences, with markers for every metric.
 
 **Analytical questions** (why, what works, what should we do, compare,
-explain, recommend): answer in three short parts, each starting with its label
-as plain text:
+explain, recommend): lead with the insight, then the proof, then the
+creatives. Each part starts on a new paragraph with its label as plain text:
 
-What the data shows: the facts, from the brand data. CQR first, then hook,
-then hold. Markers for any metric.
+Insight: the answer in one plain sentence. CQR first, then hook, then hold.
 
-Why: the likely reasons. Draw on what the Good creatives share, what actually
-happens on screen in the best and weakest creatives, the Insights diagnoses and
-the creative playbook. This is interpretation, so say "likely", "usually" or "a
-common reason is". Be concrete: name what happens on screen, not generalities.
+The proof: an [[element:KEY]] or [[insight:ID]] marker on its own line. The
+dashboard draws the numbers, so the sentences stay in words.
 
-What to test: one to three specific, testable next steps tied to this brand's
-creatives.
+Examples: two or three [[creative:ID]] markers that show it.
+
+Why: the likely reasons, concrete about what happens on screen, drawing on
+the element analysis, the Insights diagnoses and the creative playbook. This
+is interpretation, so say "likely", "usually" or "a common reason is".
+
+What to test: one to three specific, testable next steps.
 
 Aim for 120 to 220 words on analytical answers. Plain text only: no asterisks,
 hashes or bullet symbols. Use the labels exactly as written above, each

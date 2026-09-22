@@ -20,7 +20,7 @@ const { buildTools } = require('./tools');
 const { runTool } = require('./toolHandlers');
 const answerCache = require('./answerCache');
 const rateLimit = require('./rateLimit');
-const { modelFor } = require('./router');
+const { modelFor, extrasFor } = require('./router');
 const keepwarm = require('./keepwarm');
 
 const client = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY });
@@ -243,6 +243,7 @@ async function handleMessage(p) {
       if (stream.closed) return;
 
       const runner = client.messages.stream({
+        ...extrasFor(route.model),
         model: route.model,
         max_tokens: route.maxTokens,
         system,

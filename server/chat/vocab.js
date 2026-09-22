@@ -80,6 +80,26 @@ const VOCAB = {
     title: 'Platform',
     values: { meta: ['Meta'], tiktok: ['TikTok'], facebook: ['Facebook'], instagram: ['Instagram'] },
   },
+  language: {
+    title: 'Language',
+    values: { sinhala: ['Sinhala'], tamil: ['Tamil'], english: ['English'], mixed: ['Mixed languages'], none: ['No words'] },
+  },
+  talent: {
+    title: "Who's on screen",
+    values: { creator: ['A creator'], celebrity: ['A celebrity'], model: ['A model'], everyday_person: ['An everyday person'], none: ['No people'] },
+  },
+  production_style: {
+    title: 'Production style',
+    values: { phone_shot: ['Phone-shot'], polished: ['Polished'] },
+  },
+  aspect_ratio: {
+    title: 'Frame shape',
+    values: { vertical: ['Vertical'], square: ['Square'], horizontal: ['Horizontal'] },
+  },
+  length_bucket: {
+    title: 'Length',
+    values: { short: ['Up to 6 seconds'], medium: ['7 to 15 seconds'], long: ['16 to 30 seconds'], extended: ['Over 30 seconds'] },
+  },
   origin: {
     title: 'Original or repurposed',
     values: { original: ['Original'], repurposed: ['Repurposed'] },
@@ -101,7 +121,7 @@ function title(field, fallback) {
 /** Plain labels for everything classified on one creative. */
 function creativeLabels(c) {
   const out = {};
-  for (const f of ['format', 'hook_device', 'content_intent', 'narrative_structure', 'hook_subject', 'hook_pace', 'product_role', 'type']) {
+  for (const f of ['format', 'hook_device', 'content_intent', 'narrative_structure', 'hook_subject', 'hook_pace', 'product_role', 'type', 'language', 'talent', 'production_style', 'aspect_ratio']) {
     if (c[f]) out[f] = label(f, c[f]);
   }
   return out;
@@ -112,4 +132,54 @@ function activeCodes(field) {
   return Object.keys((VOCAB[field] || { values: {} }).values).filter((k) => k !== 'motion');
 }
 
-module.exports = { VOCAB, label, title, creativeLabels, activeCodes };
+/**
+ * The creative elements the nightly analysis compares, with vs without.
+ *
+ * Timing decides what each element is judged on, the way the leading
+ * creative-analytics tools do it: hook rate only measures the opening, so
+ * opening elements are compared on CQR and hook; everything else is compared
+ * on CQR and hold. Categorical fields become one element per value.
+ */
+const ELEMENTS = [
+  // In the first 3 seconds
+  { field: 'opens_with_face', kind: 'bool', timing: 'opening', label: 'A face in the first 3 seconds' },
+  { field: 'opens_with_product', kind: 'bool', timing: 'opening', label: 'The product in the first 3 seconds' },
+  { field: 'logo_first_3s', kind: 'bool', timing: 'opening', label: 'The brand or logo in the first 3 seconds' },
+  { field: 'hook_device', kind: 'cat', timing: 'opening' },
+  { field: 'hook_subject', kind: 'cat', timing: 'opening' },
+  { field: 'hook_pace', kind: 'cat', timing: 'opening' },
+  // Across the whole video
+  { field: 'has_text_overlay', kind: 'bool', timing: 'whole', label: 'On-screen text' },
+  { field: 'captions', kind: 'bool', timing: 'whole', label: 'Captions' },
+  { field: 'voiceover', kind: 'bool', timing: 'whole', label: 'Someone speaks' },
+  { field: 'music', kind: 'bool', timing: 'whole', label: 'Music' },
+  { field: 'cta', kind: 'bool', timing: 'whole', label: 'A call to action' },
+  { field: 'content_intent', kind: 'cat', timing: 'whole' },
+  { field: 'narrative_structure', kind: 'cat', timing: 'whole' },
+  { field: 'format', kind: 'cat', timing: 'whole' },
+  { field: 'product_role', kind: 'cat', timing: 'whole' },
+  { field: 'language', kind: 'cat', timing: 'whole' },
+  { field: 'talent', kind: 'cat', timing: 'whole' },
+  { field: 'production_style', kind: 'cat', timing: 'whole' },
+  { field: 'aspect_ratio', kind: 'cat', timing: 'whole' },
+  { field: 'length_bucket', kind: 'cat', timing: 'whole' },
+  { field: 'type', kind: 'cat', timing: 'whole' },
+];
+
+/** Length bucket from duration, in code. */
+function lengthBucket(seconds) {
+  const s = Number(seconds);
+  if (!isFinite(s) || s <= 0) return null;
+  if (s <= 6) return 'short';
+  if (s <= 15) return 'medium';
+  if (s <= 30) return 'long';
+  return 'extended';
+}
+
+/** Plain label for an element, e.g. "Opening hook: Talks to camera". */
+function elementLabel(el, value) {
+  if (el.kind === 'bool') return el.label;
+  return `${title(el.field)}: ${label(el.field, value)}`;
+}
+
+module.exports = { VOCAB, ELEMENTS, label, title, creativeLabels, activeCodes, lengthBucket, elementLabel };

@@ -19,6 +19,7 @@
 const Anthropic = require('@anthropic-ai/sdk');
 const { buildSystem } = require('./systemPrompt');
 const { buildTools } = require('./tools');
+const { extrasFor } = require('./router');
 
 const ACTIVE_WINDOW_MS = 2 * 60 * 60 * 1000;   // keep warm while used in the last 2 hours
 const REFRESH_AFTER_MS = 50 * 60 * 1000;       // the cache lives 60 minutes; refresh at 50
@@ -44,6 +45,7 @@ async function ping(brand, model) {
   // Must be byte-identical to what the chat sends, or it would write a new
   // cache entry instead of refreshing the existing one.
   await client.messages.create({
+    ...extrasFor(model),
     model,
     max_tokens: 1,
     system: buildSystem({ brand, snapshotBody: snap.body }),

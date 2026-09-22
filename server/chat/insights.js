@@ -15,9 +15,12 @@
 const Anthropic = require('@anthropic-ai/sdk');
 const crypto = require('crypto');
 const S = require('./schema.config');
+const A = require('./analytics');
+const MIN_GROUP = A.MIN_GROUP;
 const V = require('./vocab');
 const num = (v) => (v === null || v === undefined || !isFinite(Number(v)) ? 0 : Number(v));
 const { getPool } = require('./db');
+const { extrasFor } = require('./router');
 
 const client = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY });
 
@@ -101,143 +104,6 @@ const SEGMENT_WORDS = { 'hook to 25%': 'between the hook and a quarter of the wa
  * object. Returning null means "not enough data", and no finding is written.
  * This is where abstention is enforced, before a model ever sees the data.
  */
-const HYPOTHESES = [
-  {
-    id: 'hook_device',
-    guide: 'Say which opening hook leads on CQR and how it compares on hook and hold. Name the weakest on CQR. Mark early signs as early signs.',
-    question: 'Which opening device produces the strongest hook rates, and is the gap real?',
-    evidence: (an) => { const w = asWords(an.dims.hook_device); return w && { ...w, ...inside(an) }; },
-  },
-  {
-    id: 'content_intent',
-    guide: 'Say which purpose leads on CQR and how it compares on hook and hold. Name the weakest. If purposes compare similarly, say purpose makes little difference here.',
-    question: 'Does what the creative is trying to do (educate, entertain, demonstrate) predict how it performs?',
-    evidence: (an) => asWords(an.dims.content_intent),
-  },
-  {
-    id: 'brandsay_vs_otherssay',
-    guide: 'Compare Brand Say and Others Say on CQR, then hook, then hold. Say which is stronger on each, or that they perform alike.',
-    question: 'Do creator-made (OthersSay) creatives hook or hold differently from brand-made (BrandSay)?',
-    evidence: (an) => asWords(an.dims.type),
-  },
-  {
-    id: 'spend_quality',
-    guide: 'First, the lifetime split: say which tier gets the most spend (mostSpendGoesTo, exactly as given), then what share went to Good and to Poor. If Poor received a share comparable to or larger than Good, that is the headline. Second, the present: say how many Poor creatives are still running and their spend (current waste), and separately how many were already stopped (a past inefficiency that has been dealt with). Never call allocation healthy when Poor received a large share, even if none are running now.',
-    question: 'Is spend concentrated on the creatives that actually perform?',
-    evidence: (an) => {
-      const total = an.spendByCqr.Good + an.spendByCqr.Average + an.spendByCqr.Poor;
-      if (!total || an.totals.creatives < MIN_EVIDENCE) return null;
-      return {
-        goodShare: Math.round(an.spendByCqr.Good / total * 100),
-        averageShare: Math.round(an.spendByCqr.Average / total * 100),
-        poorShare: Math.round(an.spendByCqr.Poor / total * 100),
-        // Worked out here so the writer never has to compare amounts itself.
-        mostSpendGoesTo: ['Good', 'Average', 'Poor'].sort((a, b) => an.spendByCqr[b] - an.spendByCqr[a])[0] + ' creatives',
-        leastSpendGoesTo: ['Good', 'Average', 'Poor'].sort((a, b) => an.spendByCqr[a] - an.spendByCqr[b])[0] + ' creatives',
-        spendByCqr: an.spendByCqr, cqrMix: an.cqrMix,
-        poorStillRunning: { count: an.poorSplit.activeCount, spend: an.poorSplit.activeSpend },
-        poorAlreadyStopped: { count: an.poorSplit.stoppedCount, spend: an.poorSplit.stoppedSpend },
-      };
-    },
-  },
-  {
-    id: 'retention',
-    guide: 'Say where most viewers leave after the hook and, if given, what is usually on screen at that point and when the product appears.',
-    question: 'Where do creatives lose viewers, and is there a common cause?',
-    evidence: (an) => {
-      if (an.retention.drops.length < MIN_EVIDENCE) return null;
-      const top = (o) => Object.entries(o || {}).sort((a, b) => b[1] - a[1])[0];
-      const seg = top(an.retention.dropBySegment);
-      if (!seg) return null;
-      const ev = { mostViewersLeave: SEGMENT_WORDS[seg[0]] || seg[0] };
-      const scr = top(an.retention.dropByScreen);
-      if (scr) ev.mostOftenOnScreenAtThatPoint = scr[0];
-      const t = an.retention.productTiming.avgTimeToProduct;
-      if (t !== null && t !== undefined) ev.productUsuallyAppears = t <= 3 ? 'in the opening seconds' : t <= 8 ? 'early in the video' : 'late in the video';
-      return ev;
-    },
-  },
-  {
-    id: 'platform_fit',
-    guide: 'Compare Meta and TikTok on CQR, then hook, then hold. If they split, one stronger on hook and the other on CQR or hold, say what that means for the cuts on each platform.',
-    question: 'Does the same creative perform differently on Meta and TikTok, and what does that say about the cuts?',
-    evidence: (an) => {
-      const w = asWords(an.dims.platform);
-      if (!w) return null;
-      Object.assign(w, inside(an));
-      w.comparedWith = 'the average across both platforms';
-      w.someCreativesRatedDifferentlyByPlatform = an.anomalies.some((a) => a.kind === 'platform_disagree');
-      return w;
-    },
-  },
-  {
-    id: 'creator',
-    guide: 'Say which creator leads on CQR and which trails, and how they compare on hook and hold.',
-    question: 'Which creators deliver consistently, and which are inconsistent?',
-    evidence: (an) => asWords(an.dims.creator),
-  },
-  {
-    id: 'format',
-    guide: 'Say which format leads on CQR and how it compares on hook and hold. Name the weakest. If formats compare similarly, say format makes little difference here.',
-    question: 'Which creative formats perform best for this brand?',
-    evidence: (an) => asWords(an.dims.format),
-  },
-  {
-    id: 'product_role',
-    guide: 'Say whether featuring the product more prominently goes with stronger or weaker CQR, hook and hold, or makes little difference.',
-    question: 'Does featuring the product more prominently help or hurt performance?',
-    evidence: (an) => asWords(an.dims.product_role),
-  },
-  {
-    id: 'hook_hold',
-    guide: 'Say where creatives mostly lose viewers and what that implies: fix the openings, or tighten the middle of the videos.',
-    question: 'Do creatives mostly fail at the opening or in the body?',
-    evidence: (an) => {
-      const h = an.hookHold;
-      if (h.rated < MIN_EVIDENCE || !h.mostlyLose) return null;
-      return { whereViewersAreLost: h.mostlyLose, manyAreWeakOnBothHookAndHold: h.manyWeakOnBoth };
-    },
-  },
-  {
-    id: 'winners',
-    guide: 'Say what the Good creatives have in common that the rest do not, leading with the strongest difference. Then explain why that likely works, using the playbook and what happens inside the best and weakest creatives. Then one or two specific tests.',
-    question: 'What do the Good creatives share that the rest do not, and why does it likely work?',
-    evidence: (an) => {
-      if (!an.winners || !an.winners.statements.length) return null;
-      return { whatTheGoodCreativesShare: an.winners.statements, ...(an.winners.early ? { sample: 'early sign, few creatives on one side' } : {}), ...inside(an) };
-    },
-  },
-  {
-    id: 'action',
-    guide: 'Recommend exactly ONE next step, chosen from the evidence: Poor creatives still running, stopped Good creatives worth relaunching, a top action, the unboosted count, or the strongest discriminating dimension. The team judges CQR first, then hook, then hold: never recommend shifting toward something only because its hook rate is higher if its Good share or hold rate is lower. Say why. Do not claim anything is absent from the data.',
-    question: 'What is the single highest-value change the team could make next?',
-    evidence: (an) => {
-      const topActions = an.top.filter((c) => c.action).slice(0, 5).map((c) => ({ id: c.id, action: c.action, priority: c.priority }));
-      const hasSignal = an.discriminating.length || an.anomalies.length || an.waste.length
-        || an.validatedUnboosted.length || topActions.length;
-      if (!hasSignal || an.totals.creatives < MIN_EVIDENCE) return null;
-      return {
-        poorStillRunning: { count: an.poorSplit.activeCount, spend: an.poorSplit.activeSpend },
-        whatSeparatesPerformance: an.discriminating.slice(0, 3).map((d) => ({
-          dimension: d.dimension, leads: d.best, trails: d.worst, ...(d.early ? { sample: 'early sign' } : {}),
-        })),
-        anomalies: an.anomalies.map((a) => ({ kind: a.kind, n: a.n, note: a.note, ...(a.spend ? { spend: a.spend } : {}) })),
-        wasteSpend: an.wasteSpend, wasteCount: an.waste.length,
-        unboosted: an.validatedUnboosted.length,
-        topActions,
-      };
-    },
-  },
-];
-
-
-// ---------------------------------------------------------------
-// Presentation. Evidence is formatted ONCE, here, and the same formatted
-// version goes to the writer, the number check and the verifier. So the only
-// numbers a finding can legitimately contain are ones that appear verbatim in
-// what the writer was shown.
-// ---------------------------------------------------------------
-
 function compact(n) {
   const v = Number(n);
   if (!isFinite(v)) return String(n);
@@ -287,66 +153,276 @@ try {
   if (a >= 0 && b > a) PLAYBOOK = c.slice(a, b).trim();
 } catch (e) { /* the writer still works, just with less to draw on */ }
 
-const WRITER_PROMPT = `You write findings for a creative performance dashboard used by a media team at WPP working on Unilever Sri Lanka brands. Write like a sharp creative strategist, not a report generator.
 
-You are given one analytical question and evidence computed from the brand's data. The evidence is correct.
+// ---------------------------------------------------------------
+// Candidates: what the cards are about. Chosen and ranked in code.
+// ---------------------------------------------------------------
 
-Write ONE paragraph in three parts, each starting with its label:
-What the data shows: the fact, from the evidence. CQR first, then hook, then hold.
-Why: the likely reason. Be concrete: name what happens on screen in the best and weakest creatives when the evidence includes them, and draw on the creative playbook below. Frame it as likely ("usually", "a common reason is"), never as proven.
-What to test: one or two specific, testable next steps for this brand.
+/** Name and tags of a creative, in words, for the writer. No numbers. */
+function describe(an, id) {
+  const c = (an.ranked || []).find((x) => x.id === id);
+  if (!c) return null;
+  const e = (an.exemplars && [...an.exemplars.best, ...an.exemplars.weakest].find((x) => x.id === id)) || null;
+  return `${c.name || c.id}: CQR ${c.cqr}, hook ${c.hook_q || 'unrated'}, hold ${c.hold_q || 'unrated'}${e && e.tags ? `. Tags: ${e.tags}` : ''}${c.hook ? `. What it is: ${String(c.hook).replace(/\s+/g, ' ').slice(0, 140)}` : ''}`;
+}
 
-Keep it to about 90 to 140 words.
+function buildCandidates(an) {
+  const out = [];
+  const total = an.spendByCqr.Good + an.spendByCqr.Average + an.spendByCqr.Poor + (an.spendByCqr.Invalid || 0);
+
+  // 1. The creative elements that make the most difference.
+  for (const e of (an.elements || []).slice(0, 6)) {
+    out.push({
+      id: `element:${e.key}`, kind: 'element', impact: e.impact, early: e.early,
+      question: `Does "${e.label}" make a difference to how creatives perform?`,
+      guide: 'Headline: what this element does for CQR, then hook or hold, in plain words. Why: the likely reason, concretely, using the examples. Test: one specific change to try on named creatives.',
+      evidence: {
+        element: e.label, judged: e.timing === 'opening' ? 'in the first 3 seconds' : 'across the whole video',
+        finding: A.elementSentence(e).replace(/\s*\[[^\]]+\]/, ''),
+        direction: e.helps ? 'creatives with it do better' : 'creatives with it do worse',
+        examplesShowingIt: e.examples.showing.map((id) => describe(an, id)).filter(Boolean),
+        contrastExample: e.examples.contrast.map((id) => describe(an, id)).filter(Boolean),
+      },
+      proof: [`element:${e.key}`], examples: [...e.examples.showing, ...e.examples.contrast],
+    });
+  }
+
+  // 2. Where the budget goes.
+  if (total && an.totals.creatives >= MIN_EVIDENCE) {
+    const poorRun = an.poorSplit.activeSpend || 0;
+    out.push({
+      id: 'spend', kind: 'spend', early: false,
+      impact: (an.spendByCqr.Poor / total) + 2 * (poorRun / total),
+      question: 'Is the budget going to the creatives that perform?',
+      guide: 'Headline: which tier gets the most spend (mostSpendGoesTo, exactly as given) and whether that is healthy. Why: what it means. Test: the specific move, such as pausing the Poor creatives still running.',
+      evidence: {
+        mostSpendGoesTo: ['Good', 'Average', 'Poor'].sort((a, b) => an.spendByCqr[b] - an.spendByCqr[a])[0] + ' creatives',
+        goodShare: Math.round(an.spendByCqr.Good / total * 100),
+        averageShare: Math.round(an.spendByCqr.Average / total * 100),
+        poorShare: Math.round(an.spendByCqr.Poor / total * 100),
+        poorStillRunning: { count: an.poorSplit.activeCount, spend: an.poorSplit.activeSpend },
+        poorAlreadyStopped: { count: an.poorSplit.stoppedCount, spend: an.poorSplit.stoppedSpend },
+      },
+      proof: [], examples: (an.waste || []).slice(0, 3).map((c) => c.id),
+    });
+  }
+
+  // 3. Meta against TikTok, worked out head-to-head in code.
+  const plat = asWords(an.dims.platform);
+  if (plat && plat.headToHead) {
+    const g = an.dims.platform.groups.filter((x) => !x.tooFew);
+    const gap = g.length === 2 ? Math.abs(num(g[0].goodShare) - num(g[1].goodShare)) / 100 : 0;
+    out.push({
+      id: 'platform', kind: 'platform', early: g.some((x) => x.early), impact: gap * 0.8,
+      question: 'How do Meta and TikTok compare, and what does that mean for the cuts?',
+      guide: 'Headline: the head-to-head in plain words, CQR first. Why: what the split likely means for how the cuts are built. Test: one specific change per platform.',
+      evidence: { headToHead: plat.headToHead, groups: plat.groups, someCreativesRatedDifferentlyByPlatform: an.anomalies.some((a) => a.kind === 'platform_disagree') },
+      proof: g.map((x) => `cohort:platform:${x.key}`), examples: [],
+    });
+  }
+
+  // 4. Where creatives lose people.
+  const h = an.hookHold;
+  if (h && h.mostlyLose && h.rated >= MIN_EVIDENCE) {
+    out.push({
+      id: 'hook_hold', kind: 'hook_hold', early: h.rated < MIN_GROUP, impact: 0.12,
+      question: 'Do creatives mostly lose people at the opening or in the body?',
+      guide: 'Headline: where most creatives lose people. Why: what that usually means. Test: fix the openings, or tighten the middle, on named creatives if possible.',
+      evidence: { whereViewersAreLost: h.mostlyLose, manyAreWeakOnBothHookAndHold: h.manyWeakOnBoth },
+      proof: [], examples: [],
+    });
+  }
+  return out.sort((a, b) => b.impact - a.impact);
+}
+
+// ---------------------------------------------------------------
+// Writer and checker
+// ---------------------------------------------------------------
+
+const WRITER_PROMPT = `You write insight cards for a creative performance dashboard used by a media team at WPP working on Unilever Sri Lanka brands. Write like a sharp creative strategist, not a report generator.
+
+You get one question and evidence computed from the brand's data. The evidence is correct. Call the insight_card tool with:
+- headline: the insight in one plain sentence, at most 16 words. Lead with what matters for CQR.
+- why: one or two sentences on the likely reason. Be concrete about what happens on screen, using the example creatives when given. Frame it as likely ("usually", "a common reason is"), never as proven.
+- test: one specific, testable next step for this brand, naming creatives when examples are given.
+
+The dashboard shows the numbers and the example creatives next to your card, so do not repeat numbers.
 
 Rules:
-- Group comparisons are given in words. Keep them in words. Do not write any digits except durations in seconds, and never state counts or percentages.
+- No digits at all, except durations in seconds. Comparisons stay in words.
 - CQR matters most, then hook, then hold. A stronger hook alone does not make something better.
-- Where a head-to-head is given, use it for direct comparisons between the two groups.
-- Something marked early sign is small: call it an early sign, never a pattern or rule.
-- If "What the data shows" rests on an early sign, the Why and What to test parts must keep that caution: "if this early sign holds...", "worth testing to confirm". Never build a general rule on it.
-- Each group sentence has two kinds of comparison: against the brand average, and ranking against the other groups. Keep them apart. Only call a group the best or the weakest if its sentence says so in the ranking part.
-- Where the evidence says which tier gets the most spend, repeat that exactly. Do not work it out from the amounts.
-- A single creative is never proof that a type works.
+- Something marked "Early sign" is small: say "early sign" or "so far" in the headline or why, and keep that caution in the test ("worth testing to confirm").
+- A caution about one campaign must be mentioned: it may be the campaign, not the element.
+- Where evidence gives a head-to-head, or says which tier gets the most spend, use it exactly.
 - Describe comparisons in the right direction. Re-read each one before finishing.
 - Plain, direct wording. No em dashes, no emoji, no markdown symbols.
 
 ${PLAYBOOK}`;
 
-const VERIFY_PROMPT = `You are checking a finding against the evidence it was written from. Call the verdict tool with your result.
-
-The finding has three parts. "What the data shows" makes factual claims. "Why" is interpretation. "What to test" is advice.
-
-Check the facts. Mark it NOT ok only if:
-- a factual claim contradicts the evidence, including a comparison stated in the wrong direction
-- it states a number, count or percentage that is not in the evidence (durations in seconds inside the advice are fine)
-- it calls something marked early sign a pattern, trend or rule
-- it treats a single creative as proof that a type works
-- the Why part states its explanation as proven fact rather than as likely
-- the advice contradicts the evidence
-
-What the terms mean:
-- Brand Say is brand-made content. Others Say is creator or influencer-made content. Calling Others Say "creator-made" is correct.
-- CQR is the creative quality rating. Good, Average and Poor are its tiers.
-- Each group is compared two different ways. "Against the brand average" (stronger, similar, weaker) compares it with the brand overall. "Ranking against the other groups" (best, weakest among these) compares the groups with each other. A group can be the best among these groups and still similar to the brand average. That is NOT a contradiction; do not reject for it.
-- Where the evidence states which tier gets the most or least spend, that statement is authoritative. Do not re-derive it by comparing amounts yourself.
-- Being more cautious than the evidence requires (for example calling something an early sign when it is not marked one) is not an error.
-
-Group-to-group statements are correct when they follow from the evidence: if one group is stronger and another similar or weaker against the same baseline, the first is stronger than the second. A head-to-head in the evidence is authoritative.
-
-Do NOT reject for: interpretation that is framed as likely, drawing on general creative principles, choosing what to emphasise, leaving things out, or wording and framing choices.`;
-
-const VERDICT_TOOL = {
-  name: 'verdict',
-  description: 'Record whether the finding is supported by the evidence.',
+const CARD_TOOL = {
+  name: 'insight_card',
+  description: 'The insight card.',
   input_schema: {
     type: 'object',
     properties: {
-      ok: { type: 'boolean' },
-      reason: { type: 'string', description: 'If not ok, one short sentence naming the specific problem.' },
+      headline: { type: 'string' },
+      why: { type: 'string' },
+      test: { type: 'string' },
     },
-    required: ['ok'],
+    required: ['headline', 'why', 'test'],
   },
 };
+
+const REVIEW_PROMPT = `You check an insight card against the evidence it was written from, before a media team sees it. Call the review tool.
+
+Be strict on facts and flexible on wording. Choose one outcome:
+
+pass: every fact is right. Wording choices are the writer's.
+
+fix: the facts are right but a phrase overstates or slightly misstates something. Examples: "a wide margin" where the evidence says "clearly"; "proves" where "suggests" fits; an early sign not flagged as one; a missing mention of a one-campaign caution. Return corrected text for ONLY the fields that need it (fixed_headline, fixed_why, fixed_test), changing as little as possible, with no digits.
+
+reject: a fact is wrong. Examples: a comparison stated in the wrong direction, the wrong group or creative named as best or weakest, a claim the evidence does not support, a number that is not in the evidence, or an early sign presented as an established pattern that cannot be fixed by a phrase.
+
+Always give a one-sentence reason, even for pass.
+
+What the terms mean:
+- Brand Say is brand-made content. Others Say is creator or influencer-made content.
+- CQR is the creative quality rating; Good, Average and Poor are its tiers.
+- "Against the brand average" and "ranking against the other groups" are two different comparisons. A group can rank best and still be similar to the average: not a contradiction.
+- Where the evidence states which tier gets the most spend, or gives a head-to-head, that statement is authoritative.
+- "Why" is interpretation drawing on general creative principles. It is fine as long as it is framed as likely and does not contradict the evidence.
+- Being more cautious than required is not an error.`;
+
+const REVIEW_TOOL = {
+  name: 'review',
+  description: 'Your review of the card.',
+  input_schema: {
+    type: 'object',
+    properties: {
+      outcome: { type: 'string', enum: ['pass', 'fix', 'reject'] },
+      reason: { type: 'string', description: 'One sentence. For fix or reject, name the exact problem.' },
+      fixed_headline: { type: 'string' },
+      fixed_why: { type: 'string' },
+      fixed_test: { type: 'string' },
+    },
+    required: ['outcome', 'reason'],
+  },
+};
+
+const cardText = (c) => [c.headline, c.why, c.test].filter(Boolean).join(' ');
+const blank = (c) => !c || !String(c.headline || '').trim() || !String(c.why || '').trim();
+
+async function writeCard(cand, evidence, revision) {
+  let content = `Question: ${cand.question}\n\nWhat a good card covers: ${cand.guide}\n\nEvidence:\n${JSON.stringify(evidence, null, 1)}`;
+  if (revision) content += `\n\nYour previous card was rejected by a fact checker.\nCard: ${JSON.stringify(revision.card)}\nReason: ${revision.reason}\nWrite a corrected card that fixes exactly that problem.`;
+  const res = await client.messages.create({
+    ...extrasFor(WRITER_MODEL),
+    model: WRITER_MODEL, max_tokens: 1200,
+    system: [{ type: 'text', text: WRITER_PROMPT, cache_control: { type: 'ephemeral' } }],
+    tools: [CARD_TOOL], tool_choice: { type: 'tool', name: 'insight_card' },
+    messages: [{ role: 'user', content }],
+  });
+  const call = res.content.find((b) => b.type === 'tool_use' && b.name === 'insight_card');
+  return call ? { headline: String(call.input.headline || '').trim(), why: String(call.input.why || '').trim(), test: String(call.input.test || '').trim() } : null;
+}
+
+async function reviewCard(card, evidence) {
+  const res = await client.messages.create({
+    ...extrasFor(CHECKER_MODEL),
+    model: CHECKER_MODEL, max_tokens: 800,
+    system: REVIEW_PROMPT,
+    tools: [REVIEW_TOOL], tool_choice: { type: 'tool', name: 'review' },
+    messages: [{ role: 'user', content: `Card:\n${JSON.stringify(card)}\n\nEvidence:\n${JSON.stringify(evidence)}` }],
+  });
+  const call = res.content.find((b) => b.type === 'tool_use' && b.name === 'review');
+  if (!call || !['pass', 'fix', 'reject'].includes(call.input.outcome)) return { outcome: 'reject', reason: 'the checker gave no verdict' };
+  return call.input;
+}
+
+/** One card through the checks: number check, then review; one retry if rejected. */
+async function produceCard(cand, shown) {
+  const judge = async (card) => {
+    if (blank(card)) return { outcome: 'reject', reason: 'the draft came back empty' };
+    const pre = numbersReconcile(cardText(card), shown);
+    if (!pre.ok) return { outcome: 'reject', reason: `it states numbers that are not in the evidence: ${pre.bad.join(', ')}` };
+    const r = await reviewCard(card, shown);
+    if (r.outcome !== 'fix') return r;
+    const fixed = { headline: r.fixed_headline || card.headline, why: r.fixed_why || card.why, test: r.fixed_test || card.test };
+    const again = numbersReconcile(cardText(fixed), shown);
+    return again.ok ? { outcome: 'fix', reason: r.reason, card: fixed } : { outcome: 'reject', reason: `the checker's own fix added numbers: ${again.bad.join(', ')}` };
+  };
+
+  let card = await writeCard(cand, shown);
+  let r = await judge(card);
+  let revised = false;
+  if (r.outcome === 'reject') {
+    const retry = await writeCard(cand, shown, { card, reason: r.reason });
+    const r2 = await judge(retry);
+    revised = true;
+    if (r2.outcome !== 'reject') { card = retry; r = r2; }
+    else r = { outcome: 'reject', reason: `${r.reason} (after one revision: ${r2.reason})` };
+  }
+  if (r.outcome === 'fix') card = r.card;
+  return { card, status: r.outcome === 'pass' ? 'pass' : r.outcome === 'fix' ? 'fixed' : 'rejected', reason: r.reason, revised };
+}
+
+/** Write and store a brand's insight cards. */
+async function generateForBrand(brand, snapshot, opts = {}) {
+  const pool = opts.pool || getPool();
+  const an = snapshot.analytics;
+  const fp = fingerprint(an);
+  const out = { brand, written: 0, fixed: 0, rejected: 0, revised: 0 };
+  const cands = buildCandidates(an);
+  out.cards = cands.length;
+
+  const results = [];
+  for (const cand of cands) {
+    const shown = present(cand.evidence);
+    try {
+      const r = await produceCard(cand, shown);
+      if (r.revised) out.revised += 1;
+      if (r.status === 'rejected') { out.rejected += 1; (out.reasons = out.reasons || []).push(`${cand.id}: ${r.reason}`); }
+      else { out.written += 1; if (r.status === 'fixed') out.fixed += 1; }
+      results.push({ cand, shown, ...r });
+    } catch (err) {
+      out.rejected += 1;
+      (out.reasons = out.reasons || []).push(`${cand.id}: error ${err.message}`);
+      console.error(`[insights] ${brand}/${cand.id}:`, err.message);
+    }
+  }
+
+  // Rank the passing cards by impact; the first three are the headline insights.
+  let rank = 0;
+  for (const r of results.sort((a, b) => b.cand.impact - a.cand.impact)) {
+    if (r.status !== 'rejected') rank += 1;
+    r.rank = r.status === 'rejected' ? null : rank;
+  }
+
+  await pool.query('delete from brand_insights where brand = $1', [brand]);
+  for (const r of results) {
+    const card = r.card ? { ...r.card, kind: r.cand.kind, proof: r.cand.proof, examples: r.cand.examples, early: !!r.cand.early, rank: r.rank, top: r.rank !== null && r.rank <= 3 } : null;
+    await pool.query(
+      `insert into brand_insights (brand, snapshot_ver, hypothesis, body, evidence, verified, verify_note, card, impact, status)
+       values ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10)
+       on conflict (brand, snapshot_ver, hypothesis) do update
+         set body = excluded.body, evidence = excluded.evidence, verified = excluded.verified,
+             verify_note = excluded.verify_note, card = excluded.card, impact = excluded.impact,
+             status = excluded.status, generated_at = now()`,
+      [brand, fp, r.cand.id, card ? cardText(card) : '', JSON.stringify(r.shown), r.status !== 'rejected',
+       r.reason || null, card ? JSON.stringify(card) : null, r.cand.impact, r.status]);
+  }
+  return out;
+}
+
+/** Rejected cards, for the admin review list. */
+async function reviewList(opts = {}) {
+  const pool = opts.pool || getPool();
+  const { rows } = await pool.query(
+    `select brand, hypothesis, card, verify_note, generated_at from brand_insights
+     where status = 'rejected' and generated_at > now() - interval '30 days'
+     order by generated_at desc limit 100`);
+  return rows;
+}
 
 /** Pull every number out of a string, for a cheap deterministic pre-check. */
 function numbersIn(text) {
@@ -370,109 +446,14 @@ const MAX_FINDINGS_AGE_DAYS = 7;
 function fingerprint(an) {
   const rows = (an.ranked || []).map((c) => [c.id, c.cqr, c.is_active ? 1 : 0, c.hook_q, c.hold_q,
     c.hook_device, c.content_intent, c.format,
+    // the element tags: re-tagging a creative changes what the cards say
+    c.opens_with_face, c.opens_with_product, c.logo_first_3s, c.captions, c.voiceover, c.music, c.cta,
+    c.language, c.talent, c.production_style, c.aspect_ratio,
     // each platform's own status and rating: stopping on one platform matters
     Object.entries(c.per_platform || {}).map(([k, v]) => `${k}${v.is_active ? 1 : 0}${v.cqr || ''}`).sort().join(',')].join(':')).sort();
   return crypto.createHash('sha256').update(rows.join('|')).digest('hex').slice(0, 16);
 }
 
-async function writeFinding(h, evidence, revision) {
-  let content = `Question: ${h.question}\n\nWhat a good answer covers: ${h.guide || 'the clearest pattern in the evidence.'}\n\nEvidence:\n${JSON.stringify(evidence, null, 1)}`;
-  if (revision) {
-    content += `\n\nYour previous draft was rejected by a fact checker.\nDraft: ${revision.draft}\nReason: ${revision.reason}\nWrite a corrected version that fixes exactly that problem and stays true to the evidence.`;
-  }
-  const res = await client.messages.create({
-    model: WRITER_MODEL, max_tokens: 500,
-    // The prompt and playbook are identical on every call in a run, so cache
-    // them: calls come back to back, so the 5-minute cache is enough.
-    system: [{ type: 'text', text: WRITER_PROMPT, cache_control: { type: 'ephemeral' } }],
-    messages: [{ role: 'user', content }],
-  });
-  return res.content.filter((b) => b.type === 'text').map((b) => b.text).join('').trim();
-}
-
-async function verifyFinding(body, evidence) {
-  const res = await client.messages.create({
-    model: CHECKER_MODEL, max_tokens: 200,
-    system: VERIFY_PROMPT,
-    tools: [VERDICT_TOOL],
-    tool_choice: { type: 'tool', name: 'verdict' },
-    messages: [{ role: 'user', content: `Finding:\n${body}\n\nEvidence:\n${JSON.stringify(evidence)}` }],
-  });
-  const call = res.content.find((b) => b.type === 'tool_use' && b.name === 'verdict');
-  if (call && typeof call.input.ok === 'boolean') return call.input;
-  // Belt and braces: a forced tool call should always return, but never let a
-  // parsing hiccup silently drop a finding without saying so.
-  const text = res.content.filter((b) => b.type === 'text').map((b) => b.text).join('');
-  const m = text.match(/\{[\s\S]*\}/);
-  if (m) { try { const j = JSON.parse(m[0]); if (typeof j.ok === 'boolean') return j; } catch (e) { /* fall through */ } }
-  return { ok: false, reason: 'verifier gave no verdict' };
-}
-
-/** Generate and store verified findings for one brand. */
-async function generateForBrand(brand, snapshot, opts = {}) {
-  const pool = opts.pool || getPool();
-  const an = snapshot.analytics;
-  const out = { brand, written: 0, skipped: 0, rejected: 0 };
-
-  // Start clean for this data version. Otherwise a question that now skips
-  // would leave its old finding in place, and the chat would keep citing it.
-  // Replace the brand's whole set. Findings are keyed by the creative
-  // fingerprint, not the daily data version, so they survive until something
-  // they depend on actually changes.
-  const fp = fingerprint(an);
-  await pool.query('delete from brand_insights where brand = $1', [brand]);
-
-  for (const h of HYPOTHESES) {
-    let evidence;
-    try { evidence = h.evidence(an); }
-    catch (err) {
-      // A bug here must be visible, not mistaken for "not enough data".
-      out.rejected += 1;
-      (out.reasons = out.reasons || []).push(`${h.id}: code error while gathering evidence: ${err.message}`);
-      console.error(`[insights] ${brand}/${h.id} evidence error:`, err.message);
-      continue;
-    }
-    if (!evidence) { out.skipped += 1; continue; }   // abstention, before any model call
-
-    const shown = present(evidence);
-    try {
-      const check = async (text) => {
-        const pre = numbersReconcile(text, shown);
-        if (!pre.ok) return { ok: false, reason: `it states numbers that are not in the evidence: ${pre.bad.join(', ')}` };
-        const v = await verifyFinding(text, shown);
-        return { ok: !!v.ok, reason: v.ok ? null : (v.reason || 'failed verification') };
-      };
-      let body = await writeFinding(h, shown);
-      let result = await check(body);
-      // One corrected attempt, told exactly what the checker objected to.
-      if (!result.ok) {
-        const retry = await writeFinding(h, shown, { draft: body, reason: result.reason });
-        const again = await check(retry);
-        if (again.ok) { body = retry; result = again; out.revised = (out.revised || 0) + 1; }
-        else { result = { ok: false, reason: `${result.reason} (and after one revision: ${again.reason})` }; }
-      }
-      let verified = result.ok, note = result.reason;
-      if (!verified) out.rejected += 1; else out.written += 1;
-
-      await pool.query(
-        `insert into brand_insights (brand, snapshot_ver, hypothesis, body, evidence, verified, verify_note)
-         values ($1,$2,$3,$4,$5,$6,$7)
-         on conflict (brand, snapshot_ver, hypothesis) do update
-           set body = excluded.body, evidence = excluded.evidence,
-               verified = excluded.verified, verify_note = excluded.verify_note,
-               generated_at = now()`,
-        [brand, fp, h.id, body, JSON.stringify(shown), verified, note]);
-      if (!verified) (out.reasons = out.reasons || []).push(`${h.id}: ${note}`);
-    } catch (err) {
-      out.rejected += 1;
-      (out.reasons = out.reasons || []).push(`${h.id}: error ${err.message}`);
-      console.error(`[insights] ${brand}/${h.id}:`, err.message);
-    }
-  }
-  return out;
-}
-
-/** Run for every brand. Called by the warm endpoint after snapshots rebuild. */
 async function generateAll(opts = {}) {
   const pool = opts.pool || getPool();
   const { getSnapshot, buildSnapshot, generateAndStore } = require('./snapshot');
@@ -519,4 +500,4 @@ async function generateAll(opts = {}) {
   return results;
 }
 
-module.exports = { generateAll, generateForBrand, HYPOTHESES, numbersReconcile, present, fingerprint };
+module.exports = { generateAll, generateForBrand, buildCandidates, produceCard, reviewList, numbersReconcile, present, fingerprint };

@@ -51,7 +51,8 @@ async function loadMerged(pool, brand) {
               c.${C.productRole} as product_role, c.${C.durationS} as duration_s, cr.${CR.name} as creator,
               c.${C.publishedAt} as published_at,
               c.content_intent, c.narrative_structure, c.hook_device, c.hook_subject, c.hook_pace,
-              c.opens_with_product, c.opens_with_face, c.has_text_overlay,
+              c.opens_with_product, c.opens_with_face, c.has_text_overlay, c.segments,
+              c.logo_first_3s, c.captions, c.voiceover, c.music, c.cta, c.language, c.talent, c.production_style, c.aspect_ratio,
               c.time_to_product_s, c.product_screen_pct, c.cuts_per_10s,
               coalesce(c.${C.ttLink}, c.${C.igLink}, c.${C.fbLink}) as permalink
        from ${T.creatives} c
@@ -77,7 +78,9 @@ async function loadMerged(pool, brand) {
       narrative_structure: c.narrative_structure, hook_device: c.hook_device,
       hook_subject: c.hook_subject, hook_pace: c.hook_pace,
       opens_with_product: c.opens_with_product, opens_with_face: c.opens_with_face,
-      has_text_overlay: c.has_text_overlay, time_to_product_s: c.time_to_product_s,
+      has_text_overlay: c.has_text_overlay, time_to_product_s: c.time_to_product_s, segments: c.segments,
+      logo_first_3s: c.logo_first_3s, captions: c.captions, voiceover: c.voiceover, music: c.music, cta: c.cta,
+      language: c.language, talent: c.talent, production_style: c.production_style, aspect_ratio: c.aspect_ratio,
       product_screen_pct: c.product_screen_pct, cuts_per_10s: c.cuts_per_10s,
       boosted: true, ...m,
     });
@@ -165,6 +168,10 @@ async function get_creative(args, ctx) {
       campaign: r.campaign, creator: r.creator, origin: r.origin, is_active: r.is_active,
       spend: Math.round(r.spend), reach: r.reach, impressions: r.impressions, avg_watch_time: r.avg_watch_time,
       per_platform: r.per_platform,
+      tags: V.creativeLabels(r),
+      // The full second-by-second timeline, only ever fetched for one creative
+      // when someone asks about that video specifically.
+      timeline: (Array.isArray(r.segments) ? r.segments : []).map((x) => `${Math.round(Number(x.t))}s ${String(x.d || '').replace(/\s+/g, ' ')}`).join(' / ').slice(0, 1400) || null,
       insights: r.verdict ? { verdict: r.verdict, working: r.working, not_working: r.not_working,
         action: r.action, action_type: r.action_type, priority: r.priority, confidence: r.confidence,
         action_status: r.action_status } : null,

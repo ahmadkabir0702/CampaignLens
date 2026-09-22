@@ -54,7 +54,7 @@ const tools = [
   {
     name: 'get_creative',
     description:
-      'Full lifetime metrics for one boosted creative, per platform, including the existing Insights verdict. Use when the snapshot line is not enough.',
+      'Everything about one creative: metrics per platform, all its tags, the Insights verdict, and its full second-by-second timeline. Use when someone asks about a specific video, or why it performs as it does.',
     input_schema: {
       type: 'object',
       properties: { creative_id: { type: 'string' } },

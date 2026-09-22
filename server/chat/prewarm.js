@@ -18,7 +18,7 @@ const { buildTools } = require('./tools');
 const { runTool } = require('./toolHandlers');
 const answerCache = require('./answerCache');
 const { extractMarkers, referencedIds } = require('./orchestrator');
-const { modelFor } = require('./router');
+const { modelFor, extrasFor } = require('./router');
 
 const client = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY });
 
@@ -45,7 +45,7 @@ async function answerOnce(brand, question, snap, pool) {
   for (let round = 0; round <= MAX_TOOL_ROUNDS; round += 1) {
     // Same routing as live chat, so the cached answer matches what a user would get.
     const route = modelFor(question);
-    const res = await client.messages.create({ model: route.model, max_tokens: route.maxTokens, system, tools, messages });
+    const res = await client.messages.create({ ...extrasFor(route.model), model: route.model, max_tokens: route.maxTokens, system, tools, messages });
     text += res.content.filter((b) => b.type === 'text').map((b) => b.text).join('');
     if (res.stop_reason !== 'tool_use' || round === MAX_TOOL_ROUNDS) break;
 

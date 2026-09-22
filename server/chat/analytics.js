@@ -162,10 +162,134 @@ function exemplar(c) {
       const n = String(c.name || '').replace(/…$/, '').trim();
       return h && h !== n && h.length > n.length + 10 ? h.slice(0, 160) : null;
     })(),
-    opening: openingText(c) || null,
+    opening: null, // the chat reads tags, not frames; the full timeline is one tool call away
+    tags: (() => {
+      const yes = (v, t) => (v === true ? t : null);
+      return [yes(c.opens_with_face, 'face at open'), yes(c.opens_with_product, 'product at open'), yes(c.logo_first_3s, 'logo at open'),
+        yes(c.captions, 'captions'), yes(c.voiceover, 'speech'), yes(c.music, 'music'), yes(c.cta, 'call to action'),
+        c.language && V.label('language', c.language), c.talent && V.label('talent', c.talent),
+        c.production_style && V.label('production_style', c.production_style)].filter(Boolean).join(', ') || null;
+    })(),
     losesPeople: where,
     product: t === null || t === undefined ? null : (t <= 3 ? 'Product in the opening seconds' : t <= 8 ? 'Product appears early' : 'Product appears late'),
   };
+}
+
+// ---------------------------------------------------------------
+// Element impact: every tag, with vs without.
+//
+// Compared per creative-platform pair, so an element that happens to sit
+// mostly on one platform cannot pass off that platform's performance as its
+// own. Opening elements are judged on CQR and hook, whole-video elements on
+// CQR and hold. Ranked by impact: size of the difference, times the spend on
+// the weaker side (the money that could move), times confidence.
+// ---------------------------------------------------------------
+
+function oftenWords(ratio) {
+  if (!isFinite(ratio)) return null;
+  if (ratio >= 2.5) return 'several times as often';
+  if (ratio >= 1.8) return 'about twice as often';
+  if (ratio >= 1.3) return 'noticeably more often';
+  if (ratio <= 0.4) return 'far less often';
+  if (ratio <= 0.6) return 'about half as often';
+  if (ratio <= 0.77) return 'noticeably less often';
+  return null;
+}
+
+function elementImpact(eligible, totalSpend) {
+  const units = [];
+  for (const c of eligible) {
+    for (const [plat, p] of Object.entries(c.per_platform || {})) {
+      units.push({ c, plat, good: p.cqr === 'Good', hook: p.hook_rate, hold: p.hold_rate, spend: num(p.spend) });
+    }
+  }
+  if (!units.length) return [];
+  const valueOf = (c, f) => (f === 'length_bucket' ? V.lengthBucket(c.duration_s) : c[f]);
+  const distinct = (us) => new Set(us.map((u) => u.c.id));
+  const rate = (us) => (us.length ? us.filter((u) => u.good).length / us.length * 100 : 0);
+  const out = [];
+
+  for (const el of V.ELEMENTS) {
+    const known = units.filter((u) => { const v = valueOf(u.c, el.field); return v !== null && v !== undefined && v !== ''; });
+    const values = el.kind === 'bool' ? [true] : [...new Set(known.map((u) => valueOf(u.c, el.field)))];
+    for (const val of values) {
+      const withU = known.filter((u) => valueOf(u.c, el.field) === val);
+      const withoutU = known.filter((u) => valueOf(u.c, el.field) !== val);
+      const nW = distinct(withU).size, nO = distinct(withoutU).size;
+      if (nW < EARLY_MIN || nO < EARLY_MIN) continue;
+
+      const metric = el.timing === 'opening' ? 'hook' : 'hold';
+      const gW = rate(withU), gO = rate(withoutU);
+      const mW = avg(withU.map((u) => u[metric])), mO = avg(withoutU.map((u) => u[metric]));
+      const goodDiff = gW - gO;
+      const rel = mO ? (num(mW) - num(mO)) / Math.abs(num(mO)) : 0;
+      if (Math.abs(goodDiff) < 10 && Math.abs(rel) < 0.10) continue; // no real difference
+
+      const helps = goodDiff > 0 || (Math.abs(goodDiff) < 10 && rel > 0);
+      const worseSide = helps ? withoutU : withU;
+      const stakeShare = totalSpend ? worseSide.reduce((a, u) => a + u.spend, 0) / totalSpend : 0;
+      const m = Math.min(nW, nO);
+      const impact = Math.max(Math.abs(goodDiff) / 100, Math.abs(rel)) * (0.3 + stakeShare) * (m / (m + 5));
+
+      // Does it hold on each platform on its own?
+      const perPlat = {};
+      for (const plat of S.platforms) {
+        const w = withU.filter((u) => u.plat === plat), o = withoutU.filter((u) => u.plat === plat);
+        if (distinct(w).size < EARLY_MIN || distinct(o).size < EARLY_MIN) continue;
+        const gd = rate(w) - rate(o);
+        const md = num(avg(w.map((u) => u[metric]))) - num(avg(o.map((u) => u[metric])));
+        perPlat[plat] = Math.abs(gd) >= 5 ? Math.sign(gd) : Math.sign(md);
+      }
+      const plats = Object.keys(perPlat);
+      const want = helps ? 1 : -1;
+      let consistency = null;
+      if (plats.length >= 2) {
+        consistency = plats.every((pl) => perPlat[pl] === want) ? 'holds on both Meta and TikTok' : 'differs between Meta and TikTok';
+      } else if (plats.length === 1) {
+        consistency = `seen on ${S.platformLabels[plats[0]]} (too few on the other platform to check)`;
+      }
+
+      // Is it really one campaign?
+      const withC = [...new Map(withU.map((u) => [u.c.id, u.c])).values()];
+      const byCamp = {};
+      withC.forEach((c) => { if (c.campaign) byCamp[c.campaign] = (byCamp[c.campaign] || 0) + 1; });
+      const topCamp = Object.entries(byCamp).sort((a, b) => b[1] - a[1])[0];
+      const campaignFlag = topCamp && withC.length >= 3 && topCamp[1] / withC.length >= 0.8 ? `mostly from one campaign (${topCamp[0]})` : null;
+
+      const vsM = (d, base) => { const r = base ? d / Math.abs(base) : 0; return r >= 0.10 ? 'stronger' : r <= -0.10 ? 'weaker' : 'similar'; };
+      const withCre = withC.sort(rankCmp);
+      const withoutCre = [...new Map(withoutU.map((u) => [u.c.id, u.c])).values()].sort(rankCmp);
+      const examples = helps
+        ? { showing: withCre.slice(0, 2).map((c) => c.id), contrast: withoutCre.slice(-1).map((c) => c.id) }
+        : { showing: withCre.slice(-2).reverse().map((c) => c.id), contrast: withoutCre.slice(0, 1).map((c) => c.id) };
+
+      out.push({
+        key: el.kind === 'bool' ? el.field : `${el.field}=${val}`,
+        field: el.field, value: val, timing: el.timing, metric,
+        label: V.elementLabel(el, val),
+        helps, impact, stakeShare, early: m < MIN_GROUP,
+        with: { creatives: nW, goodRate: Math.round(gW), [metric]: r1(mW) },
+        without: { creatives: nO, goodRate: Math.round(gO), [metric]: r1(mO) },
+        cqr: Math.abs(goodDiff) < 15 ? 'similar' : goodDiff > 0 ? 'stronger' : 'weaker',
+        cqrSize: gO > 0 ? oftenWords(gW / gO) : (gW > 0 ? 'where creatives without it rarely are' : null),
+        [`${metric}Verdict`]: vsM(num(mW) - num(mO), mO),
+        consistency, campaignFlag, examples,
+      });
+    }
+  }
+  return out.sort((a, b) => b.impact - a.impact);
+}
+
+/** One element as a plain sentence, CQR first. No numbers. */
+function elementSentence(e) {
+  const when = e.timing === 'opening' ? 'in the first 3 seconds' : 'across the whole video';
+  const cqr = `CQR ${e.cqr}${e.cqrSize ? ` (rated Good ${e.cqrSize})` : ''}`;
+  const second = `${e.metric} ${e[`${e.metric}Verdict`]}`;
+  const bits = [`${e.label} [${e.key}], judged ${when}: with it, ${cqr}, ${second}.`];
+  if (e.consistency) bits.push(`It ${e.consistency}.`);
+  if (e.campaignFlag) bits.push(`Caution: ${e.campaignFlag}, so it may be the campaign rather than the element.`);
+  if (e.early) bits.push('Early sign, small groups.');
+  return bits.join(' ');
 }
 
 /**
@@ -540,8 +664,9 @@ function build({ brand, paid, organic, boost, thresholds, monthly, freshness }) 
     thresholds, monthly,
     minGroup: MIN_GROUP, earlyMin: EARLY_MIN, base,
     winners: winnersVsRest(eligible),
+    elements: elementImpact(eligible, eligible.reduce((a, c) => a + num(c.spend), 0)),
     exemplars: { best: ranked.slice(0, 3).map(exemplar), weakest: ranked.length > 3 ? ranked.slice(-3).reverse().map(exemplar) : [] },
   };
 }
 
-module.exports = { winnersVsRest, exemplar, cqrSize, build, groupBy, crosstab, summarise, rankCmp, retentionDrop, goodScore, compareToBrand, leadersOf, MIN_GROUP, EARLY_MIN };
+module.exports = { elementImpact, elementSentence, winnersVsRest, exemplar, cqrSize, build, groupBy, crosstab, summarise, rankCmp, retentionDrop, goodScore, compareToBrand, leadersOf, MIN_GROUP, EARLY_MIN };

@@ -22,6 +22,7 @@ const rateLimitMod = require('./rateLimit');
 
 module.exports = function mountChatRoutes(app) {
   require('./keepwarm').start();
+  require('./scheduler').start();
   // ---- Optional pipeline hook, no session. -----------------------------
   // Snapshots refresh themselves on first use after new data lands, so
   // this endpoint is NOT required. Wiring n8n to call it after each run
@@ -224,6 +225,33 @@ module.exports = function mountChatRoutes(app) {
   });
 
   // ---- Usage, for the panel's limit bar ------------------------
+
+  // ---- Review list: insights the fact checker rejected ------------
+  // Admins only (or usernames in ASK_LENS_REVIEWERS). Nothing is hidden
+  // silently: if the checker is being unreasonable, it shows up here.
+  router.get('/review', async (req, res) => {
+    const allowed = (process.env.ASK_LENS_REVIEWERS || '').split(',').map((x) => x.trim()).filter(Boolean);
+    if (req.session.role !== 'admin' && !allowed.includes(req.session.user)) {
+      return res.status(403).json({ error: 'Not available.' });
+    }
+    try {
+      const V = require('./vocab');
+      const topic = (h) => {
+        const [kind, rest] = String(h).split(/:(.+)/);
+        if (kind !== 'element' || !rest) return { spend: 'Where the budget goes', platform: 'Meta vs TikTok', hook_hold: 'Where creatives lose people' }[h] || h;
+        const [field, value] = rest.split('=');
+        const el = V.ELEMENTS.find((x) => x.field === field);
+        return el ? V.elementLabel(el, value === undefined ? true : value) : rest;
+      };
+      const rows = await require('./insights').reviewList();
+      res.json({ items: rows.map((r) => ({
+        brand: r.brand, brandLabel: S.brandLabels[r.brand], topic: topic(r.hypothesis),
+        headline: r.card && r.card.headline, reason: r.verify_note, at: r.generated_at,
+      })) });
+    } catch (err) {
+      res.status(500).json({ error: 'Could not load the review list.' });
+    }
+  });
 
   router.get('/usage', async (req, res) => {
     const pool = getPool();
