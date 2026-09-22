@@ -20,6 +20,8 @@ const { buildTools } = require('./tools');
 const { runTool } = require('./toolHandlers');
 const answerCache = require('./answerCache');
 const rateLimit = require('./rateLimit');
+const { modelFor } = require('./router');
+const keepwarm = require('./keepwarm');
 
 const client = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY });
 
@@ -230,6 +232,7 @@ async function handleMessage(p) {
     const tools = buildTools();
     const messages = [...history, { role: 'user', content: p.message }];
 
+    const route = modelFor(p.message);
     const toolCtx = { brand: p.brand, rangeDays: p.rangeDays, pool };
     const allRecords = { ...snapRecords };
     const toolCallLog = [];
@@ -240,8 +243,8 @@ async function handleMessage(p) {
       if (stream.closed) return;
 
       const runner = client.messages.stream({
-        model: S.model,
-        max_tokens: S.maxTokens,
+        model: route.model,
+        max_tokens: route.maxTokens,
         system,
         tools,
         messages,
@@ -253,6 +256,7 @@ async function handleMessage(p) {
       });
 
       const final = await runner.finalMessage();
+      keepwarm.touch(p.brand, route.model); // this call just refreshed the cache
 
       const u = final.usage || {};
       usage.input += u.input_tokens || 0;

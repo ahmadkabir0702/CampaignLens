@@ -18,6 +18,7 @@ const { buildTools } = require('./tools');
 const { runTool } = require('./toolHandlers');
 const answerCache = require('./answerCache');
 const { extractMarkers, referencedIds } = require('./orchestrator');
+const { modelFor } = require('./router');
 
 const client = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY });
 
@@ -42,7 +43,9 @@ async function answerOnce(brand, question, snap, pool) {
   let text = '';
 
   for (let round = 0; round <= MAX_TOOL_ROUNDS; round += 1) {
-    const res = await client.messages.create({ model: S.model, max_tokens: S.maxTokens, system, tools, messages });
+    // Same routing as live chat, so the cached answer matches what a user would get.
+    const route = modelFor(question);
+    const res = await client.messages.create({ model: route.model, max_tokens: route.maxTokens, system, tools, messages });
     text += res.content.filter((b) => b.type === 'text').map((b) => b.text).join('');
     if (res.stop_reason !== 'tool_use' || round === MAX_TOOL_ROUNDS) break;
 
@@ -63,34 +66,41 @@ async function answerOnce(brand, question, snap, pool) {
 }
 
 /** Pre-warm every brand. Returns a summary; never throws. */
-async function prewarmAll(opts = {}) {
+/** Pre-warm one brand's quick-lookup starters. Off unless ASK_LENS_PREWARM=1. */
+async function prewarmBrand(brand, opts = {}) {
   const pool = opts.pool || getPool();
   const summary = { asked: 0, cached_already: 0, written: 0, failed: 0 };
-
-  for (const brand of S.brands) {
-    let snap;
-    try { snap = await getSnapshot(brand, 0, { pool }); } catch (e) { summary.failed += QUESTIONS.length; continue; }
-
-    for (const question of QUESTIONS) {
-      const params = { brand, rangeDays: 0, snapshotVersion: snap.version, question, hasHistory: false };
-      summary.asked += 1;
-      try {
-        const hit = await answerCache.get(params, { pool });
-        if (hit) { summary.cached_already += 1; continue; }
-        const { text, records } = await answerOnce(brand, question, snap, pool);
-        const refused = text.startsWith("That's outside") || text.startsWith("I'm scoped to");
-        if (!refused && text.length > 20) {
-          await answerCache.put(params, { answer: text, records }, { pool });
-          summary.written += 1;
-        }
-      } catch (err) {
-        summary.failed += 1;
-        console.error(`[prewarm] ${brand} "${question}":`, err.message);
-      }
-    }
+  let snap;
+  try { snap = await getSnapshot(brand, 0, { pool, noPrewarm: true }); } catch (e) { summary.failed += QUESTIONS.length; return summary; }
+  const boosted = snap.records && snap.records.brand ? Number(snap.records.brand.creatives || 0) : 0;
+  if (boosted < 2) return summary;
+  for (const question of QUESTIONS) {
+    if (modelFor(question).mode === 'analysis') continue; // answered live, then cached for everyone
+    const params = { brand, rangeDays: 0, snapshotVersion: snap.version, question, hasHistory: false };
+    summary.asked += 1;
+    try {
+      const hit = await answerCache.get(params, { pool });
+      if (hit) { summary.cached_already += 1; continue; }
+      const { text, records } = await answerOnce(brand, question, snap, pool);
+      const refused = text.startsWith("That's outside") || text.startsWith("I'm scoped to");
+      if (!refused && text.length > 20) { await answerCache.put(params, { answer: text, records }, { pool }); summary.written += 1; }
+    } catch (err) { summary.failed += 1; console.error(`[prewarm] ${brand} "${question}":`, err.message); }
   }
-  if (!opts.quiet) console.log('[prewarm]', JSON.stringify(summary));
   return summary;
 }
 
-module.exports = { prewarmAll, QUESTIONS };
+async function prewarmAll(opts = {}) {
+  if (process.env.ASK_LENS_PREWARM !== '1' && !opts.force) {
+    if (!opts.quiet) console.log('[prewarm] off (set ASK_LENS_PREWARM=1 to enable)');
+    return { off: true };
+  }
+  const total = { asked: 0, cached_already: 0, written: 0, failed: 0 };
+  for (const brand of S.brands) {
+    const r = await prewarmBrand(brand, opts);
+    for (const k of Object.keys(total)) total[k] += r[k] || 0;
+  }
+  if (!opts.quiet) console.log('[prewarm]', JSON.stringify(total));
+  return total;
+}
+
+module.exports = { prewarmAll, prewarmBrand, QUESTIONS };

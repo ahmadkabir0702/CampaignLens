@@ -99,7 +99,11 @@ const schema = {
   organicPlatforms: ['facebook', 'instagram', 'tiktok'],
   platformLabels: { meta: 'Meta', tiktok: 'TikTok', facebook: 'Facebook', instagram: 'Instagram' },
 
-  model: 'claude-haiku-4-5',
+  model: 'claude-haiku-4-5',            // quick lookups
+  // Analytical questions (why, what works, what should we do) go to Sonnet.
+  // Override with ASK_LENS_ANALYSIS_MODEL if needed.
+  analysisModel: process.env.ASK_LENS_ANALYSIS_MODEL || 'claude-sonnet-5',
+  analysisMaxTokens: 1400,
   maxTokens: 700,
   historyTurnsVerbatim: 3,
   historyTurnsCompressed: 5,

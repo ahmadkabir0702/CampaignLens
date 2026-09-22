@@ -16,7 +16,7 @@ const { getPool } = require('./db');
 
 // Bump this whenever the digest format or the records shape changes.
 // Stored snapshots with a different schema version rebuild on next use.
-const SNAPSHOT_SCHEMA_VERSION = 3;
+const SNAPSHOT_SCHEMA_VERSION = 4;
 
 const T = S.tables, C = S.creative, P = S.paidView, O = S.organicView, OR = S.organicRawCols;
 const OB = S.organicBest, B = S.boost, TH = S.thresholds, CR = S.creator;
@@ -61,7 +61,7 @@ async function qCreatives(pool, brand) {
     `select c.${C.id} as id, c.${C.hook} as hook, c.${C.format} as format, c.${C.productRole} as product_role,
             c.${C.type} as type, c.${C.campaign} as campaign, c.${C.isRepurposed} as is_repurposed,
             c.${C.parentId} as parent_id, c.${C.publishedAt} as published_at, c.${C.durationS} as duration_s,
-            c.content_intent, c.narrative_structure, c.hook_device, c.hook_subject, c.hook_pace,
+            c.segments, c.content_intent, c.narrative_structure, c.hook_device, c.hook_subject, c.hook_pace,
             c.opens_with_product, c.opens_with_face, c.has_text_overlay,
             c.timeline_attrs, c.time_to_product_s, c.product_screen_pct, c.cuts_per_10s,
             cr.${CR.name} as creator,
@@ -170,7 +170,13 @@ const V = require('./vocab');
 
 const gname = (g) => (g.name && g.name !== g.key ? `${g.name} [${g.key}]` : g.key);
 const singleRating = (g) => (g.good ? 'Good' : g.average ? 'Average' : g.poor ? 'Poor' : 'unrated');
-const vsText = (vs) => (vs ? `CQR ${vs.cqr}, hook ${vs.hook}, hold ${vs.hold}` : 'no comparison');
+const vsText = (vs) => {
+  if (!vs) return 'no comparison';
+  const cqr = vs.cqrSize ? `CQR ${vs.cqr} (${vs.cqrSize})` : `CQR ${vs.cqr}`;
+  const hook = `hook ${vs.hookMuch ? 'much ' : ''}${vs.hook}`;
+  const hold = `hold ${vs.holdMuch ? 'much ' : ''}${vs.hold}`;
+  return `${cqr}, ${hook}, ${hold}`;
+};
 const hedge = (g) => (g.early ? ' (early sign)' : '');
 
 // Groups are described by how they compare with the brand overall on CQR,
@@ -263,6 +269,32 @@ function renderDigest(an, insights) {
   L.push(`  Poor creatives: ${an.poorSplit.activeCount} still running on ${money(an.poorSplit.activeSpend)} (current waste), ${an.poorSplit.stoppedCount} stopped after ${money(an.poorSplit.stoppedSpend)} (past spend, already addressed)`);
   if (an.hookHold.mostlyLose) L.push(`  Where creatives lose people: ${an.hookHold.mostlyLose}.${an.hookHold.manyWeakOnBoth ? ' Many creatives are weak on both hook and hold.' : ''}`);
   L.push('');
+
+  if (an.winners && an.winners.statements.length) {
+    L.push(`WHAT THE GOOD CREATIVES SHARE (Good creatives against the rest)${an.winners.early ? ' [early sign: few creatives on one side]' : ''}`);
+    an.winners.statements.forEach((t) => L.push('  ' + t));
+    L.push('  This is the strongest material for why-questions. Explain the likely reason using the creative playbook.');
+    L.push('');
+  }
+
+  const ex = (c) => {
+    L.push(`  ${c.name} [${c.id}]: ${c.rating}. ${c.is}.`);
+    if (c.hook) L.push(`    What it is: ${c.hook}`);
+    if (c.opening) L.push(`    Opening seconds: ${c.opening}`);
+    const tail = [c.product, c.losesPeople && `loses most viewers ${c.losesPeople}`].filter(Boolean);
+    if (tail.length) L.push(`    ${tail.join('; ')}.`);
+  };
+  if (an.exemplars && an.exemplars.best.length) {
+    L.push('INSIDE THE BEST CREATIVES (what actually happens on screen)');
+    an.exemplars.best.forEach(ex);
+    L.push('');
+  }
+  if (an.exemplars && an.exemplars.weakest.length) {
+    L.push('INSIDE THE WEAKEST CREATIVES');
+    an.exemplars.weakest.forEach(ex);
+    L.push('  Compare these with the best to explain the difference in concrete terms.');
+    L.push('');
+  }
 
   if (an.discriminating.length) {
     L.push('WHAT ACTUALLY SEPARATES PERFORMANCE (ranked by how much)');
@@ -389,7 +421,7 @@ async function buildSnapshot(brand, _r, opts = {}) {
       product_role: c.product_role, type: c.type, campaign: c.campaign, creator: c.creator,
       origin: c.is_repurposed ? 'repurposed' : 'original', parent_id: c.parent_id,
       published_at: c.published_at, duration_s: c.duration_s ?? (m && m.duration_s), permalink: c.permalink,
-      content_intent: c.content_intent, narrative_structure: c.narrative_structure,
+      segments: c.segments, content_intent: c.content_intent, narrative_structure: c.narrative_structure,
       hook_device: c.hook_device, hook_subject: c.hook_subject, hook_pace: c.hook_pace,
       opens_with_product: c.opens_with_product, opens_with_face: c.opens_with_face,
       has_text_overlay: c.has_text_overlay, timeline_attrs: c.timeline_attrs,
@@ -425,8 +457,8 @@ async function buildSnapshot(brand, _r, opts = {}) {
   let insights = [];
   try {
     const { rows } = await pool.query(
-      `select body from brand_insights where brand = $1 and snapshot_ver = $2 and verified = true order by id`,
-      [brand, version]);
+      `select body from brand_insights where brand = $1 and verified = true order by id`,
+      [brand]);
     insights = rows;
   } catch (e) { /* table may not exist yet */ }
 
@@ -444,7 +476,16 @@ async function buildSnapshot(brand, _r, opts = {}) {
   }
 
   records.brand = { id: 'brand', name: S.brandLabels[brand], ...an.totals, cqr_mix: an.cqrMix };
-  records.__meta = { freshness: freshness.max_date, generated_at: new Date().toISOString(), minGroup: an.minGroup };
+  // The staleness check in getSnapshot compares these three fields. Without
+  // them it concludes every stored copy is out of date and rebuilds on every
+  // read, which is what happened before this fix.
+  records.__meta = {
+    schema: SNAPSHOT_SCHEMA_VERSION,
+    freshness: freshness.max_date,
+    row_count: Number(freshness.row_count),
+    generated_at: new Date().toISOString(),
+    minGroup: an.minGroup,
+  };
   records.__analytics = an;
 
   return {
@@ -497,7 +538,7 @@ async function getSnapshot(brand, _r, opts = {}) {
   const rebuilt = await generateAndStore(brand, 0, { pool });
 
   // Warm the starter answers for this brand without blocking the caller.
-  if (!opts.noPrewarm) {
+  if (!opts.noPrewarm && process.env.ASK_LENS_PREWARM === '1') {
     setImmediate(() => {
       try {
         const { prewarmBrand } = require('./prewarm');

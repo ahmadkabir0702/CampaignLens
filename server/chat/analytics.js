@@ -50,6 +50,124 @@ function rankCmp(a, b) {
   return num(b.hold_rate) - num(a.hold_rate);
 }
 
+// ---------------------------------------------------------------
+// Size in words. The team wants comparisons, not numbers, but "stronger"
+// alone hides whether a gap is huge or marginal. These phrases carry the size.
+// ---------------------------------------------------------------
+
+function cqrSize(groupShare, brandShare) {
+  const g = num(groupShare), b = num(brandShare);
+  if (b <= 0) return g > 0 ? 'rated Good where the brand overall rarely is' : null;
+  const r = g / b;
+  if (r >= 2.5) return 'rated Good several times as often as average';
+  if (r >= 1.8) return 'rated Good about twice as often as average';
+  if (r >= 1.3) return 'rated Good noticeably more often than average';
+  if (r <= 0.4) return 'rarely rated Good';
+  if (r <= 0.6) return 'rated Good about half as often as average';
+  if (r <= 0.77) return 'rated Good noticeably less often than average';
+  return null;
+}
+
+/** "much" when a hook or hold gap is a quarter of the brand average or more. */
+function much(value, base) {
+  const b = num(base);
+  return b > 0 && Math.abs(num(value) - b) / b >= 0.25;
+}
+
+/** Share of a group, in words. */
+function shareWords(x) {
+  if (x >= 0.85) return 'almost all';
+  if (x >= 0.6) return 'most';
+  if (x >= 0.4) return 'about half';
+  if (x >= 0.2) return 'some';
+  if (x > 0) return 'few';
+  return 'none';
+}
+
+/**
+ * What the Good creatives share that the rest do not. This is the question
+ * behind most useful creative insight, so it is computed here, across every
+ * classified attribute, and handed to the model as plain statements.
+ */
+function winnersVsRest(eligible) {
+  const good = eligible.filter((c) => c.cqr === 'Good');
+  const rest = eligible.filter((c) => c.cqr !== 'Good');
+  if (good.length < 2 || rest.length < 2) return null;
+  const early = good.length < MIN_GROUP || rest.length < MIN_GROUP;
+  const out = [];
+
+  const cat = ['hook_device', 'content_intent', 'narrative_structure', 'format', 'hook_subject', 'hook_pace', 'product_role', 'type'];
+  for (const f of cat) {
+    const values = new Set(eligible.map((c) => c[f]).filter(Boolean));
+    const binary = values.size === 2;
+    for (const v of values) {
+      const total = eligible.filter((c) => c[f] === v).length;
+      if (total < 2) continue;
+      const g = good.filter((c) => c[f] === v).length / good.length;
+      const r = rest.filter((c) => c[f] === v).length / rest.length;
+      if (Math.abs(g - r) < 0.2) continue;
+      if (binary && g <= r) continue; // the other value already says it
+      out.push({ weight: Math.abs(g - r), favours: g > r ? 'good' : 'rest',
+        text: `${V.title(f)} "${V.label(f, v)}": ${shareWords(g)} of the Good creatives, ${shareWords(r)} of the rest.` });
+    }
+  }
+
+  const bools = [['opens_with_face', 'Open on a face in the first 3 seconds'], ['opens_with_product', 'Show the product in the first 3 seconds'], ['has_text_overlay', 'Use on-screen text']];
+  for (const [f, text] of bools) {
+    const gk = good.filter((c) => c[f] !== null && c[f] !== undefined);
+    const rk = rest.filter((c) => c[f] !== null && c[f] !== undefined);
+    if (gk.length < 2 || rk.length < 2) continue;
+    const g = gk.filter((c) => c[f]).length / gk.length;
+    const r = rk.filter((c) => c[f]).length / rk.length;
+    if (Math.abs(g - r) < 0.2) continue;
+    out.push({ weight: Math.abs(g - r), favours: g > r ? 'good' : 'rest', text: `${text}: ${shareWords(g)} of the Good creatives, ${shareWords(r)} of the rest.` });
+  }
+
+  const nums = [
+    ['time_to_product_s', 'show the product earlier', 'show the product later', true],
+    ['cuts_per_10s', 'cut faster', 'cut slower', false],
+    ['duration_s', 'run shorter', 'run longer', true],
+    ['product_screen_pct', 'keep the product on screen longer', 'keep the product on screen less', false],
+  ];
+  for (const [f, lowerText, higherText] of nums) {
+    const g = avg(good.map((c) => c[f])), r = avg(rest.map((c) => c[f]));
+    if (g === null || r === null || r === 0) continue;
+    const rel = (g - r) / Math.abs(r);
+    if (Math.abs(rel) < 0.2) continue;
+    out.push({ weight: Math.abs(rel), favours: 'good', text: `Good creatives ${g < r ? lowerText : higherText} than the rest${Math.abs(rel) >= 0.5 ? ', by a wide margin' : ''}.` });
+  }
+
+  out.sort((a, b) => b.weight - a.weight);
+  return { early, statements: out.slice(0, 8).map((x) => x.text) };
+}
+
+/** The opening seconds of a creative, from Gemini's timeline, in plain text. */
+function openingText(c, upTo = 6) {
+  const seg = Array.isArray(c.segments) ? c.segments : [];
+  return seg.filter((x) => Number(x.t) <= upTo && x.d).slice(0, 4)
+    .map((x) => `${Math.round(Number(x.t))}s ${String(x.d).replace(/\s+/g, ' ').slice(0, 110)}`).join(' / ');
+}
+
+/** A creative as a strategist would read it: ratings, what it is, how it opens, where it loses people. */
+function exemplar(c) {
+  const drop = retentionDrop(c);
+  const where = drop ? ({ '25%': 'between the hook and a quarter of the way in', '50%': 'between 25% and 50% of the video', '75%': 'between 50% and 75% of the video', '100%': 'in the last quarter' })[drop.to] || null : null;
+  const t = c.time_to_product_s;
+  return {
+    id: c.id, name: c.name || c.id,
+    rating: `CQR ${c.cqr}, hook ${c.hook_q || 'unrated'}, hold ${c.hold_q || 'unrated'}`,
+    is: [V.label('format', c.format), c.hook_device && `opens with ${V.label('hook_device', c.hook_device)}`, c.content_intent && `purpose ${V.label('content_intent', c.content_intent)}`].filter(Boolean).join(', '),
+    hook: (() => {
+      const h = c.hook ? String(c.hook).replace(/\s+/g, ' ').trim() : '';
+      const n = String(c.name || '').replace(/…$/, '').trim();
+      return h && h !== n && h.length > n.length + 10 ? h.slice(0, 160) : null;
+    })(),
+    opening: openingText(c) || null,
+    losesPeople: where,
+    product: t === null || t === undefined ? null : (t <= 3 ? 'Product in the opening seconds' : t <= 8 ? 'Product appears early' : 'Product appears late'),
+  };
+}
+
 /**
  * Compare a group with the brand overall on CQR, hook and hold, in words.
  * The team wants comparisons, not numbers, so this is what the chat reads.
@@ -322,7 +440,12 @@ function build({ brand, paid, organic, boost, thresholds, monthly, freshness }) 
   for (const [field, d] of Object.entries(dims)) {
     if (!d || !d.groups) continue;
     const b = field === 'platform' ? platBase : base;
-    for (const g of d.groups) g.vs = compareToBrand(g, b);
+    for (const g of d.groups) {
+      g.vs = compareToBrand(g, b);
+      g.vs.cqrSize = cqrSize(g.goodShare, b.good);
+      g.vs.hookMuch = g.vs.hook !== 'similar' && much(g.hook_rate, b.hook);
+      g.vs.holdMuch = g.vs.hold !== 'similar' && much(g.hold_rate, b.hold);
+    }
     d.leaders = leadersOf(d.groups);
   }
 
@@ -416,7 +539,9 @@ function build({ brand, paid, organic, boost, thresholds, monthly, freshness }) 
     organic: organicSummary, validatedUnboosted,
     thresholds, monthly,
     minGroup: MIN_GROUP, earlyMin: EARLY_MIN, base,
+    winners: winnersVsRest(eligible),
+    exemplars: { best: ranked.slice(0, 3).map(exemplar), weakest: ranked.length > 3 ? ranked.slice(-3).reverse().map(exemplar) : [] },
   };
 }
 
-module.exports = { build, groupBy, crosstab, summarise, rankCmp, retentionDrop, goodScore, compareToBrand, leadersOf, MIN_GROUP, EARLY_MIN };
+module.exports = { winnersVsRest, exemplar, cqrSize, build, groupBy, crosstab, summarise, rankCmp, retentionDrop, goodScore, compareToBrand, leadersOf, MIN_GROUP, EARLY_MIN };

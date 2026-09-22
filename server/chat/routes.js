@@ -21,6 +21,7 @@ const { generateAll: generateInsights } = require('./insights');
 const rateLimitMod = require('./rateLimit');
 
 module.exports = function mountChatRoutes(app) {
+  require('./keepwarm').start();
   // ---- Optional pipeline hook, no session. -----------------------------
   // Snapshots refresh themselves on first use after new data lands, so
   // this endpoint is NOT required. Wiring n8n to call it after each run

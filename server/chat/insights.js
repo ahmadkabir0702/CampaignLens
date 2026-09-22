@@ -13,8 +13,10 @@
  */
 
 const Anthropic = require('@anthropic-ai/sdk');
+const crypto = require('crypto');
 const S = require('./schema.config');
 const V = require('./vocab');
+const num = (v) => (v === null || v === undefined || !isFinite(Number(v)) ? 0 : Number(v));
 const { getPool } = require('./db');
 
 const client = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY });
@@ -26,27 +28,57 @@ const WRITER_MODEL = process.env.ASK_LENS_WRITER_MODEL || 'claude-sonnet-5';
 const MIN_EVIDENCE = 2;
 
 /** A dimension as word comparisons on CQR, hook and hold. No numbers. */
+function groupSentence(g) {
+  const vs = g.vs || {};
+  const cqr = vs.cqrSize ? `CQR ${vs.cqr} (${vs.cqrSize})` : `CQR ${vs.cqr || 'unknown'}`;
+  const hook = `hook ${vs.hookMuch ? 'much ' : ''}${vs.hook || 'unknown'}`;
+  const hold = `hold ${vs.holdMuch ? 'much ' : ''}${vs.hold || 'unknown'}`;
+  return `${g.name || g.key}: ${cqr}, ${hook}, ${hold}${g.early ? '. Early sign, small group' : ''}.`;
+}
+
+/**
+ * Two groups compared directly, worked out in code. Without this the writer
+ * had to infer "Meta beats TikTok" from two separate comparisons with the
+ * brand average, and the checker then rejected a true statement.
+ */
+function headToHead(a, b) {
+  const side = (x, y, label, size) => {
+    const d = num(x.v) - num(y.v);
+    const rel = Math.abs(num(y.v)) > 0 ? Math.abs(d) / Math.abs(num(y.v)) : (d ? 1 : 0);
+    if (rel < 0.08 && Math.abs(d) < 2) return `${label}: about even`;
+    const win = d > 0 ? x.name : y.name;
+    const margin = rel >= 0.5 ? 'by a wide margin' : rel >= 0.2 ? 'clearly' : 'slightly';
+    return `${label}: ${win} stronger, ${margin}`;
+  };
+  return [
+    side({ name: a.name, v: a.goodShare }, { name: b.name, v: b.goodShare }, 'CQR'),
+    side({ name: a.name, v: a.hook_rate }, { name: b.name, v: b.hook_rate }, 'Hook'),
+    side({ name: a.name, v: a.hold_rate }, { name: b.name, v: b.hold_rate }, 'Hold'),
+  ].join('; ') + ((a.early || b.early) ? '. Early sign, small groups.' : '.');
+}
+
+/** A dimension as plain sentences on CQR, hook and hold. No numbers. */
 function asWords(d) {
   if (!d || !d.groups) return null;
   const rep = d.groups.filter((g) => !g.tooFew);
   if (rep.length < MIN_EVIDENCE) return null;
   const tag = (x) => (x ? `${x.name}${x.early ? ' (early sign)' : ''}` : null);
-  return {
+  const out = {
     dimension: d.dimension,
     comparedWith: 'the brand overall',
-    groups: rep.slice(0, 8).map((g) => ({
-      name: g.name || g.key,
-      cqr: g.vs ? g.vs.cqr : 'unknown',
-      hook: g.vs ? g.vs.hook : 'unknown',
-      hold: g.vs ? g.vs.hold : 'unknown',
-      sample: g.early ? 'early sign' : 'solid',
-    })),
-    leadsOnCqr: tag(d.leaders && d.leaders.cqr),
-    bestHook: tag(d.leaders && d.leaders.hook),
-    bestHold: tag(d.leaders && d.leaders.hold),
-    weakestOnCqr: tag(d.leaders && d.leaders.weakestCqr),
-    singleExamplesLeftOut: d.groups.some((g) => g.tooFew),
+    groups: rep.slice(0, 8).map(groupSentence),
+    leaders: d.leaders ? `Leads on CQR: ${tag(d.leaders.cqr)}. Best hook: ${tag(d.leaders.hook)}. Best hold: ${tag(d.leaders.hold)}. Weakest on CQR: ${tag(d.leaders.weakestCqr)}.` : null,
   };
+  if (rep.length === 2) out.headToHead = `${rep[0].name} against ${rep[1].name}: ${headToHead({ ...rep[0], name: rep[0].name || rep[0].key }, { ...rep[1], name: rep[1].name || rep[1].key })}`;
+  if (d.groups.some((g) => g.tooFew)) out.note = 'Groups with a single creative are left out.';
+  return out;
+}
+
+/** The best and weakest creatives, as a strategist would read them. */
+function inside(an) {
+  const line = (c) => [`${c.name}: ${c.rating}. ${c.is}.`, c.opening && `Opens: ${c.opening}`, c.losesPeople && `Loses most viewers ${c.losesPeople}.`, c.product && `${c.product}.`].filter(Boolean).join(' ');
+  const ex = an.exemplars || { best: [], weakest: [] };
+  return { insideTheBest: ex.best.map(line), insideTheWeakest: ex.weakest.map(line) };
 }
 
 const SEGMENT_WORDS = { 'hook to 25%': 'between the hook and a quarter of the way in', '25% to 50%': 'between 25% and 50% of the video', '50% to 75%': 'between 50% and 75% of the video', '75% to 100%': 'in the last quarter of the video' };
@@ -61,7 +93,7 @@ const HYPOTHESES = [
     id: 'hook_device',
     guide: 'Say which opening hook leads on CQR and how it compares on hook and hold. Name the weakest on CQR. Mark early signs as early signs.',
     question: 'Which opening device produces the strongest hook rates, and is the gap real?',
-    evidence: (an) => asWords(an.dims.hook_device),
+    evidence: (an) => { const w = asWords(an.dims.hook_device); return w && { ...w, ...inside(an) }; },
   },
   {
     id: 'content_intent',
@@ -115,6 +147,7 @@ const HYPOTHESES = [
     evidence: (an) => {
       const w = asWords(an.dims.platform);
       if (!w) return null;
+      Object.assign(w, inside(an));
       w.comparedWith = 'the average across both platforms';
       w.someCreativesRatedDifferentlyByPlatform = an.anomalies.some((a) => a.kind === 'platform_disagree');
       return w;
@@ -146,6 +179,15 @@ const HYPOTHESES = [
       const h = an.hookHold;
       if (h.rated < MIN_EVIDENCE || !h.mostlyLose) return null;
       return { whereViewersAreLost: h.mostlyLose, manyAreWeakOnBothHookAndHold: h.manyWeakOnBoth };
+    },
+  },
+  {
+    id: 'winners',
+    guide: 'Say what the Good creatives have in common that the rest do not, leading with the strongest difference. Then explain why that likely works, using the playbook and what happens inside the best and weakest creatives. Then one or two specific tests.',
+    question: 'What do the Good creatives share that the rest do not, and why does it likely work?',
+    evidence: (an) => {
+      if (!an.winners || !an.winners.statements.length) return null;
+      return { whatTheGoodCreativesShare: an.winners.statements, ...(an.winners.early ? { sample: 'early sign, few creatives on one side' } : {}), ...inside(an) };
     },
   },
   {
@@ -219,46 +261,52 @@ function present(value, key = '', parentKey = '') {
   return value;
 }
 
-const WRITER_PROMPT = `You write findings for a creative performance dashboard used by a media team at WPP working on Unilever Sri Lanka brands.
+// The playbook and team learnings come from the contract, so the writer and
+// the chat reason from the same knowledge and the team edits it in one place.
+let PLAYBOOK = '';
+try {
+  const c = require('fs').readFileSync(require('path').join(__dirname, 'contract.md'), 'utf8');
+  const a = c.indexOf('## Creative playbook'), b = c.indexOf('## How to answer');
+  if (a >= 0 && b > a) PLAYBOOK = c.slice(a, b).trim();
+} catch (e) { /* the writer still works, just with less to draw on */ }
 
-You are given one analytical question and the computed evidence that answers it. Every number in the evidence was calculated in code and is correct.
+const WRITER_PROMPT = `You write findings for a creative performance dashboard used by a media team at WPP working on Unilever Sri Lanka brands. Write like a sharp creative strategist, not a report generator.
 
-Write the finding in at most three sentences.
+You are given one analytical question and evidence computed from the brand's data. The evidence is correct.
+
+Write ONE paragraph in three parts, each starting with its label:
+What the data shows: the fact, from the evidence. CQR first, then hook, then hold.
+Why: the likely reason. Be concrete: name what happens on screen in the best and weakest creatives when the evidence includes them, and draw on the creative playbook below. Frame it as likely ("usually", "a common reason is"), never as proven.
+What to test: one or two specific, testable next steps for this brand.
+
+Keep it to about 90 to 140 words.
 
 Rules:
-- Use only numbers that appear in the evidence, copied exactly as written there, units included ("13.8M LKR", "56%", "50.1%"). Never calculate, average, round differently, convert or estimate. If you want a number that is not written in the evidence, leave it out.
-- Lead with what is true, then why it matters. No preamble.
-- Talk about patterns across groups, not individual creatives, unless one creative is the clearest example of the pattern.
-- Where the evidence shows a dimension does not separate performance, say so plainly. A null finding is useful.
-- Plain, direct wording. No flourishes. No em dashes. No emoji.
-- Do not recommend anything the evidence does not support.
-- Never claim something is absent, missing or not present unless the evidence explicitly shows it (an empty list, a zero count).
-- Describe relationships correctly: more creatives is more, a higher rate is higher. Re-read each comparison before finishing.
-- Groups are compared in words: stronger, similar or weaker than the comparison point, on CQR, hook and hold. Write comparisons that way. Never state counts or percentages for groups; none are given.
-- CQR matters most, then hook, then hold. Lead with CQR. A stronger hook alone does not make a group better.
-- A group marked "early sign" is small. Call it an early sign, never a pattern, trend or rule. "Early signs", "so far" and "worth testing more" fit.
-- A single example is never proof that a type of creative works.
+- Group comparisons are given in words. Keep them in words. Do not write any digits except durations in seconds, and never state counts or percentages.
+- CQR matters most, then hook, then hold. A stronger hook alone does not make something better.
+- Where a head-to-head is given, use it for direct comparisons between the two groups.
+- Something marked early sign is small: call it an early sign, never a pattern or rule.
+- A single creative is never proof that a type works.
+- Describe comparisons in the right direction. Re-read each one before finishing.
+- Plain, direct wording. No em dashes, no emoji, no markdown symbols.
 
-Return only the finding text.`;
+${PLAYBOOK}`;
 
 const VERIFY_PROMPT = `You are checking a finding against the evidence it was written from. Call the verdict tool with your result.
 
-Mark it NOT ok only if the finding:
-- states a number that does not appear in the evidence, or a number with the wrong unit
-- makes a claim the evidence does not support
-- contradicts the evidence, including getting a comparison backwards (calling more "fewer", higher "lower")
-- claims something is absent or missing when the evidence does not explicitly show that
-- recommends something the evidence gives no basis for
-- presents a group marked "early sign" as a pattern, trend or rule rather than an early sign
-- treats a single creative as proof that a type works
-- reverses a comparison, for example calling a group stronger on hook when the evidence says weaker
+The finding has three parts. "What the data shows" makes factual claims. "Why" is interpretation. "What to test" is advice.
 
-Mark it ok otherwise. In particular these are NOT errors:
-- leaving out numbers or groups; a finding does not need to mention everything
-- choosing to focus on one pattern over another
-- reasonable plain-language framing of what the numbers show
+Check the facts. Mark it NOT ok only if:
+- a factual claim contradicts the evidence, including a comparison stated in the wrong direction
+- it states a number, count or percentage that is not in the evidence (durations in seconds inside the advice are fine)
+- it calls something marked early sign a pattern, trend or rule
+- it treats a single creative as proof that a type works
+- the Why part states its explanation as proven fact rather than as likely
+- the advice contradicts the evidence
 
-Numbers must match the evidence exactly as written, units included.`;
+Group-to-group statements are correct when they follow from the evidence: if one group is stronger and another similar or weaker against the same baseline, the first is stronger than the second. A head-to-head in the evidence is authoritative.
+
+Do NOT reject for: interpretation that is framed as likely, drawing on general creative principles, choosing what to emphasise, leaving things out, or wording and framing choices.`;
 
 const VERDICT_TOOL = {
   name: 'verdict',
@@ -280,7 +328,9 @@ function numbersIn(text) {
 
 /** Deterministic first pass: any number in the text must exist in the evidence. */
 function numbersReconcile(body, evidence) {
-  body = String(body).replace(/\b(first\s+)?3\s*(seconds?|s)\b/gi, '');
+  // Durations ("the first 3 seconds", "a 10-second cut") are advice or common
+  // phrasing, not claims about the data. Everything else must be in the evidence.
+  body = String(body).replace(/\b(first\s+)?\d+(\.\d+)?\s*(-|to|–)?\s*(\d+\s*)?(-?\s*seconds?|s\b|-second)/gi, '');
   const inEvidence = new Set(numbersIn(JSON.stringify(evidence)).map((n) => n.toFixed(1)));
   // Allow small integers, they are almost always counts of things listed.
   const claimed = numbersIn(body).filter((n) => n > 2);
@@ -288,10 +338,22 @@ function numbersReconcile(body, evidence) {
   return { ok: bad.length === 0, bad };
 }
 
+const MAX_FINDINGS_AGE_DAYS = 7;
+
+function fingerprint(an) {
+  const rows = (an.ranked || []).map((c) => [c.id, c.cqr, c.is_active ? 1 : 0, c.hook_q, c.hold_q,
+    c.hook_device, c.content_intent, c.format,
+    // each platform's own status and rating: stopping on one platform matters
+    Object.entries(c.per_platform || {}).map(([k, v]) => `${k}${v.is_active ? 1 : 0}${v.cqr || ''}`).sort().join(',')].join(':')).sort();
+  return crypto.createHash('sha256').update(rows.join('|')).digest('hex').slice(0, 16);
+}
+
 async function writeFinding(h, evidence) {
   const res = await client.messages.create({
-    model: WRITER_MODEL, max_tokens: 300,
-    system: WRITER_PROMPT,
+    model: WRITER_MODEL, max_tokens: 500,
+    // The prompt and playbook are identical on every call in a run, so cache
+    // them: calls come back to back, so the 5-minute cache is enough.
+    system: [{ type: 'text', text: WRITER_PROMPT, cache_control: { type: 'ephemeral' } }],
     messages: [{ role: 'user', content: `Question: ${h.question}\n\nWhat a good answer covers: ${h.guide || 'the clearest pattern in the evidence.'}\n\nEvidence:\n${JSON.stringify(evidence, null, 1)}` }],
   });
   return res.content.filter((b) => b.type === 'text').map((b) => b.text).join('').trim();
@@ -323,11 +385,22 @@ async function generateForBrand(brand, snapshot, opts = {}) {
 
   // Start clean for this data version. Otherwise a question that now skips
   // would leave its old finding in place, and the chat would keep citing it.
-  await pool.query('delete from brand_insights where brand = $1 and snapshot_ver = $2', [brand, snapshot.version]);
+  // Replace the brand's whole set. Findings are keyed by the creative
+  // fingerprint, not the daily data version, so they survive until something
+  // they depend on actually changes.
+  const fp = fingerprint(an);
+  await pool.query('delete from brand_insights where brand = $1', [brand]);
 
   for (const h of HYPOTHESES) {
     let evidence;
-    try { evidence = h.evidence(an); } catch { evidence = null; }
+    try { evidence = h.evidence(an); }
+    catch (err) {
+      // A bug here must be visible, not mistaken for "not enough data".
+      out.rejected += 1;
+      (out.reasons = out.reasons || []).push(`${h.id}: code error while gathering evidence: ${err.message}`);
+      console.error(`[insights] ${brand}/${h.id} evidence error:`, err.message);
+      continue;
+    }
     if (!evidence) { out.skipped += 1; continue; }   // abstention, before any model call
 
     const shown = present(evidence);
@@ -349,7 +422,7 @@ async function generateForBrand(brand, snapshot, opts = {}) {
            set body = excluded.body, evidence = excluded.evidence,
                verified = excluded.verified, verify_note = excluded.verify_note,
                generated_at = now()`,
-        [brand, snapshot.version, h.id, body, JSON.stringify(shown), verified, note]);
+        [brand, fp, h.id, body, JSON.stringify(shown), verified, note]);
       if (!verified) (out.reasons = out.reasons || []).push(`${h.id}: ${note}`);
     } catch (err) {
       out.rejected += 1;
@@ -363,16 +436,34 @@ async function generateForBrand(brand, snapshot, opts = {}) {
 /** Run for every brand. Called by the warm endpoint after snapshots rebuild. */
 async function generateAll(opts = {}) {
   const pool = opts.pool || getPool();
-  const { getSnapshot, buildSnapshot } = require('./snapshot');
+  const { getSnapshot, buildSnapshot, generateAndStore } = require('./snapshot');
   const results = [];
   const brands = opts.brands && opts.brands.length ? opts.brands : S.brands;
   for (const brand of brands) {
     try {
-      const stored = await getSnapshot(brand, 0, { pool });
-      // Findings need the analytics object, which the stored row does not carry.
-      const fresh = await buildSnapshot(brand, 0, { pool });
-      if (fresh.version !== stored.version) { results.push({ brand, skipped: 'version moved' }); continue; }
-      results.push(await generateForBrand(brand, fresh, { pool }));
+      await getSnapshot(brand, 0, { pool, noPrewarm: true }); // make sure stored data is current
+      const fresh = await buildSnapshot(brand, 0, { pool });  // findings need the analytics object
+      const fp = fingerprint(fresh.analytics);
+
+      // Only rewrite findings when the creatives they describe have changed,
+      // or they are more than a week old. Saves most of the daily writer cost.
+      if (!opts.force) {
+        const { rows } = await pool.query(
+          `select snapshot_ver, max(generated_at) as at from brand_insights where brand = $1 group by snapshot_ver order by at desc limit 1`, [brand]);
+        const prev = rows[0];
+        const ageDays = prev ? (Date.now() - new Date(prev.at).getTime()) / 86400000 : Infinity;
+        if (prev && prev.snapshot_ver === fp && ageDays < MAX_FINDINGS_AGE_DAYS) {
+          results.push({ brand, written: 0, skipped: 0, rejected: 0, unchanged: true });
+          continue;
+        }
+      }
+
+      const r = await generateForBrand(brand, fresh, { pool });
+      // Findings live inside the stored brand data the chat reads, so rebuild
+      // it now, and clear this brand's cached answers, which predate them.
+      await generateAndStore(brand, 0, { pool });
+      await pool.query('delete from chat_answer_cache where brand = $1', [brand]);
+      results.push(r);
     } catch (err) {
       results.push({ brand, error: err.message });
       console.error(`[insights] ${brand}:`, err.message);
@@ -389,4 +480,4 @@ async function generateAll(opts = {}) {
   return results;
 }
 
-module.exports = { generateAll, generateForBrand, HYPOTHESES, numbersReconcile, present };
+module.exports = { generateAll, generateForBrand, HYPOTHESES, numbersReconcile, present, fingerprint };
