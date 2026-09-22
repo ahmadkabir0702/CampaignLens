@@ -181,18 +181,26 @@ const hedge = (g) => (g.early ? ' (early sign)' : '');
 
 // Groups are described by how they compare with the brand overall on CQR,
 // hook and hold. No counts or percentages: the team wants the comparison.
-const fmtGroup = (g) => g.tooFew
+const rankText = (g, ld) => {
+  if (!ld) return '';
+  const r = [];
+  if (ld.cqr && ld.cqr.key === g.key) r.push('best on CQR among these');
+  if (ld.hook && ld.hook.key === g.key) r.push('best hook among these');
+  if (ld.hold && ld.hold.key === g.key) r.push('best hold among these');
+  if (ld.weakestCqr && ld.weakestCqr.key === g.key) r.push('weakest on CQR among these');
+  return r.length ? ` Ranking: ${r.join('; ')}.` : '';
+};
+const fmtGroup = (g, ld) => g.tooFew
   ? `${gname(g)}: one example only, rated ${singleRating(g)}. Not enough to compare.`
-  : `${gname(g)}: ${vsText(g.vs)}${hedge(g)}.`;
+  : `${gname(g)}: vs brand average ${vsText(g.vs)}${hedge(g)}.${rankText(g, ld)}`;
 
 function renderDim(L, d) {
   if (!d || !d.groups.length) return;
   L.push(`${d.dimension.toUpperCase()} (each compared with the brand overall)`);
-  d.groups.forEach((g) => L.push('  ' + fmtGroup(g)));
+  d.groups.forEach((g) => L.push('  ' + fmtGroup(g, d.leaders)));
   const ld = d.leaders;
   if (ld) {
-    const n = (x) => `${x.name}${x.early ? ' (early sign)' : ''}`;
-    L.push(`  Leads on CQR: ${n(ld.cqr)}. Best hook: ${n(ld.hook)}. Best hold: ${n(ld.hold)}. Weakest on CQR: ${n(ld.weakestCqr)}.`);
+    L.push('  "vs brand average" compares each group with the brand overall; "Ranking" compares the groups with each other. A group can rank best here and still be similar to the average.');
   } else {
     L.push('  Only one group has more than a single creative, so there is nothing to compare it with yet.');
   }
