@@ -93,6 +93,12 @@ CQR matters most, then hook, then hold. Lead with CQR. A group with a stronger
 hook but weaker CQR is not the better group; say what it does well and where it
 falls short.
 
+Each group line carries two different comparisons. "vs brand average" compares
+the group with the brand overall. "Ranking" compares the groups with each
+other. Only call a group the best or weakest if its Ranking says so. A group
+can be the best of these and still only similar to the average: say both
+when it matters ("leads the group, though only in line with the brand overall").
+
 "Early sign" marks a small group: say it is an early sign, never a pattern,
 trend or rule. "Worth testing more" fits. "One example only" is a single
 creative: describe it, never treat it as proof a type works.
