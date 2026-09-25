@@ -270,7 +270,10 @@ select:focus,.search-input:focus,.modal-input:focus{outline:none;border-color:va
    through to, and hiding it would make it undiscoverable.               */
 .card-thumb{
   position:relative;margin:-16px -18px 12px;overflow:hidden;
-  aspect-ratio:4/5;max-height:190px;background:var(--bg);
+  /* Fixed height, full width. An aspect-ratio with a max-height makes the
+     browser shrink the WIDTH to keep the ratio, which left-aligns the frame
+     inside the card instead of filling it. */
+  width:auto;height:200px;background:var(--bg);
   border-radius:var(--r-card) var(--r-card) 0 0;
 }
 .card-thumb img{
