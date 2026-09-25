@@ -98,30 +98,40 @@ async function upload(objectPath, buf, mime) {
   return `${base}/storage/v1/object/public/${BUCKET}/${objectPath}`;
 }
 
+// No browser displays HEIC, and TikTok returns .heic covers first in its
+// list. Storing one produces a card with a silently broken image, so these
+// are skipped and the next candidate is tried.
+const DISPLAYABLE = new Set(['jpg', 'png', 'webp']);
+
 /**
- * Download the platform's thumbnail and store it. Returns the permanent
- * public URL, or null if anything goes wrong.
+ * Download and store a thumbnail. Accepts one URL or a list to try in order,
+ * which is how a TikTok cover list gets past its HEIC entries to the JPEG.
+ * Returns the permanent public URL, or null if nothing usable was found.
  */
 async function storeThumbnail(creativeId, sourceUrl) {
-  if (!sourceUrl) return null;
+  const candidates = (Array.isArray(sourceUrl) ? sourceUrl : [sourceUrl]).filter(Boolean);
+  if (!candidates.length) return null;
   if (!configured()) {
     console.warn('[thumbnails] SUPABASE_URL / SUPABASE_SERVICE_ROLE_KEY not set; thumbnail not stored');
     return null;
   }
-  try {
-    const buf = await download(sourceUrl);
-    const kind = sniff(buf);
-    if (!kind) { console.warn(`[thumbnails] ${creativeId}: not an image, skipped`); return null; }
-    // HEIC does not display in browsers. Keep it only if nothing else is possible.
-    const safeId = String(creativeId).replace(/[^A-Za-z0-9_-]/g, '_');
-    const objectPath = `${safeId}.${kind.ext}`;
-    const publicUrl = await upload(objectPath, buf, kind.mime);
-    // Cache-bust so a replaced thumbnail shows immediately in the Hub.
-    return `${publicUrl}?v=${Date.now()}`;
-  } catch (e) {
-    console.error(`[thumbnails] ${creativeId}: ${e.message}`);
-    return null;
+  let lastError = null;
+  for (const url of candidates) {
+    try {
+      const buf = await download(url);
+      const kind = sniff(buf);
+      if (!kind) { lastError = 'not an image'; continue; }
+      if (!DISPLAYABLE.has(kind.ext)) { lastError = `${kind.ext} cannot be shown in a browser`; continue; }
+      const safeId = String(creativeId).replace(/[^A-Za-z0-9_-]/g, '_');
+      const publicUrl = await upload(`${safeId}.${kind.ext}`, buf, kind.mime);
+      // Cache-bust so a replaced thumbnail shows immediately in the Hub.
+      return `${publicUrl}?v=${Date.now()}`;
+    } catch (e) {
+      lastError = e.message;
+    }
   }
+  console.error(`[thumbnails] ${creativeId}: ${lastError || 'no usable image'}`);
+  return null;
 }
 
 module.exports = { storeThumbnail, configured, _sniff: sniff };
