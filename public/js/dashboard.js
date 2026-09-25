@@ -460,6 +460,7 @@ function renderCards(data) {
           <span class="card-type ${d.type==='Brand Say'?'bs-tag':'os-tag'}">${d.type==='Brand Say'?'BS':'OS'}</span>${repTag}
         </div>
       </div>
+      ${d.thumbnail ? `<div class="card-thumb"><img src="${escapeHtml(d.thumbnail)}" alt="" loading="lazy" onerror="this.parentNode.style.display='none'"></div>` : ''}
       <div class="card-name">${d.id}</div>
       <div style="font-size:9px;color:var(--c-muted);margin-top:-6px;margin-bottom:4px;">${d.short !== d.id ? d.short : ''}</div>
       <div class="card-campaign">${d.campaign} · ${d.month}</div>
