@@ -21,6 +21,7 @@ const fs = require('fs');
 const os = require('os');
 const path = require('path');
 const axios = require('axios');
+const { storeThumbnail } = require('./thumbnails');
 const { Worker } = require('bullmq');
 const IORedis = require('ioredis');
 const { query } = require('./db');
@@ -887,6 +888,15 @@ function makeProcessor(ai) {
       if (d.type === 'Others Say' && meta.stats) {
         try { await writeFirstStats(creativeId, platform, meta); }
         catch (e) { console.error(`[worker] ${creativeId}: first stats not written: ${e.message}`); }
+      }
+
+      // Every creative, both types: keep a permanent copy of the thumbnail.
+      // The platform's link expires within hours, so the file itself is
+      // stored. Never fatal: a missing picture is cosmetic.
+      const storedThumb = await storeThumbnail(creativeId, meta.thumbnail_url);
+      if (storedThumb) {
+        await query(`update creatives set thumbnail_url = $2 where creative_id = $1`, [creativeId, storedThumb])
+          .catch(e => console.error(`[worker] ${creativeId}: thumbnail url not saved: ${e.message}`));
       }
 
       console.log(`[worker] ${creativeId}: analysed ${platform} (${safeDur === null ? '?' : safeDur}s, ${timeline.length} segments) and added`);

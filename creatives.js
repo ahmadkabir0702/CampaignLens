@@ -94,7 +94,7 @@ async function buildPayload(brandId) {
                     original_creative_id, content_hook, seg1, seg2, seg3, seg4, segments,
                     format, product_role, format_note,
                     content_type, duration_s, creator_profile, created_at,
-                    ig_link, fb_link, tt_link
+                    ig_link, fb_link, tt_link, thumbnail_url
                from creatives where brand_id = $1
               order by date desc nulls last, created_at desc`, [brandId]),
 
@@ -232,6 +232,7 @@ async function buildPayload(brandId) {
       creativeLink: c.ig_link || c.tt_link || c.fb_link || '',
       igLink: c.ig_link || '', fbLink: c.fb_link || '', ttLink: c.tt_link || '',
       creatorProfile: c.creator_profile || null,
+      thumbnail: c.thumbnail_url || null,
       isRepurposed: !!c.is_repurposed,
       ...parseOriginal(c.original_creative_id),
 
