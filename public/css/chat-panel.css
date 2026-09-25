@@ -20,7 +20,23 @@
   z-index: 900;
 }
 .al-panel[hidden] { display: none; }
+
+/* The panel slides in from the edge it lives on, so opening it reads as the
+   page making room rather than a box appearing. The page padding moves on
+   the same curve, so the two feel like one motion. */
+.al-panel {
+  transform: translateX(100%);
+  transition: transform .28s cubic-bezier(.22,.61,.36,1);
+  will-change: transform;
+}
+.al-panel.al-in { transform: none; }
+
+body { transition: padding-right .28s cubic-bezier(.22,.61,.36,1); }
 body.al-open { padding-right: var(--al-width); }
+
+@media (prefers-reduced-motion: reduce) {
+  .al-panel, body { transition: none; }
+}
 @media (max-width: 900px) { :root { --al-width: 100vw; } body.al-open { padding-right: 0; } }
 
 /* ---- Header ---- */
