@@ -193,6 +193,11 @@
   function open() {
     state.open = true;
     nodes.panel.hidden = false;
+    // Two frames: the first paints the panel off-screen, the second starts
+    // the slide. Without this the browser has nothing to animate from.
+    requestAnimationFrame(function () {
+      requestAnimationFrame(function () { nodes.panel.classList.add('al-in'); });
+    });
     document.body.classList.add('al-open');
     syncContext();
     refreshUsage();
@@ -203,8 +208,19 @@
 
   function close() {
     state.open = false;
-    nodes.panel.hidden = true;
+    nodes.panel.classList.remove('al-in');
     document.body.classList.remove('al-open');
+    // Stay in the DOM until the slide finishes, then hide it properly so it
+    // is out of the tab order and invisible to screen readers.
+    var done = false;
+    function finish() {
+      if (done || state.open) return;
+      done = true;
+      nodes.panel.hidden = true;
+      nodes.panel.removeEventListener('transitionend', finish);
+    }
+    nodes.panel.addEventListener('transitionend', finish);
+    setTimeout(finish, 350);   // fallback if the transition never fires
   }
 
   // ---- Context -------------------------------------------------
