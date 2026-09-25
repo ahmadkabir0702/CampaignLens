@@ -262,15 +262,55 @@ select:focus,.search-input:focus,.modal-input:focus{outline:none;border-color:va
 .status-active-dot{background:var(--pos)}
 .status-stopped-dot{background:var(--ink-300)}
 
-/* Thumbnail on the Creative Hub card. Vertical video, so a 4:5 crop keeps
-   the card compact while showing the top of the frame where hooks live.
-   The image is hidden if it fails to load, so a missing file never shows a
-   broken icon. */
+/* --- Creative still frames -------------------------------------------
+   The frame is the creative, so it runs to the card edge rather than
+   sitting inside the padding. 4:5, cropped from the top, because that is
+   where the hook is in vertical video. The play button is always visible,
+   not revealed on hover: it is the one thing on the card you can click
+   through to, and hiding it would make it undiscoverable.               */
 .card-thumb{
-  margin:-4px 0 10px;border-radius:8px;overflow:hidden;
-  aspect-ratio:4/5;max-height:180px;background:var(--bg);
+  position:relative;margin:-16px -18px 12px;overflow:hidden;
+  aspect-ratio:4/5;max-height:190px;background:var(--bg);
+  border-radius:var(--r-card) var(--r-card) 0 0;
 }
-.card-thumb img{width:100%;height:100%;object-fit:cover;object-position:top;display:block}
+.card-thumb img{
+  width:100%;height:100%;object-fit:cover;object-position:top;display:block;
+  transition:transform .35s var(--ease);
+}
+.card:hover .card-thumb img{transform:scale(1.04)}
+
+.card-play,.detail-play{
+  position:absolute;display:grid;place-items:center;cursor:pointer;
+  border:0;padding:0;color:var(--navy);
+  background:rgba(255,255,255,.92);
+  box-shadow:0 1px 6px rgba(0,0,80,.18);
+  transition:background .15s var(--ease),transform .15s var(--ease);
+}
+.card-play{right:10px;bottom:10px;width:34px;height:34px;border-radius:50%}
+.card-play svg,.detail-play svg{margin-left:1px}
+.card:hover .card-play{background:#fff;transform:scale(1.06)}
+.card-play:hover,.detail-play:hover{background:#fff;transform:scale(1.1)}
+.card-play:focus-visible,.detail-play:focus-visible{
+  outline:none;box-shadow:0 0 0 3px rgba(0,0,80,.25)
+}
+
+/* Same frame in the detail panel, sized to sit beside the title block. */
+.detail-media{
+  position:relative;flex-shrink:0;width:132px;aspect-ratio:4/5;
+  overflow:hidden;border-radius:10px;background:var(--bg);margin-left:18px;
+}
+.detail-media img{width:100%;height:100%;object-fit:cover;object-position:top;display:block}
+.detail-play{
+  left:50%;top:50%;transform:translate(-50%,-50%);
+  width:44px;height:44px;border-radius:50%;
+}
+.detail-play:hover{transform:translate(-50%,-50%) scale(1.08)}
+
+@media (prefers-reduced-motion:reduce){
+  .card-thumb img,.card-play,.detail-play{transition:none}
+  .card:hover .card-thumb img{transform:none}
+}
+
 .card-name{font:500 16px/22px var(--font);color:var(--ink-900);word-break:break-all;margin-bottom:1px}
 .card-campaign{font:400 13px/19px var(--font);color:var(--ink-600);margin-bottom:11px}
 .card-tags{display:flex;gap:6px;flex-wrap:wrap;margin-bottom:14px}
