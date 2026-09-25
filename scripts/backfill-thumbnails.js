@@ -41,20 +41,28 @@ function pickLink(row) {
   return [null, null];
 }
 
+// Candidate thumbnail URLs, best first. A list rather than one URL because
+// TikTok lists .heic covers before the .jpeg, and no browser shows HEIC.
 function thumbFrom(platform, body) {
   if (platform === 'ig') {
-    const m = body && body.data && body.data.xdt_shortcode_media;
-    return (m && (m.thumbnail_src || m.display_url)) || null;
+    const m = (body && body.data && body.data.xdt_shortcode_media) || {};
+    return [m.thumbnail_src, m.display_url].filter(Boolean);
   }
   if (platform === 'tt') {
-    const v = body && body.aweme_detail && body.aweme_detail.video;
-    const pick = (o) => (o && Array.isArray(o.url_list) && o.url_list[0]) || null;
-    return pick(v && v.cover) || pick(v && v.origin_cover) || null;
+    const v = (body && body.aweme_detail && body.aweme_detail.video) || {};
+    const urls = []
+      .concat((v.cover && v.cover.url_list) || [])
+      .concat((v.origin_cover && v.origin_cover.url_list) || [])
+      .concat((v.dynamic_cover && v.dynamic_cover.url_list) || [])
+      .filter(Boolean);
+    const good = urls.filter(u => /\.(jpe?g|png|webp)(\?|$)/i.test(u));
+    return good.concat(urls.filter(u => !good.includes(u)));
   }
   if (platform === 'fb') {
-    return (body && ((body.video && body.video.thumbnail) || body.image_url)) || null;
+    const v = (body && body.video) || {};
+    return [v.thumbnail, body && body.image_url].filter(Boolean);
   }
-  return null;
+  return [];
 }
 
 async function main() {
@@ -86,7 +94,7 @@ async function main() {
         throw new Error((data && (data.error || data.message)) || `HTTP ${status}`);
       }
       const src = thumbFrom(platform, data);
-      if (!src) throw new Error('no thumbnail in response');
+      if (!src.length) throw new Error('no thumbnail in response');
       const url = await storeThumbnail(row.creative_id, src);
       if (!url) throw new Error('could not store');
       await query(`update creatives set thumbnail_url = $2 where creative_id = $1`, [row.creative_id, url]);
