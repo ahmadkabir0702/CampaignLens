@@ -26,6 +26,19 @@ function configured() {
   return !!(process.env.SUPABASE_URL && process.env.SUPABASE_SERVICE_ROLE_KEY);
 }
 
+// Supabase shows the Data API endpoint as https://xxx.supabase.co/rest/v1,
+// which is easy to paste in by mistake. Storage lives elsewhere on the same
+// host, so trim any path back to the project root.
+function baseUrl() {
+  const raw = String(process.env.SUPABASE_URL || '').trim().replace(/\/+$/, '');
+  try {
+    const u = new URL(raw);
+    return `${u.protocol}//${u.host}`;
+  } catch (e) {
+    return raw.replace(/\/(rest|storage|auth|realtime)\/v\d.*$/, '');
+  }
+}
+
 // Only what the file's own bytes say it is. Platforms return .heic links that
 // are really JPEG, and vice versa, so the extension in the URL is not trusted.
 function sniff(buf) {
@@ -37,18 +50,25 @@ function sniff(buf) {
 }
 
 async function download(url) {
-  const res = await axios({
-    url, method: 'GET', responseType: 'arraybuffer', timeout: 30000, maxRedirects: 5,
-    maxContentLength: MAX_BYTES, headers: { 'user-agent': UA },
-  });
-  return Buffer.from(res.data);
+  try {
+    const res = await axios({
+      url, method: 'GET', responseType: 'arraybuffer', timeout: 30000, maxRedirects: 5,
+      maxContentLength: MAX_BYTES, headers: { 'user-agent': UA },
+    });
+    return Buffer.from(res.data);
+  } catch (e) {
+    const code = e.response && e.response.status;
+    throw new Error(`download from the platform failed${code ? ` (HTTP ${code})` : ''}: ${e.message}`);
+  }
 }
 
 async function upload(objectPath, buf, mime) {
-  const base = process.env.SUPABASE_URL.replace(/\/$/, '');
+  const base = baseUrl();
   // upsert so re-analysing a creative replaces its thumbnail rather than failing
+  const target = `${base}/storage/v1/object/${BUCKET}/${objectPath}`;
+  try {
   await axios({
-    url: `${base}/storage/v1/object/${BUCKET}/${objectPath}`,
+    url: target,
     method: 'POST', data: buf, timeout: 30000,
     headers: {
       // Both headers, so this works with the new sb_secret_ keys and the
@@ -61,6 +81,20 @@ async function upload(objectPath, buf, mime) {
     },
     maxBodyLength: MAX_BYTES,
   });
+  } catch (e) {
+    const code = e.response && e.response.status;
+    const body = e.response && e.response.data;
+    const detail = body && (body.message || body.error) ? ` ${body.message || body.error}` : '';
+    if (code === 404) {
+      throw new Error(`upload to Supabase failed (404). The "${BUCKET}" bucket does not exist, `
+        + `or SUPABASE_URL is wrong. URL used: ${target}`);
+    }
+    if (code === 400 || code === 401 || code === 403) {
+      throw new Error(`upload to Supabase rejected (HTTP ${code}).${detail} `
+        + 'Check SUPABASE_SERVICE_ROLE_KEY is the secret key, not the publishable one.');
+    }
+    throw new Error(`upload to Supabase failed${code ? ` (HTTP ${code})` : ''}: ${e.message}${detail}`);
+  }
   return `${base}/storage/v1/object/public/${BUCKET}/${objectPath}`;
 }
 
