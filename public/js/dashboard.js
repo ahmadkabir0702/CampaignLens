@@ -426,6 +426,45 @@ function renderKPIs(data) {
     <div class="kpi"><div class="kpi-label">Total Paid Impr.</div><div class="kpi-val">${fmtN(totalImp)}</div><div class="kpi-sub">${boostedCount} amplified assets</div></div>`;
 }
 
+// The platforms a creative actually lives on, in the order the pipeline
+// prefers them. Used for the card's play button and the detail panel's
+// open buttons, so a creative posted to three places offers all three.
+const PLATFORM_LINKS = [
+  { key: 'igLink', name: 'Instagram' },
+  { key: 'ttLink', name: 'TikTok' },
+  { key: 'fbLink', name: 'Facebook' },
+];
+// The card's still frame. Full bleed to the card edge so it reads as the
+// creative itself rather than an illustration dropped into a box. The play
+// button opens the post; clicking anywhere else still selects the card.
+function cardMediaHTML(d) {
+  if (!d.thumbnail) return '';
+  const links = platformLinks(d);
+  const open = links.length ? links[0].url : '';
+  return `<div class="card-thumb">
+    <img src="${escapeHtml(d.thumbnail)}" alt="" loading="lazy"
+         onerror="this.closest('.card-thumb').remove()">
+    ${open ? `<button class="card-play" title="Open on ${escapeHtml(links[0].name)}"
+       aria-label="Open on ${escapeHtml(links[0].name)}"
+       onclick="event.stopPropagation();window.open('${escapeHtml(open)}','_blank','noopener')"
+      >${playMark(20)}</button>` : ''}
+  </div>`;
+}
+
+function platformLinks(d) {
+  return PLATFORM_LINKS
+    .filter(p => d[p.key])
+    .map(p => ({ name: p.name, url: d[p.key] }));
+}
+
+// A play triangle. Same mark on the card and in the detail panel so the
+// gesture reads the same in both places.
+function playMark(size) {
+  return `<svg viewBox="0 0 24 24" width="${size}" height="${size}" aria-hidden="true">
+    <path d="M9.5 7.6v8.8a.7.7 0 0 0 1.07.6l6.9-4.4a.7.7 0 0 0 0-1.2l-6.9-4.4a.7.7 0 0 0-1.07.6Z" fill="currentColor"/>
+  </svg>`;
+}
+
 function renderCards(data) {
   const maxHook  = Math.max(...data.map(d=>d.hookRate||0),1);
   const maxHold  = Math.max(...data.map(d=>d.holdRate||0),1);
@@ -460,7 +499,7 @@ function renderCards(data) {
           <span class="card-type ${d.type==='Brand Say'?'bs-tag':'os-tag'}">${d.type==='Brand Say'?'BS':'OS'}</span>${repTag}
         </div>
       </div>
-      ${d.thumbnail ? `<div class="card-thumb"><img src="${escapeHtml(d.thumbnail)}" alt="" loading="lazy" onerror="this.parentNode.style.display='none'"></div>` : ''}
+      ${cardMediaHTML(d)}
       <div class="card-name">${d.id}</div>
       <div style="font-size:9px;color:var(--c-muted);margin-top:-6px;margin-bottom:4px;">${d.short !== d.id ? d.short : ''}</div>
       <div class="card-campaign">${d.campaign} · ${d.month}</div>
@@ -761,9 +800,28 @@ function renderDetail(d) {
     recsHTML  = getRecHTML(d, d.platform==='meta'?'Meta':'TikTok');
   }
 
-  let linkBtns = `<div class="btn-group">`;
-  if (d.creativeLink || d.originalUrl) linkBtns += `<button class="view-btn primary" onclick="window.open('${d.creativeLink||d.originalUrl}','_blank')">View Creative ↗</button>`;
-  linkBtns += `</div>`;
+  // One button per platform the creative was actually posted to, rather than
+  // a single button to whichever link happened to come first.
+  const links = platformLinks(d);
+  let linkBtns = '<div class="btn-group">';
+  links.forEach((l, i) => {
+    linkBtns += `<button class="view-btn${i === 0 ? ' primary' : ''}"
+      onclick="window.open('${escapeHtml(l.url)}','_blank','noopener')">Open on ${escapeHtml(l.name)}</button>`;
+  });
+  if (!links.length && d.originalUrl) {
+    linkBtns += `<button class="view-btn primary" onclick="window.open('${escapeHtml(d.originalUrl)}','_blank','noopener')">Open the original</button>`;
+  }
+  linkBtns += '</div>';
+
+  const previewLink = links.length ? links[0] : null;
+  const previewHTML = d.thumbnail ? `
+    <div class="detail-media">
+      <img src="${escapeHtml(d.thumbnail)}" alt="" onerror="this.closest('.detail-media').remove()">
+      ${previewLink ? `<button class="detail-play" title="Open on ${escapeHtml(previewLink.name)}"
+         aria-label="Open on ${escapeHtml(previewLink.name)}"
+         onclick="window.open('${escapeHtml(previewLink.url)}','_blank','noopener')"
+        >${playMark(26)}</button>` : ''}
+    </div>` : '';
 
   let valUI = '';
   if (d.isValidated) {
@@ -797,6 +855,7 @@ function renderDetail(d) {
           <div class="detail-meta">${metaParts.join(' · ')}</div>
           ${creatorHTML}${repText}${linkBtns}
         </div>
+        ${previewHTML}
         <button class="close-btn" onclick="closeCreativeModal({target:{id:'creativeModalOverlay'}})">×</button>
       </div>
 
