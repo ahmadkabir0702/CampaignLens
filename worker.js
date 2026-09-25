@@ -267,6 +267,18 @@ const num = v => (Number.isFinite(Number(v)) && v !== null && v !== '' ? Number(
 
 // Normalise each platform's response to the four fields the pipeline uses:
 // download_url, duration (seconds), caption, thumbnail_url.
+// All cover URLs TikTok offers, ordered so a displayable format is tried
+// before the .heic ones it lists first.
+function coverCandidates(v) {
+  const urls = []
+    .concat((v && v.cover && v.cover.url_list) || [])
+    .concat((v && v.origin_cover && v.origin_cover.url_list) || [])
+    .concat((v && v.dynamic_cover && v.dynamic_cover.url_list) || [])
+    .filter(Boolean);
+  const good = urls.filter(u => /\.(jpe?g|png|webp)(\?|$)/i.test(u));
+  return good.concat(urls.filter(u => !good.includes(u)));
+}
+
 function fromScrapeCreators(platform, body) {
   if (platform === 'ig') {
     const m = body && body.data && body.data.xdt_shortcode_media;
@@ -277,7 +289,7 @@ function fromScrapeCreators(platform, body) {
       download_url: m.video_url,
       duration: num(m.video_duration),
       caption: (edges[0] && edges[0].node && edges[0].node.text) || '',
-      thumbnail_url: m.thumbnail_src || m.display_url || '',
+      thumbnail_url: [m.thumbnail_src, m.display_url].filter(Boolean),
       // The same response carries the first stats, so influencer creatives
       // get numbers the moment they are added instead of hours later.
       handle: m.owner && m.owner.username ? String(m.owner.username).toLowerCase() : null,
@@ -309,7 +321,9 @@ function fromScrapeCreators(platform, body) {
       download_url: url,
       duration: ms === null ? null : ms / 1000,
       caption: d.desc || '',
-      thumbnail_url: pick(v.cover) || pick(v.origin_cover) || '',
+      // Every cover URL, browser-friendly formats first. TikTok lists .heic
+      // before .jpeg and no browser can display HEIC.
+      thumbnail_url: coverCandidates(v),
       handle: d.author && d.author.unique_id ? String(d.author.unique_id).toLowerCase() : null,
       posted_at: d.create_time ? new Date(d.create_time * 1000).toISOString() : null,
       item_id: d.aweme_id ? String(d.aweme_id) : null,
@@ -333,7 +347,7 @@ function fromScrapeCreators(platform, body) {
       download_url: url,
       duration: num(v.length_in_second),
       caption: body.description || '',
-      thumbnail_url: v.thumbnail || body.image_url || '',
+      thumbnail_url: [v.thumbnail, body.image_url].filter(Boolean),
       handle: body.author && body.author.handle ? String(body.author.handle).toLowerCase() : null,
       posted_at: body.creation_time || null,
       post_id: body.post_id ? String(body.post_id) : null,
