@@ -71,7 +71,7 @@ async function main() {
   // The spread shows immediately whether the classifier is skewed.
   const { rows: spread } = await query(
     `select hook_device, count(*)::int as creatives
-     from creatives where attrs_version = 1 ${args.brand ? 'and brand_id = $1' : ''}
+     from creatives where attrs_version >= 1 ${args.brand ? 'and brand_id = $1' : ''}
      group by hook_device order by creatives desc`, args.brand ? [args.brand] : []);
   console.log('\nHook device spread:');
   console.table(spread);
