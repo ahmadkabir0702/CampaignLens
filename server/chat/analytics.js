@@ -343,7 +343,16 @@ function organicElementImpact(organic, byId) {
         cqr: Math.abs(goodDiff) < 15 ? 'similar' : goodDiff > 0 ? 'stronger' : 'weaker',
         cqrSize: Math.abs(goodDiff) < 15 ? null : (gO > 0 ? oftenWords(gW / gO) : null),
         [`${metric}Verdict`]: (() => { const r = mO ? (num(mW) - num(mO)) / Math.abs(num(mO)) : 0; return r >= 0.10 ? 'stronger' : r <= -0.10 ? 'weaker' : 'similar'; })(),
-        examples: { showing: [...new Map(withU.map((u) => [u.c.id, u.c])).values()].slice(0, 2).map((c) => c.id), contrast: [] },
+        // Pick examples that actually show the pattern: the best posts with it
+        // when it helps, the weakest when it hurts. Picking arbitrary posts
+        // once illustrated "creator posts fall flat" with a post rated Good.
+        examples: (() => {
+          const withC = [...new Map(withU.map((u) => [u.c.id, u.c])).values()].sort(rankCmp);
+          const withoutC = [...new Map(withoutU.map((u) => [u.c.id, u.c])).values()].sort(rankCmp);
+          return helps
+            ? { showing: withC.slice(0, 2).map((c) => c.id), contrast: withoutC.slice(-1).map((c) => c.id) }
+            : { showing: withC.slice(-2).reverse().map((c) => c.id), contrast: withoutC.slice(0, 1).map((c) => c.id) };
+        })(),
       });
     }
   }
@@ -389,6 +398,8 @@ function compareToBrand(g, base) {
 function leadersOf(groups) {
   const rep = groups.filter((g) => !g.tooFew);
   if (rep.length < 2) return null;
+  // Two groups: the head-to-head covers it, so rank labels are suppressed.
+  if (rep.length === 2) return { twoOnly: true };
   const top = (arr, f) => [...arr].sort(f)[0];
   const pick = (g) => ({ name: g.name || g.key, key: g.key, early: !!g.early });
   return {

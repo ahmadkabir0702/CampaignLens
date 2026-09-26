@@ -186,7 +186,7 @@ const hedge = (g) => (g.early ? ' (early sign)' : '');
 // Groups are described by how they compare with the brand overall on CQR,
 // hook and hold. No counts or percentages: the team wants the comparison.
 const rankText = (g, ld) => {
-  if (!ld) return '';
+  if (!ld || ld.twoOnly) return '';
   const r = [];
   if (ld.cqr && ld.cqr.key === g.key) r.push('best on CQR among these');
   if (ld.hook && ld.hook.key === g.key) r.push('best hook among these');
@@ -203,7 +203,7 @@ function renderDim(L, d) {
   L.push(`${d.dimension.toUpperCase()} (each compared with the brand overall)`);
   d.groups.forEach((g) => L.push('  ' + fmtGroup(g, d.leaders)));
   const ld = d.leaders;
-  if (ld) {
+  if (ld && !ld.twoOnly) {
     L.push('  "vs brand average" compares each group with the brand overall; "Ranking" compares the groups with each other. A group can rank best here and still be similar to the average.');
   } else {
     L.push('  Only one group has more than a single creative, so there is nothing to compare it with yet.');

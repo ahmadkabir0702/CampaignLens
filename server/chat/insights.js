@@ -42,7 +42,9 @@ function groupSentence(g, leaders) {
   // Where it ranks against the OTHER groups. Kept in the same sentence so the
   // two kinds of comparison are never read as contradicting each other.
   const ranks = [];
-  if (leaders) {
+  // With only two groups, "best" and "weakest" say nothing the head-to-head
+  // does not, and reading both on one group looks like a contradiction.
+  if (leaders && !leaders.twoOnly) {
     if (leaders.cqr && leaders.cqr.key === g.key) ranks.push('best on CQR among these groups');
     if (leaders.hook && leaders.hook.key === g.key) ranks.push('best hook among these groups');
     if (leaders.hold && leaders.hold.key === g.key) ranks.push('best hold among these groups');
@@ -159,11 +161,12 @@ try {
 // ---------------------------------------------------------------
 
 /** Name and tags of a creative, in words, for the writer. No numbers. */
-function describe(an, id) {
+function describe(an, id, role) {
   const c = (an.ranked || []).find((x) => x.id === id);
   if (!c) return null;
   const e = (an.exemplars && [...an.exemplars.best, ...an.exemplars.weakest].find((x) => x.id === id)) || null;
-  return `${c.name || c.id}: CQR ${c.cqr}, hook ${c.hook_q || 'unrated'}, hold ${c.hold_q || 'unrated'}${e && e.tags ? `. Tags: ${e.tags}` : ''}${c.hook ? `. What it is: ${String(c.hook).replace(/\s+/g, ' ').slice(0, 140)}` : ''}`;
+  const line = `${c.name || c.id}: CQR ${c.cqr}, hook ${c.hook_q || 'unrated'}, hold ${c.hold_q || 'unrated'}${e && e.tags ? `. Tags: ${e.tags}` : ''}${c.hook ? `. What it is: ${String(c.hook).replace(/\s+/g, ' ').slice(0, 140)}` : ''}`;
+  return role ? `[${role}] ${line}` : line;
 }
 
 function buildCandidates(an) {
@@ -180,8 +183,9 @@ function buildCandidates(an) {
         element: e.label, judged: e.timing === 'opening' ? 'in the first 3 seconds' : 'across the whole video',
         finding: A.elementSentence(e).replace(/\s*\[[^\]]+\]/, ''),
         direction: e.helps ? 'creatives with it do better' : 'creatives with it do worse',
-        examplesShowingIt: e.examples.showing.map((id) => describe(an, id)).filter(Boolean),
-        contrastExample: e.examples.contrast.map((id) => describe(an, id)).filter(Boolean),
+        examplesWithTheElement: e.examples.showing.map((id) => describe(an, id, e.helps ? 'has the element, one of the stronger ones' : 'has the element, one of the weaker ones')).filter(Boolean),
+        comparisonWithoutTheElement: e.examples.contrast.map((id) => describe(an, id, 'does NOT have the element')).filter(Boolean),
+        howToUseTheExamples: 'Describe an example only from the words given here. Do not say what happens on screen beyond its description, and do not restate its ratings wrongly. If an example does not fit the point you are making, leave it out.',
       },
       proof: [`element:${e.key}`], examples: [...e.examples.showing, ...e.examples.contrast],
     });
@@ -198,7 +202,8 @@ function buildCandidates(an) {
         element: e.label, judged: e.timing === 'opening' ? 'in the first 3 seconds' : 'across the whole post',
         finding: A.elementSentence(e).replace(/\s*\[[^\]]+\]/, ''),
         direction: e.helps ? 'posts with it do better' : 'posts with it do worse',
-        examplesShowingIt: e.examples.showing.map((id) => describe(an, id)).filter(Boolean),
+        examplesWithTheElement: e.examples.showing.map((id) => describe(an, id, e.helps ? 'has the element, one of the stronger ones' : 'has the element, one of the weaker ones')).filter(Boolean),
+        howToUseTheExamples: 'Describe an example only from the words given here. Do not say what happens on screen beyond its description, and do not restate its ratings wrongly.',
       },
       proof: [`element:${e.key}`], examples: e.examples.showing,
     });
@@ -289,6 +294,7 @@ Rules:
 - A caution about one campaign must be mentioned: it may be the campaign, not the element.
 - Where evidence gives a head-to-head, or says which tier gets the most spend, use it exactly.
 - Describe comparisons in the right direction. Re-read each one before finishing.
+- Example creatives come with a role in square brackets and a short description. Use them only as their role says, and describe them only in the words given. Never invent what happens on screen, and never state a rating that differs from the one given. If an example does not support your point, do not mention it.
 - Plain, direct wording. No em dashes, no emoji, no markdown symbols.
 
 ${PLAYBOOK}`;
