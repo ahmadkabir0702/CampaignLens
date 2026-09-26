@@ -21,7 +21,6 @@ const fs = require('fs');
 const os = require('os');
 const path = require('path');
 const axios = require('axios');
-const { storeThumbnail } = require('./thumbnails');
 const { Worker } = require('bullmq');
 const IORedis = require('ioredis');
 const { query } = require('./db');
@@ -42,15 +41,6 @@ const THINKING_BUDGET = process.env.GEMINI_THINKING_BUDGET === undefined
   ? null : Number(process.env.GEMINI_THINKING_BUDGET);
 const MEDIA_RESOLUTION = process.env.GEMINI_MEDIA_RESOLUTION || null;
 
-// Video files come from ScrapeCreators, the same service the sync and the
-// link checks already use, so there is one vendor and one key. The old
-// RapidAPI downloader is kept only as a fallback if RAPIDAPI_KEY is set.
-const SC_KEY = process.env.SCRAPECREATORS_API_KEY || null;
-const SC_ENDPOINT = {
-  ig: 'https://api.scrapecreators.com/v1/instagram/post',
-  tt: 'https://api.scrapecreators.com/v2/tiktok/video',
-  fb: 'https://api.scrapecreators.com/v1/facebook/post',
-};
 const RAPIDAPI_HOST = process.env.RAPIDAPI_HOST
   || 'instagram-tiktok-youtube-downloader.p.rapidapi.com';
 
@@ -255,136 +245,9 @@ Return only the JSON object. No markdown, no commentary.`;
 }
 
 // ── Step 1: CDN link ──────────────────────────────────────────────────────────
-function platformOf(url) {
-  const h = (() => { try { return new URL(url).hostname.toLowerCase(); } catch (e) { return ''; } })();
-  if (/instagram\.com$/.test(h)) return 'ig';
-  if (/tiktok\.com$/.test(h)) return 'tt';
-  if (/facebook\.com$|fb\.watch$/.test(h)) return 'fb';
-  return null;
-}
+async function resolveMediaUrl(mediaUrl) {
+  if (!process.env.RAPIDAPI_KEY) throw new Error('RAPIDAPI_KEY is not set.');
 
-const num = v => (Number.isFinite(Number(v)) && v !== null && v !== '' ? Number(v) : null);
-
-// Normalise each platform's response to the four fields the pipeline uses:
-// download_url, duration (seconds), caption, thumbnail_url.
-// All cover URLs TikTok offers, ordered so a displayable format is tried
-// before the .heic ones it lists first.
-function coverCandidates(v) {
-  const urls = []
-    .concat((v && v.cover && v.cover.url_list) || [])
-    .concat((v && v.origin_cover && v.origin_cover.url_list) || [])
-    .concat((v && v.dynamic_cover && v.dynamic_cover.url_list) || [])
-    .filter(Boolean);
-  const good = urls.filter(u => /\.(jpe?g|png|webp)(\?|$)/i.test(u));
-  return good.concat(urls.filter(u => !good.includes(u)));
-}
-
-function fromScrapeCreators(platform, body) {
-  if (platform === 'ig') {
-    const m = body && body.data && body.data.xdt_shortcode_media;
-    if (!m) return null;
-    if (!m.is_video || !m.video_url) throw new Error('Instagram post is not a video.');
-    const edges = (m.edge_media_to_caption && m.edge_media_to_caption.edges) || [];
-    return {
-      download_url: m.video_url,
-      duration: num(m.video_duration),
-      caption: (edges[0] && edges[0].node && edges[0].node.text) || '',
-      thumbnail_url: [m.thumbnail_src, m.display_url].filter(Boolean),
-      // The same response carries the first stats, so influencer creatives
-      // get numbers the moment they are added instead of hours later.
-      handle: m.owner && m.owner.username ? String(m.owner.username).toLowerCase() : null,
-      posted_at: m.taken_at_timestamp ? new Date(m.taken_at_timestamp * 1000).toISOString() : null,
-      stats: {
-        // Absent means the creator hides it. Never write zero for hidden.
-        views: num(m.video_play_count),
-        likes: m.like_and_view_counts_disabled ? null : num(m.edge_media_preview_like && m.edge_media_preview_like.count),
-        comments: num(m.comment_count),
-        shares: null,  // Instagram does not expose these publicly
-        saves: null,
-      },
-      coauthors: Array.isArray(m.coauthor_producers)
-        ? m.coauthor_producers.map(x => x && x.username ? String(x.username).toLowerCase() : null).filter(Boolean)
-        : [],
-    };
-  }
-  if (platform === 'tt') {
-    const d = body && body.aweme_detail;
-    if (!d) return null;
-    const v = d.video || {};
-    // Prefer the clean file; fall back through the play addresses.
-    const pick = (o) => (o && Array.isArray(o.url_list) && o.url_list[0]) || null;
-    const url = pick(v.download_no_watermark_addr) || pick(v.play_addr_h264) || pick(v.play_addr);
-    if (!url) throw new Error('TikTok response has no video file.');
-    const ms = num(v.duration);
-    const st = d.statistics || {};
-    return {
-      download_url: url,
-      duration: ms === null ? null : ms / 1000,
-      caption: d.desc || '',
-      // Every cover URL, browser-friendly formats first. TikTok lists .heic
-      // before .jpeg and no browser can display HEIC.
-      thumbnail_url: coverCandidates(v),
-      handle: d.author && d.author.unique_id ? String(d.author.unique_id).toLowerCase() : null,
-      posted_at: d.create_time ? new Date(d.create_time * 1000).toISOString() : null,
-      item_id: d.aweme_id ? String(d.aweme_id) : null,
-      linked_ig: d.author && d.author.ins_id ? String(d.author.ins_id) : null,
-      is_paid_partnership: d.is_paid_partnership === true,
-      stats: {
-        views: num(st.play_count),
-        likes: num(st.digg_count),
-        comments: num(st.comment_count),
-        shares: num(st.share_count),
-        saves: num(st.collect_count),
-      },
-    };
-  }
-  if (platform === 'fb') {
-    if (!body || (!body.post_id && !body.url)) return null;
-    const v = body.video || {};
-    const url = v.hd_url || v.sd_url;
-    if (!url) throw new Error('Facebook post is not a video.');
-    return {
-      download_url: url,
-      duration: num(v.length_in_second),
-      caption: body.description || '',
-      thumbnail_url: [v.thumbnail, body.image_url].filter(Boolean),
-      handle: body.author && body.author.handle ? String(body.author.handle).toLowerCase() : null,
-      posted_at: body.creation_time || null,
-      post_id: body.post_id ? String(body.post_id) : null,
-      stats: {
-        views: num(body.view_count),
-        likes: num(body.like_count),
-        comments: num(body.comment_count),
-        shares: num(body.share_count),
-        saves: null,  // Facebook does not expose this publicly
-      },
-    };
-  }
-  return null;
-}
-
-async function resolveViaScrapeCreators(mediaUrl) {
-  const platform = platformOf(mediaUrl);
-  if (!platform) throw new Error(`Not an Instagram, TikTok or Facebook link: ${mediaUrl}`);
-  const { data, status } = await axios.request({
-    method: 'GET',
-    url: SC_ENDPOINT[platform],
-    params: { url: mediaUrl },
-    headers: { 'x-api-key': SC_KEY },
-    timeout: 60000,
-    validateStatus: () => true,
-  });
-  if (status === 401 || status === 403) throw new Error('ScrapeCreators rejected the API key (check SCRAPECREATORS_API_KEY in Render).');
-  if (status === 402) throw new Error('ScrapeCreators is out of credits.');
-  if (status >= 400 || !data || data.success === false) {
-    throw new Error(`Could not fetch the post: ${(data && (data.error || data.message)) || 'HTTP ' + status}`);
-  }
-  const meta = fromScrapeCreators(platform, data);
-  if (!meta) throw new Error('Post returned no data. It may be private or deleted.');
-  return meta;
-}
-
-async function resolveViaRapidApi(mediaUrl) {
   const { data } = await axios.request({
     method: 'GET',
     url: `https://${RAPIDAPI_HOST}/fetch`,
@@ -395,17 +258,14 @@ async function resolveViaRapidApi(mediaUrl) {
     },
     timeout: 60000,
   });
+
+  // The API returns HTTP 200 with ok:false on failure, so the status code
+  // alone is not enough to tell success from failure.
   if (!data || data.ok === false) {
     throw new Error(`API rejected the link: ${(data && (data.error || data.message)) || 'unknown reason'}`);
   }
   if (!data.download_url) throw new Error('API returned no download_url.');
   return data;
-}
-
-async function resolveMediaUrl(mediaUrl) {
-  if (SC_KEY) return resolveViaScrapeCreators(mediaUrl);
-  if (process.env.RAPIDAPI_KEY) return resolveViaRapidApi(mediaUrl);
-  throw new Error('No video source configured: set SCRAPECREATORS_API_KEY in Render.');
 }
 
 // ── Step 2: download ──────────────────────────────────────────────────────────
@@ -672,13 +532,20 @@ const pick = (v, allowed) => (allowed.includes(v) ? v : null);
 
 /** Saves the Phase 1 tags. Shared by new uploads and the backfill. */
 async function saveTags(creativeId, at) {
-  await query(
+  // Never fail an upload over the new tags: if the migration that adds them
+  // has not run yet, log it and keep the rest of the analysis.
+  try {
+    await query(
     `update creatives set
        logo_first_3s=$2, captions=$3, voiceover=$4, music=$5, cta=$6,
        language=$7, talent=$8, production_style=$9, aspect_ratio=$10, attrs_version=2
      where creative_id=$1`,
     [creativeId, at.logo_first_3s, at.captions, at.voiceover, at.music, at.cta,
      at.language, at.talent, at.production_style, at.aspect_ratio]);
+  } catch (err) {
+    if (err && err.code === '42703') console.warn(`[worker] ${creativeId}: new tag columns missing, run migration 005. Upload kept without them.`);
+    else throw err;
+  }
 }
 
 function attributeColumns(a) {
@@ -709,53 +576,6 @@ function attributeColumns(a) {
     product_screen_pct: d.productPct,
     cuts_per_10s: d.cutsPer10s,
   };
-}
-
-// First organic_perf row for an influencer creative, straight from the post
-// fetch. Same rules as the sync: coalesce so a null never overwrites a real
-// value, and the platform-specific handle columns feed creator matching.
-async function writeFirstStats(creativeId, platform, meta) {
-  const s = meta.stats;
-  const plat = platform === 'ig' ? 'ig' : platform === 'tt' ? 'tt' : 'fb';
-
-  await query(
-    `insert into organic_perf (creative_id, platform, views, likes, comments, shares, saves, time_posted, total_interactions)
-     values ($1, $2, $3, $4, $5, $6, $7, $8,
-             coalesce($4::numeric, 0) + coalesce($5::numeric, 0) + coalesce($6::numeric, 0) + coalesce($7::numeric, 0))
-     on conflict (creative_id, platform) do update
-       set views    = coalesce(excluded.views,    organic_perf.views),
-           likes    = coalesce(excluded.likes,    organic_perf.likes),
-           comments = coalesce(excluded.comments, organic_perf.comments),
-           shares   = coalesce(excluded.shares,   organic_perf.shares),
-           saves    = coalesce(excluded.saves,    organic_perf.saves),
-           time_posted = coalesce(organic_perf.time_posted, excluded.time_posted),
-           total_interactions = coalesce(excluded.likes, organic_perf.likes, 0)
-                              + coalesce(excluded.comments, organic_perf.comments, 0)
-                              + coalesce(excluded.shares, organic_perf.shares, 0)
-                              + coalesce(excluded.saves, organic_perf.saves, 0)`,
-    [creativeId, plat, s.views, s.likes, s.comments, s.shares, s.saves, meta.posted_at]);
-
-  // Stamp the scrape time so the sync's 12 hour rule counts this as the
-  // first fetch, and record the handle for creator matching.
-  const stampCol = plat === 'ig' ? 'ig_last_scraped_at' : plat === 'tt' ? 'tt_last_scraped_at' : 'fb_last_scraped_at';
-  const handleCol = plat + '_handle';
-  const extra = plat === 'tt'
-    ? `, tiktok_item_id = coalesce($3, tiktok_item_id),
-         tt_linked_ig = coalesce($4, tt_linked_ig),
-         tt_is_paid_partnership = $5`
-    : '';
-  const params = plat === 'tt'
-    ? [creativeId, meta.handle, meta.item_id || null, meta.linked_ig || null, !!meta.is_paid_partnership]
-    : [creativeId, meta.handle];
-
-  await query(
-    `update creatives
-        set ${stampCol} = now(),
-            ${handleCol} = coalesce($2, ${handleCol}),
-            posted_at = coalesce(posted_at, $${params.length + 1}::timestamptz)
-            ${extra}
-      where creative_id = $1`,
-    [...params, meta.posted_at]);
 }
 
 function makeProcessor(ai) {
@@ -892,26 +712,6 @@ function makeProcessor(ai) {
       );
 
       await saveTags(creativeId, at);
-
-      // Influencer content: the post we just fetched already carries its
-      // first stats, handle and posted time. Writing them now means the
-      // creative has numbers within minutes rather than after the next sync,
-      // and saves the sync one credit. Brand Say keeps its existing path:
-      // its numbers come from the Meta and TikTok business APIs, which also
-      // supply reach and watch time that a public post does not.
-      if (d.type === 'Others Say' && meta.stats) {
-        try { await writeFirstStats(creativeId, platform, meta); }
-        catch (e) { console.error(`[worker] ${creativeId}: first stats not written: ${e.message}`); }
-      }
-
-      // Every creative, both types: keep a permanent copy of the thumbnail.
-      // The platform's link expires within hours, so the file itself is
-      // stored. Never fatal: a missing picture is cosmetic.
-      const storedThumb = await storeThumbnail(creativeId, meta.thumbnail_url);
-      if (storedThumb) {
-        await query(`update creatives set thumbnail_url = $2 where creative_id = $1`, [creativeId, storedThumb])
-          .catch(e => console.error(`[worker] ${creativeId}: thumbnail url not saved: ${e.message}`));
-      }
 
       console.log(`[worker] ${creativeId}: analysed ${platform} (${safeDur === null ? '?' : safeDur}s, ${timeline.length} segments) and added`);
 
