@@ -187,6 +187,40 @@ function buildCandidates(an) {
     });
   }
 
+  // 1b. Organic, kept separate from paid: different reach, different rules.
+  for (const e of (an.organicElements || []).slice(0, 3)) {
+    out.push({
+      id: `element:${e.key}`, kind: 'organic_element', impact: e.impact * 0.8, early: e.early,
+      question: `In organic posts, does "${e.label}" make a difference?`,
+      guide: 'Headline: what this element does for organic, CQR first. Why: the likely reason, and say plainly that this is organic, where reach comes from the algorithm rather than spend. Test: one specific thing to try in the next organic posts.',
+      evidence: {
+        channel: 'organic posts only, not paid',
+        element: e.label, judged: e.timing === 'opening' ? 'in the first 3 seconds' : 'across the whole post',
+        finding: A.elementSentence(e).replace(/\s*\[[^\]]+\]/, ''),
+        direction: e.helps ? 'posts with it do better' : 'posts with it do worse',
+        examplesShowingIt: e.examples.showing.map((id) => describe(an, id)).filter(Boolean),
+      },
+      proof: [`element:${e.key}`], examples: e.examples.showing,
+    });
+  }
+
+  // 1c. Organic posts worth putting money behind.
+  const unboosted = an.validatedUnboosted || [];
+  if (unboosted.length) {
+    const good = unboosted.filter((b) => b.best_cqr === 'Good');
+    out.push({
+      id: 'boost', kind: 'boost', early: false, impact: 0.25 + Math.min(unboosted.length, 10) / 40,
+      question: 'Which organic posts have earned a boost and have not had one?',
+      guide: 'Headline: how many validated organic posts are waiting, and that the strongest are worth boosting. Why: organic performance is the cheapest signal of what paid will do. Test: name the ones to boost first.',
+      evidence: {
+        validatedButNotBoosted: unboosted.length,
+        ratedGoodAmongThem: good.length,
+        posts: unboosted.slice(0, 6).map((b) => `${b.id}: organic CQR ${b.best_cqr || 'unrated'}`),
+      },
+      proof: [], examples: (good.length ? good : unboosted).slice(0, 3).map((b) => b.id),
+    });
+  }
+
   // 2. Where the budget goes.
   if (total && an.totals.creatives >= MIN_EVIDENCE) {
     const poorRun = an.poorSplit.activeSpend || 0;
@@ -279,9 +313,11 @@ Be strict on facts and flexible on wording. Choose one outcome:
 
 pass: every fact is right. Wording choices are the writer's.
 
-fix: the facts are right but a phrase overstates or slightly misstates something. Examples: "a wide margin" where the evidence says "clearly"; "proves" where "suggests" fits; an early sign not flagged as one; a missing mention of a one-campaign caution. Return corrected text for ONLY the fields that need it (fixed_headline, fixed_why, fixed_test), changing as little as possible, with no digits.
+fix: ONLY for wording. Every claim is already true, but a phrase is too strong or too weak, or a caution is missing. Allowed fixes: changing a strength word ("a wide margin" to "clearly", "proves" to "suggests"), adding a missing "early sign" or one-campaign caution, or deleting a clause the evidence does not support. Return corrected text for ONLY the fields that need it (fixed_headline, fixed_why, fixed_test), changing as little as possible, with no digits.
 
-reject: a fact is wrong. Examples: a comparison stated in the wrong direction, the wrong group or creative named as best or weakest, a claim the evidence does not support, a number that is not in the evidence, or an early sign presented as an established pattern that cannot be fixed by a phrase.
+reject: any wrong fact, even if you could rewrite it. That includes: a comparison in the wrong direction; saying a metric is weaker, stronger or similar when the evidence says otherwise; the wrong metric (claiming hold improves when only CQR does); describing an example creative wrongly (its ratings, its tags, what it shows); the wrong group or creative named as best or weakest; a number not in the evidence; an early sign presented as an established pattern. Rejected cards go back to the writer with your reason, so be specific.
+
+If in doubt between fix and reject, reject. Your fixes are published without anyone else checking them, so only fix what you are certain is a wording change.
 
 Always give a one-sentence reason, even for pass.
 
@@ -349,7 +385,12 @@ async function produceCard(cand, shown) {
     if (r.outcome !== 'fix') return r;
     const fixed = { headline: r.fixed_headline || card.headline, why: r.fixed_why || card.why, test: r.fixed_test || card.test };
     const again = numbersReconcile(cardText(fixed), shown);
-    return again.ok ? { outcome: 'fix', reason: r.reason, card: fixed } : { outcome: 'reject', reason: `the checker's own fix added numbers: ${again.bad.join(', ')}` };
+    if (!again.ok) return { outcome: 'reject', reason: `the checker's own fix added numbers: ${again.bad.join(', ')}` };
+    // A fix is an unsupervised rewrite unless it is checked too. Review the
+    // fixed card fresh, and keep it only if it passes outright.
+    const second = await reviewCard(fixed, shown);
+    if (second.outcome === 'pass') return { outcome: 'fix', reason: r.reason, card: fixed };
+    return { outcome: 'reject', reason: `${r.reason}; the corrected version did not pass a second check: ${second.reason}` };
   };
 
   let card = await writeCard(cand, shown);

@@ -246,7 +246,8 @@ function elementImpact(eligible, totalSpend) {
       if (plats.length >= 2) {
         consistency = plats.every((pl) => perPlat[pl] === want) ? 'holds on both Meta and TikTok' : 'differs between Meta and TikTok';
       } else if (plats.length === 1) {
-        consistency = `seen on ${S.platformLabels[plats[0]]} (too few on the other platform to check)`;
+        const other = S.platforms.find((x) => x !== plats[0]);
+        consistency = `shows on ${S.platformLabels[plats[0]]}, with too few on ${S.platformLabels[other] || 'the other platform'} to check`;
       }
 
       // Is it really one campaign?
@@ -263,17 +264,86 @@ function elementImpact(eligible, totalSpend) {
         ? { showing: withCre.slice(0, 2).map((c) => c.id), contrast: withoutCre.slice(-1).map((c) => c.id) }
         : { showing: withCre.slice(-2).reverse().map((c) => c.id), contrast: withoutCre.slice(0, 1).map((c) => c.id) };
 
+      // Does it still hold lately? A pattern from ten months ago should not be
+      // presented as how things work now.
+      const recentCut = Date.now() - S.scale.recentDays * 86400000;
+      const fresh = (us) => us.filter((u) => u.c.published_at && new Date(u.c.published_at).getTime() >= recentCut);
+      const rW = fresh(withU), rO = fresh(withoutU);
+      let recency = null;
+      if (distinct(rW).size >= EARLY_MIN && distinct(rO).size >= EARLY_MIN) {
+        const rd = rate(rW) - rate(rO);
+        const rm = num(avg(rW.map((u) => u[metric]))) - num(avg(rO.map((u) => u[metric])));
+        const sameWay = helps ? (rd > 0 || (Math.abs(rd) < 5 && rm > 0)) : (rd < 0 || (Math.abs(rd) < 5 && rm < 0));
+        recency = sameWay ? `still holds in the last ${S.scale.recentDays} days` : `has not held in the last ${S.scale.recentDays} days`;
+      }
+
       out.push({
         key: el.kind === 'bool' ? el.field : `${el.field}=${val}`,
+        recency,
         field: el.field, value: val, timing: el.timing, metric,
         label: V.elementLabel(el, val),
         helps, impact, stakeShare, early: m < MIN_GROUP,
         with: { creatives: nW, goodRate: Math.round(gW), [metric]: r1(mW) },
         without: { creatives: nO, goodRate: Math.round(gO), [metric]: r1(mO) },
         cqr: Math.abs(goodDiff) < 15 ? 'similar' : goodDiff > 0 ? 'stronger' : 'weaker',
-        cqrSize: gO > 0 ? oftenWords(gW / gO) : (gW > 0 ? 'where creatives without it rarely are' : null),
+        cqrSize: Math.abs(goodDiff) < 15 ? null : (gO > 0 ? oftenWords(gW / gO) : (gW > 0 ? 'where creatives without it rarely are' : null)),
         [`${metric}Verdict`]: vsM(num(mW) - num(mO), mO),
         consistency, campaignFlag, examples,
+      });
+    }
+  }
+  return out.sort((a, b) => b.impact - a.impact);
+}
+
+/**
+ * The same element analysis for organic posts, kept separate from paid.
+ *
+ * Organic reach comes from the algorithm and paid reach is bought, so mixing
+ * them would blur both. Organic is judged the way the team judges it: CQR
+ * first, then retention for opening elements and engagement for the rest.
+ */
+function organicElementImpact(organic, byId) {
+  const units = [];
+  for (const o of organic) {
+    const c = byId.get(o.id);
+    if (!c) continue;
+    units.push({ c, plat: o.platform, good: o.cqr === 'Good', retention: o.retention_rate, engagement: o.engagement_rate, views: num(o.views) });
+  }
+  if (units.length < EARLY_MIN * 2) return [];
+  const totalViews = units.reduce((a, u) => a + u.views, 0);
+  const valueOf = (c, f) => (f === 'length_bucket' ? V.lengthBucket(c.duration_s) : c[f]);
+  const distinct = (us) => new Set(us.map((u) => u.c.id));
+  const rate = (us) => (us.length ? us.filter((u) => u.good).length / us.length * 100 : 0);
+  const out = [];
+
+  for (const el of V.ELEMENTS) {
+    const known = units.filter((u) => { const v = valueOf(u.c, el.field); return v !== null && v !== undefined && v !== ''; });
+    const values = el.kind === 'bool' ? [true] : [...new Set(known.map((u) => valueOf(u.c, el.field)))];
+    for (const val of values) {
+      const withU = known.filter((u) => valueOf(u.c, el.field) === val);
+      const withoutU = known.filter((u) => valueOf(u.c, el.field) !== val);
+      const nW = distinct(withU).size, nO = distinct(withoutU).size;
+      if (nW < EARLY_MIN || nO < EARLY_MIN) continue;
+      const metric = el.timing === 'opening' ? 'retention' : 'engagement';
+      const gW = rate(withU), gO = rate(withoutU);
+      const mW = avg(withU.map((u) => u[metric])), mO = avg(withoutU.map((u) => u[metric]));
+      const goodDiff = gW - gO;
+      const rel = mO ? (num(mW) - num(mO)) / Math.abs(num(mO)) : 0;
+      if (Math.abs(goodDiff) < 10 && Math.abs(rel) < 0.10) continue;
+      const helps = goodDiff > 0 || (Math.abs(goodDiff) < 10 && rel > 0);
+      const stake = totalViews ? (helps ? withoutU : withU).reduce((a, u) => a + u.views, 0) / totalViews : 0;
+      const m = Math.min(nW, nO);
+      out.push({
+        key: `organic:${el.kind === 'bool' ? el.field : `${el.field}=${val}`}`,
+        channel: 'organic', field: el.field, value: val, timing: el.timing, metric,
+        label: V.elementLabel(el, val), helps, early: m < MIN_GROUP,
+        impact: Math.max(Math.abs(goodDiff) / 100, Math.abs(rel)) * (0.3 + stake) * (m / (m + 5)),
+        with: { posts: nW, goodRate: Math.round(gW), [metric]: r1(mW) },
+        without: { posts: nO, goodRate: Math.round(gO), [metric]: r1(mO) },
+        cqr: Math.abs(goodDiff) < 15 ? 'similar' : goodDiff > 0 ? 'stronger' : 'weaker',
+        cqrSize: Math.abs(goodDiff) < 15 ? null : (gO > 0 ? oftenWords(gW / gO) : null),
+        [`${metric}Verdict`]: (() => { const r = mO ? (num(mW) - num(mO)) / Math.abs(num(mO)) : 0; return r >= 0.10 ? 'stronger' : r <= -0.10 ? 'weaker' : 'similar'; })(),
+        examples: { showing: [...new Map(withU.map((u) => [u.c.id, u.c])).values()].slice(0, 2).map((c) => c.id), contrast: [] },
       });
     }
   }
@@ -287,6 +357,7 @@ function elementSentence(e) {
   const second = `${e.metric} ${e[`${e.metric}Verdict`]}`;
   const bits = [`${e.label} [${e.key}], judged ${when}: with it, ${cqr}, ${second}.`];
   if (e.consistency) bits.push(`It ${e.consistency}.`);
+  if (e.recency) bits.push(`It ${e.recency}.`);
   if (e.campaignFlag) bits.push(`Caution: ${e.campaignFlag}, so it may be the campaign rather than the element.`);
   if (e.early) bits.push('Early sign, small groups.');
   return bits.join(' ');
@@ -435,11 +506,37 @@ function retentionDrop(c) {
 }
 
 /**
+ * Which creatives the chat can name without looking one up.
+ *
+ * At 1,000 creatives a year the list has to be chosen, not just truncated.
+ * The team asks about what is live and what is working, so: everything
+ * running, then everything just published, then the year's best and worst,
+ * then down the ranking until the budget is used. Every other creative is
+ * still counted in every comparison, and one lookup away by name.
+ */
+function nameable(ranked) {
+  const { creativeLines, newDays } = S.scale;
+  const cutoff = Date.now() - newDays * 86400000;
+  const isNew = (c) => c.published_at && new Date(c.published_at).getTime() >= cutoff;
+  const picked = new Map();
+  const add = (list, why) => { for (const c of list) { if (picked.size >= creativeLines) return; if (!picked.has(c.id)) picked.set(c.id, { ...c, why }); } };
+  // Reserve the best and weakest first. At scale a brand can have more
+  // creatives running than the budget allows, and the year's best performers
+  // must never be crowded out by a busy month.
+  add(ranked.slice(0, 15), 'best');
+  add(ranked.slice(-10).reverse(), 'weakest');
+  add(ranked.filter(isNew).slice(0, 40), 'new');
+  add(ranked.filter((c) => c.is_active), 'running');
+  add(ranked, 'ranked');
+  return [...picked.values()];
+}
+
+/**
  * Build the full analytics object for one brand.
  * `paid` is the merged per-creative list; `organic`, `boost`, `thresholds`,
  * `monthly` come straight from the queries.
  */
-function build({ brand, paid, organic, boost, thresholds, monthly, freshness }) {
+function build({ brand, paid, organic, boost, thresholds, monthly, freshness, all }) {
   const floor = S.volumeFloor.absoluteMin;
   const eligible = paid.filter((c) => num(c.impressions) >= floor);
   const excluded = paid.length - eligible.length;
@@ -566,7 +663,10 @@ function build({ brand, paid, organic, boost, thresholds, monthly, freshness }) 
     const b = field === 'platform' ? platBase : base;
     for (const g of d.groups) {
       g.vs = compareToBrand(g, b);
-      g.vs.cqrSize = cqrSize(g.goodShare, b.good);
+      // A size phrase only where the verdict says there is a difference.
+      // Otherwise "CQR similar" and "rated Good noticeably more often" could
+      // both be attached to the same group, which contradicts itself.
+      g.vs.cqrSize = g.vs.cqr === 'similar' ? null : cqrSize(g.goodShare, b.good);
       g.vs.hookMuch = g.vs.hook !== 'similar' && much(g.hook_rate, b.hook);
       g.vs.holdMuch = g.vs.hold !== 'similar' && much(g.hold_rate, b.hold);
     }
@@ -657,6 +757,7 @@ function build({ brand, paid, organic, boost, thresholds, monthly, freshness }) 
     brand, freshness, floor, excluded,
     totals, cqrMix, spendByCqr, poorSplit, hookHold,
     ranked, top: ranked.slice(0, 10), bottom: ranked.slice(-10).reverse(),
+    named: nameable(ranked),
     waste, wasteSpend, anomalies,
     dims, discriminating, crosstabs,
     retention: { drops, dropBySegment, dropByScreen, productTiming },
@@ -665,8 +766,9 @@ function build({ brand, paid, organic, boost, thresholds, monthly, freshness }) 
     minGroup: MIN_GROUP, earlyMin: EARLY_MIN, base,
     winners: winnersVsRest(eligible),
     elements: elementImpact(eligible, eligible.reduce((a, c) => a + num(c.spend), 0)),
+    organicElements: organicElementImpact(organic, new Map((all || paid).map((c) => [c.id, c]))),
     exemplars: { best: ranked.slice(0, 3).map(exemplar), weakest: ranked.length > 3 ? ranked.slice(-3).reverse().map(exemplar) : [] },
   };
 }
 
-module.exports = { elementImpact, elementSentence, winnersVsRest, exemplar, cqrSize, build, groupBy, crosstab, summarise, rankCmp, retentionDrop, goodScore, compareToBrand, leadersOf, MIN_GROUP, EARLY_MIN };
+module.exports = { elementImpact, organicElementImpact, elementSentence, winnersVsRest, exemplar, cqrSize, build, groupBy, crosstab, summarise, rankCmp, retentionDrop, goodScore, compareToBrand, leadersOf, MIN_GROUP, EARLY_MIN };

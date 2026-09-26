@@ -57,7 +57,7 @@ function rankCmp(a, b) {
 // ---------------------------------------------------------------
 
 async function qCreatives(pool, brand) {
-  const { rows } = await pool.query(
+  const { rows } = await queryTolerant(pool, 
     `select c.${C.id} as id, c.${C.hook} as hook, c.${C.format} as format, c.${C.productRole} as product_role,
             c.${C.type} as type, c.${C.campaign} as campaign, c.${C.isRepurposed} as is_repurposed,
             c.${C.parentId} as parent_id, c.${C.publishedAt} as published_at, c.${C.durationS} as duration_s,
@@ -69,7 +69,9 @@ async function qCreatives(pool, brand) {
             coalesce(c.${C.ttLink}, c.${C.igLink}, c.${C.fbLink}) as permalink
      from ${T.creatives} c
      left join ${T.creators} cr on cr.${CR.id} = c.${C.creatorId}
-     where c.${C.brand} = $1`, [brand]);
+     where c.${C.brand} = $1
+       and (c.${C.publishedAt} is null or c.${C.publishedAt} >= current_date - ($2)::int)`,
+    [brand, S.scale.windowDays]);
   return new Map(rows.map((r) => [r.id, r]));
 }
 
@@ -167,6 +169,7 @@ function mergePaid(meta, tt) {
 // ---------------------------------------------------------------
 
 const A = require('./analytics');
+const { queryTolerant } = require('./tolerant');
 const V = require('./vocab');
 
 const gname = (g) => (g.name && g.name !== g.key ? `${g.name} [${g.key}]` : g.key);
@@ -381,12 +384,19 @@ function renderDigest(an, insights) {
   an.bottom.forEach((c) => L.push(creativeLine(c)));
   L.push('');
 
-  const indexed = an.ranked.slice(10, 10 + 60);
-  if (indexed.length) {
-    L.push(`INDEX, next ${indexed.length} by rank (compact: id | CQR | hook | hold | platforms | type | hook_device/intent | Active or Stopped)`);
-    indexed.forEach((c) => L.push('  ' + compactLine(c)));
-    const rest = an.ranked.length - 10 - indexed.length;
-    if (rest > 0) L.push(`  ${rest} further creatives are in the rollups above. Use rank_creatives to reach them individually.`);
+  // Everything else the chat can name: what is running, what is new, then on
+  // down the ranking. The rest of the year is in the comparisons above and one
+  // find_creatives call away.
+  const shown = new Set([...an.top, ...an.bottom].map((c) => c.id));
+  const also = an.named.filter((c) => !shown.has(c.id));
+  if (also.length) {
+    const running = also.filter((c) => c.why === 'running').length;
+    const fresh = also.filter((c) => c.why === 'new').length;
+    L.push(`ALSO NAMED (${also.length} more: ${running} running now, ${fresh} published in the last ${S.scale.newDays} days, the rest by rank)`);
+    L.push('  id | CQR | hook | hold | platforms | type | opening/purpose | Active or Stopped');
+    also.forEach((c) => L.push('  ' + compactLine(c)));
+    const rest = an.ranked.length - shown.size - also.length;
+    if (rest > 0) L.push(`  ${rest} further creatives from the last year are counted in every comparison above but not listed. Use find_creatives to reach any of them by name, campaign, creator or tag.`);
     L.push('');
   }
 
@@ -394,7 +404,12 @@ function renderDigest(an, insights) {
   if (o.posts) {
     L.push('ORGANIC (lifetime per post, not date filtered)');
     L.push(`  ${o.posts} posts | views ${fmtCount(o.views)} | ${o.good} Good / ${o.average} Average / ${o.poor} Poor`);
-    o.byPlatform.forEach((p) => L.push(`  ${S.platformLabels[p.platform] || p.platform}: ${p.tooFew ? 'one post only, not comparable' : `CQR ${p.vs.cqr}, engagement ${p.vs.engagement} than organic overall${p.early ? ' (early sign)' : ''}`}`));
+    o.byPlatform.forEach((p) => L.push(`  ${S.platformLabels[p.platform] || p.platform}: ${p.tooFew ? 'one post only, not comparable' : `compared with organic overall, CQR ${p.vs.cqr} and engagement ${p.vs.engagement}${p.early ? ' (early sign)' : ''}`}`));
+    if (an.organicElements && an.organicElements.length) {
+      L.push('  What makes the difference in organic (with it vs without it, judged on CQR then retention or engagement):');
+      an.organicElements.slice(0, 5).forEach((e) => L.push('    ' + A.elementSentence(e)));
+      L.push('    Show the proof for one with [[element:KEY]], using the key in square brackets.');
+    }
     L.push('  Top organic: ' + o.top.map((t) => `${t.id} (${t.cqr || 'unscored'}, ${fmtCount(t.views)} views)`).join(', '));
     L.push('');
   }
@@ -422,7 +437,27 @@ function renderDigest(an, insights) {
   L.push('');
   L.push('NOT HERE: daily series for hook, hold or CQR (they are lifetime scores). Per-creative organic detail. Any brand other than ' + label + '. Call a tool or say it is not available.');
 
-  return L.join('\n');
+  // A hard ceiling, so cost stays flat whether a brand has 200 creatives or
+  // 1,000. Only the list of individually named creatives is trimmed; every
+  // comparison, card and rollup above it stays intact.
+  let body = L.join('\n');
+  const budget = S.scale.tokenBudget;
+  if (Math.ceil(body.length / 3.6) > budget) {
+    const lines = L.slice();
+    const first = lines.findIndex((x) => x.startsWith('ALSO NAMED'));
+    if (first >= 0) {
+      let last = first + 2;
+      while (last < lines.length && lines[last].startsWith('  ') && !lines[last].startsWith('  Use find_creatives')) last += 1;
+      let dropped = 0;
+      while (Math.ceil(lines.join('\n').length / 3.6) > budget && last - 1 > first + 2) {
+        lines.splice(last - 1, 1); last -= 1; dropped += 1;
+      }
+      if (dropped) lines.splice(last, 0, `  ${dropped} more named creatives were left out to keep this brief. Use find_creatives to reach any of them.`);
+      lines[first] = lines[first].replace(/^ALSO NAMED \(/, 'ALSO NAMED (trimmed to fit, ');
+      body = lines.join('\n');
+    }
+  }
+  return body;
 }
 
 // ---------------------------------------------------------------
@@ -439,7 +474,7 @@ async function buildSnapshot(brand, _r, opts = {}) {
   const metaBy = new Map(metaRows.map((r) => [r.id, r])), ttBy = new Map(ttRows.map((r) => [r.id, r]));
   const boostBy = new Map(boostRows.map((r) => [r.id, r]));
 
-  const paid = [], records = {};
+  const paid = [], records = {}, allRecs = [];
   for (const [id, c] of creatives) {
     const m = mergePaid(metaBy.get(id), ttBy.get(id));
     const bs = boostBy.get(id);
@@ -461,6 +496,7 @@ async function buildSnapshot(brand, _r, opts = {}) {
     };
     rec.labels = V.creativeLabels(rec);
     records[id] = rec;
+    allRecs.push(rec);
     if (m) paid.push(rec);
   }
 
@@ -476,7 +512,7 @@ async function buildSnapshot(brand, _r, opts = {}) {
   }
 
   // Everything computable is computed here, in code.
-  const an = A.build({ brand, paid, organic, boost: boostRows, thresholds, monthly, freshness });
+  const an = A.build({ brand, paid, organic, boost: boostRows, thresholds, monthly, freshness, all: allRecs });
 
   const version = crypto.createHash('sha256')
     .update([brand, freshness.max_date, freshness.row_count, paid.length, organic.length, boostRows.length].join('|'))
@@ -508,6 +544,7 @@ async function buildSnapshot(brand, _r, opts = {}) {
 
   records.brand = { id: 'brand', name: S.brandLabels[brand], ...an.totals, cqr_mix: an.cqrMix };
   for (const e of an.elements || []) records[`element:${e.key}`] = { id: `element:${e.key}`, ...e };
+  for (const e of an.organicElements || []) records[`element:${e.key}`] = { id: `element:${e.key}`, ...e };
   for (const i of insights) if (i.card) records[`insight:${i.id}`] = { id: `insight:${i.id}`, ...i.card };
   // The staleness check in getSnapshot compares these three fields. Without
   // them it concludes every stored copy is out of date and rebuilds on every

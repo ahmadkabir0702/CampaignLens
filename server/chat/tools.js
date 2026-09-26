@@ -52,6 +52,28 @@ const tools = [
   },
 
   {
+    name: 'find_creatives',
+    description:
+      'Search the whole archive for creatives by words, campaign, creator or tag, including ones older than the year the brand data covers. Use it whenever someone asks about a creative that is not named in the brand data, for example "did we do something like this for Avurudu last year" or "what did we run with that creator". Returns matches with their ratings.',
+    input_schema: {
+      type: 'object',
+      properties: {
+        query: { type: 'string', description: 'Words to look for in the creative name, its description, campaign or creator, e.g. "Avurudu", "Yohani", "dance".' },
+        campaign: { type: 'string', description: 'Campaign name, partial match.' },
+        creator: { type: 'string', description: 'Creator name, partial match.' },
+        hook_device: { type: 'string', description: 'Opening hook code, e.g. face_to_camera.' },
+        content_intent: { type: 'string', description: 'Purpose code, e.g. promote_offer.' },
+        format: { type: 'string' },
+        language: { type: 'string', enum: ['sinhala', 'tamil', 'english', 'mixed', 'none'] },
+        talent: { type: 'string', enum: ['creator', 'celebrity', 'model', 'everyday_person', 'none'] },
+        production_style: { type: 'string', enum: ['phone_shot', 'polished'] },
+        published_after: { type: 'string', description: 'ISO date.' },
+        published_before: { type: 'string', description: 'ISO date.' },
+        limit: { type: 'integer', description: 'Default 10, maximum 25.' },
+      },
+    },
+  },
+  {
     name: 'get_creative',
     description:
       'Everything about one creative: metrics per platform, all its tags, the Insights verdict, and its full second-by-second timeline. Use when someone asks about a specific video, or why it performs as it does.',

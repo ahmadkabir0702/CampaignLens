@@ -87,6 +87,15 @@ const schema = {
   // Flat floor. Lifetime impressions below this are not a signal.
   volumeFloor: { absoluteMin: 10000, relativeShare: 0 },
 
+  // Scale settings. Built for up to 1,000 creatives per brand per year.
+  scale: {
+    windowDays: 365,        // the chat analyses a rolling year; older creatives stay searchable
+    recentDays: 90,         // used to check whether a finding still holds lately
+    newDays: 30,            // "just published", always named individually
+    creativeLines: 150,     // how many creatives the chat can name without a lookup
+    tokenBudget: 12000,     // hard ceiling on a brand's data, whatever the archive size
+  },
+
   // Table caps for very large brands.
   tableCap: { maxRows: 60, topBottom: 10 },
 

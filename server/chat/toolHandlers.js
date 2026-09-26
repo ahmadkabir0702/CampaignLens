@@ -8,6 +8,7 @@
 
 const S = require('./schema.config');
 const V = require('./vocab');
+const { queryTolerant } = require('./tolerant');
 const { getPool } = require('./db');
 const { shortName, displayLabel, mergePaid, rankCmp } = require('./snapshot');
 const CR = S.creator;
@@ -45,7 +46,7 @@ async function loadMerged(pool, brand) {
     ${P.confidence} as confidence, ${P.actionStatus} as action_status`;
 
   const [cr, meta, tt] = await Promise.all([
-    pool.query(
+    queryTolerant(pool, 
       `select c.${C.id} as id, c.${C.hook} as hook, c.${C.format} as format, c.${C.type} as type,
               c.${C.campaign} as campaign, c.${C.isRepurposed} as is_repurposed, c.${C.parentId} as parent_id,
               c.${C.productRole} as product_role, c.${C.durationS} as duration_s, cr.${CR.name} as creator,
@@ -253,7 +254,64 @@ async function get_lineage(args, ctx) {
 
 const handlers = { rank_creatives, get_creative, get_series, compare_creatives, get_lineage };
 
+/**
+ * Search the whole archive, not just the year the brand data covers.
+ * Words are matched against the creative's name, description, campaign and
+ * creator; tags are matched exactly. This is how the chat reaches any of the
+ * thousand creatives a brand may have in a year.
+ */
+async function findCreatives(args, ctx) {
+  const pool = ctx.pool || getPool();
+  const where = [`c.${C.brand} = $1`];
+  const params = [ctx.brand];
+  // one value, possibly used in several conditions: replace every marker
+  const add = (sql, value) => { params.push(value); where.push(sql.split('$$').join(`$${params.length}`)); };
+
+  if (args.query) {
+    add(`(c.${C.id} ilike '%' || $$ || '%' or c.${C.hook} ilike '%' || $$ || '%' or c.${C.campaign} ilike '%' || $$ || '%' or cr.${CR.name} ilike '%' || $$ || '%')`, String(args.query).trim());
+  }
+  if (args.campaign) add(`c.${C.campaign} ilike '%' || $$ || '%'`, args.campaign);
+  if (args.creator) add(`cr.${CR.name} ilike '%' || $$ || '%'`, args.creator);
+  for (const f of ['hook_device', 'content_intent', 'format', 'language', 'talent', 'production_style']) {
+    if (args[f]) add(`c.${f} = $$`, args[f]);
+  }
+  if (args.published_after) add(`c.${C.publishedAt} >= ($$)::date`, args.published_after);
+  if (args.published_before) add(`c.${C.publishedAt} <= ($$)::date`, args.published_before);
+
+  const limit = Math.min(Math.max(Number(args.limit) || 10, 1), 25);
+  const { rows } = await queryTolerant(pool,
+    `select c.${C.id} as id, c.${C.hook} as hook, c.${C.campaign} as campaign, c.${C.publishedAt} as published_at,
+            c.${C.type} as type, c.format, c.hook_device, c.content_intent, c.language, c.talent, c.production_style,
+            cr.${CR.name} as creator
+     from ${T.creatives} c
+     left join ${T.creators} cr on cr.${CR.id} = c.${C.creatorId}
+     where ${where.join(' and ')}
+     order by c.${C.publishedAt} desc nulls last
+     limit ${limit + 25}`, params);
+
+  if (!rows.length) return { matches: 0, rows: [], note: 'Nothing matched. Try fewer words, or a campaign or creator name.' };
+
+  // Ratings for the matches, from the same merged view the rest of the tools use.
+  const merged = new Map((await loadMerged(pool, ctx.brand)).map((r) => [r.id, r]));
+  const out = rows.slice(0, limit).map((r) => {
+    const m = merged.get(r.id);
+    return {
+      id: r.id, name: displayLabel(r.id, r.hook), campaign: r.campaign, creator: r.creator,
+      published: r.published_at ? String(r.published_at).slice(0, 10) : null,
+      type: V.label('type', r.type), format: V.label('format', r.format),
+      opening_hook: V.label('hook_device', r.hook_device) || null,
+      purpose: V.label('content_intent', r.content_intent) || null,
+      language: V.label('language', r.language) || null,
+      what_it_is: r.hook ? String(r.hook).replace(/\s+/g, ' ').slice(0, 140) : null,
+      ...(m ? { cqr: m.cqr, hook_rate: m.hook_rate, hold_rate: m.hold_rate, is_active: m.is_active, platforms: m.platforms }
+            : { note: 'organic only, no paid delivery' }),
+    };
+  });
+  return { matches: rows.length > limit ? `${limit} of ${rows.length}+` : out.length, rows: out };
+}
+
 async function runTool(name, args, ctx) {
+  if (name === 'find_creatives') return { result: await findCreatives(args, ctx) };
   const fn = handlers[name];
   if (!fn) return { result: { error: `Unknown tool: ${name}` }, records: {} };
   try { return await fn(args || {}, ctx); }

@@ -203,6 +203,31 @@ acts on them.
 
 ---
 
+## What the data covers
+
+The chat analyses a **rolling 12 months**. Older creatives stay in the archive
+and can be found by name, campaign, creator or tag, but they no longer shape
+what "works for us now".
+
+A brand can have up to about a thousand creatives in that year. The chat names
+a few dozen individually: everything currently running, everything published
+in the last 30 days, and the year's best and weakest. All the others are
+counted in every comparison and can be pulled up by searching.
+
+## Organic
+
+Organic is analysed the same way as paid but **kept separate**, because
+organic reach comes from the algorithm and paid reach is bought. Mixing them
+would misrepresent both.
+
+Organic is judged **CQR first, then retention, then engagement**. Organic
+posts have no hook or hold rate.
+
+Organic performance is the cheapest signal of what paid will do, so organic
+posts that are validated but not yet boosted are worth raising.
+
+---
+
 ## The volume floor
 
 Creatives with fewer than 10,000 lifetime impressions are excluded from all
