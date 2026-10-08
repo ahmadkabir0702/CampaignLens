@@ -665,6 +665,120 @@ function buildOrganicHTML(d) {
   return `<div class="organic-grid">${igBox}${fbBox}${ttBox}</div>`;
 }
 
+// ---------------------------------------------------------------------
+//  Organic validation. Everything the CQR badge does not say: why the
+//  post got that rating, where it sits against this brand's own organic,
+//  what to do per platform, whether it is still climbing, and what it
+//  has in common with past paid winners.
+//
+//  Loaded on first expand rather than with the dashboard payload, so the
+//  payload stays the size it is on a brand with a thousand creatives.
+// ---------------------------------------------------------------------
+const orgValCache = new Map();
+
+async function loadOrganicValidation(detailsEl, creativeId) {
+  if (!detailsEl.open) return;
+  const box = detailsEl.querySelector('.org-content');
+  if (!box || box.dataset.loadedFor === creativeId) return;
+
+  if (orgValCache.has(creativeId)) {
+    box.innerHTML = buildValidationHTML(orgValCache.get(creativeId));
+    box.dataset.loadedFor = creativeId;
+    return;
+  }
+  box.innerHTML = `<div class="organic-empty">Loading…</div>`;
+  try {
+    const res = await fetch(`/api/organic-validation?creative_id=${encodeURIComponent(creativeId)}`);
+    const data = await res.json();
+    if (!res.ok) throw new Error(data.error || 'Could not load validation');
+    orgValCache.set(creativeId, data);
+    box.innerHTML = buildValidationHTML(data);
+    box.dataset.loadedFor = creativeId;
+  } catch (err) {
+    box.innerHTML = `<div class="organic-empty">Could not load validation: ${String(err.message || err)}</div>`;
+  }
+}
+
+const GRADE_CLASS = { Good: 'val-good', Average: 'val-avg', Poor: 'inv-bg' };
+const ACTION_LABEL = {
+  boost: 'Boost', boost_reach: 'Boost for reach', recut: 'Recut the opening',
+  hold: 'Hold', wait: 'Wait', no_data: 'No data', no_grade: 'Cannot grade',
+};
+
+function buildValidationHTML(v) {
+  const esc = s => String(s ?? '').replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+  if (!v || !Array.isArray(v.platforms) || !v.platforms.length) {
+    return `<div class="organic-empty">This creative has no organic platform on file, so there is nothing to validate.</div>`;
+  }
+
+  const gradeChip = (g) => g ? `<span class="val-badge ${GRADE_CLASS[g] || 'inv-bg'}">${g}</span>` : `<span class="val-badge inv-bg">No threshold</span>`;
+
+  // A rate with its grade and, where there are enough peers, its standing.
+  const rateRow = (label, part, unit) => {
+    if (!part) return '';
+    const val = part.rate === null || part.rate === undefined ? '—' : `${part.rate}${unit}`;
+    const place = part.percentile === null || part.percentile === undefined
+      ? '' : `<span class="orgval-pct">${part.percentile}th percentile</span>`;
+    return `<div class="orgval-rate">
+      <span class="organic-stat-label">${label}</span>
+      <span class="orgval-rate-right">${place}<span class="organic-stat-val">${val}</span>${gradeChip(part.grade)}</span>
+    </div>`;
+  };
+
+  const platBlocks = v.platforms.map(p => {
+    if (p.missing) {
+      return `<div class="orgval-plat">
+        <div class="orgval-plat-head"><span class="organic-platform" style="margin:0">${esc(p.label)}</span><span class="val-badge inv-bg">No data</span></div>
+        <div class="orgval-rec-wrap"><div class="orgval-rec orgval-rec-none"><b>${ACTION_LABEL[p.recommendation.action]}</b> — ${esc(p.recommendation.text)}</div></div>
+      </div>`;
+    }
+    const velocity = p.velocity && p.velocity.text
+      ? `<div class="orgval-line">${esc(p.velocity.text)}</div>`
+      : (p.velocity && p.velocity.points === 1
+          ? `<div class="orgval-line orgval-muted">Only one reading so far, so there is no trend yet. A second pull will show whether it is still climbing.</div>`
+          : '');
+    const standing = p.standing && p.standing.words
+      ? `<div class="orgval-line"><b>Where it sits:</b> ${esc(p.standing.words)}, on ${esc(p.standing.basis)}, against ${p.standing.peers} other posts.</div>`
+      : `<div class="orgval-line orgval-muted">Too few other organic posts in the last 90 days to place this one against them.</div>`;
+    const recClass = p.recommendation.action === 'boost' ? 'orgval-rec-go'
+                   : p.recommendation.action === 'hold' ? 'orgval-rec-stop'
+                   : ['wait', 'no_data', 'no_grade'].includes(p.recommendation.action) ? 'orgval-rec-none'
+                   : 'orgval-rec-mid';
+
+    return `<div class="orgval-plat">
+      <div class="orgval-plat-head">
+        <span class="organic-platform" style="margin:0">${esc(p.label)}</span>
+        ${gradeChip(p.cqr)}
+      </div>
+      ${rateRow('Retention', p.retention, '%')}
+      ${rateRow('Engagement', p.engagement, '%')}
+      <div class="orgval-line"><b>Why:</b> ${esc(p.reason)}</div>
+      ${standing}
+      ${velocity}
+      <div class="orgval-rec-wrap"><div class="orgval-rec ${recClass}"><b>${ACTION_LABEL[p.recommendation.action] || 'Recommendation'}</b> — ${esc(p.recommendation.text)}</div></div>
+    </div>`;
+  }).join('');
+
+  const split = v.split ? `<div class="orgval-split">${esc(v.split)}</div>` : '';
+  const flags = (v.flags || []).length
+    ? `<div class="orgval-flags">${v.flags.map(f => `<div>${esc(f)}</div>`).join('')}</div>` : '';
+
+  const w = v.winners || {};
+  const winners = `<div class="orgval-winners">
+    <div class="orgval-winners-head">What it has in common with your paid winners</div>
+    <div class="orgval-line">${esc(w.verdict || '')}</div>
+    ${(w.matches || []).length
+      ? `<ul class="orgval-list">${w.matches.slice(0, 5).map(m => `<li class="${m.helps ? 'orgval-supports' : 'orgval-against'}">
+          <b>${esc(m.label)}</b> <span class="orgval-when">${m.timing === 'opening' ? 'opening' : 'whole video'}</span><br>
+          <span class="orgval-muted">Rated Good ${m.with.goodRate}% of the time with it (${m.with.creatives} creatives) against ${m.without.goodRate}% without (${m.without.creatives}).${m.early ? ' Early sign, small groups.' : ''}</span>
+        </li>`).join('')}</ul>`
+      : ''}
+    ${w.basis ? `<div class="orgval-line orgval-muted">Based on ${w.basis} paid creatives above the delivery floor.</div>` : ''}
+  </div>`;
+
+  return `${split}${flags}<div class="orgval-grid">${platBlocks}</div>${winners}`;
+}
+
 function buildCreativeBriefHTML(d) {
   const timeline = Array.isArray(d.timeline) ? d.timeline : [];
   const hasQuartiles = d.segments && d.segments.length > 0;
@@ -866,6 +980,11 @@ function renderDetail(d) {
       <details class="org-details" style="margin-top:12px;">
         <summary class="org-summary">Organic Performance <span style="color:var(--c-muted);font-size:10px;">Click to expand ▼</span></summary>
         <div class="org-content">${buildOrganicHTML(d)}</div>
+      </details>
+
+      <details class="org-details" style="margin-top:12px;" ontoggle="loadOrganicValidation(this, '${d.id}')">
+        <summary class="org-summary">Organic Validation <span style="color:var(--c-muted);font-size:10px;">Why this rating, and whether to boost ▼</span></summary>
+        <div class="org-content" id="orgValContent"><div class="organic-empty">Loading…</div></div>
       </details>
 
       <div style="margin-top:14px">${recsHTML}</div>

@@ -17,6 +17,7 @@ const bcrypt = require('bcryptjs');
 const { query, brandsForUser, assertBrandAllowed } = require('./db');
 const { checkLinks } = require('./link-check');
 const { checkContent } = require('./content-check');
+const { buildValidation } = require('./organic-validation');
 
 // Review runs the content check; Confirm needs the same answer a moment later.
 // Caching by the normalised links means each link is scraped once per add,
@@ -820,6 +821,32 @@ app.get('/api/brands', async (req, res) => {
     }
   });
 
+
+  // -------------------------------------------------------------------
+  //  ORGANIC VALIDATION — everything the CQR badge does not say. Why the
+  //  post got its rating, where it stands against the brand's own
+  //  organic, what to do per platform, whether it is still climbing, and
+  //  what it has in common with past paid winners.
+  //
+  //  Lazily called when the Organic Validation panel is opened, so the
+  //  dashboard payload stays the size it is.
+  // -------------------------------------------------------------------
+  app.get('/api/organic-validation', async (req, res) => {
+    try {
+      const brand = resolveBrand(req);
+      const creativeId = req.query.creative_id;
+      if (!creativeId) return res.status(400).json({ error: 'creative_id is required' });
+
+      // buildValidation scopes every read by brand_id and returns null when
+      // the creative is not this brand's, so a guessed id leaks nothing.
+      const out = await buildValidation(brand, creativeId);
+      if (!out) return res.status(404).json({ error: 'Creative not found for this brand' });
+      res.json(out);
+    } catch (err) {
+      console.error('[organic-validation]', err.message);
+      res.status(500).json({ error: err.message });
+    }
+  });
 
   // -------------------------------------------------------------------
   //  TEMPORARY manual-upload tool. Takes a raw MP4 body, runs it through
