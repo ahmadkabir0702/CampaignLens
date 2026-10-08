@@ -1,0 +1,483 @@
+// =====================================================================
+//  organic-validation.js — what an organic post is actually telling you
+//
+//  The Creative Hub used to show one thing for an organic post: CQR.
+//  "Good" on its own does not tell a planner why it is good, whether it
+//  is good by this brand's standards, which platform earned it, or
+//  whether anything about the content explains it. This builds all of
+//  that from data already in the database:
+//
+//    1. Why it got that rating — retention and engagement judged
+//       separately against the same thresholds that produced the CQR,
+//       because Good-on-retention / weak-on-engagement is a different
+//       proposition from the reverse.
+//    2. Where it sits against the brand's own organic this quarter.
+//    3. A recommendation per platform, not one for the post, because a
+//       post that works on TikTok and not on Instagram is two decisions.
+//    4. Velocity from organic_perf_history — is it still climbing.
+//    5. What it has in common with past paid winners, using the tags.
+//
+//  Honest about gaps: too little delivery, too new to judge, and a
+//  platform that returned no data are reported as such, never as weak.
+//
+//  Nothing here invents a number. Every figure is read; every verdict
+//  comes from a threshold row or a comparison against real posts.
+// =====================================================================
+const { query } = require('./db');
+const V = require('./server/chat/vocab');
+
+// A post below this many views has not been delivered enough to judge.
+// Organic reach is granted by the algorithm, so the floor is far lower
+// than the 10,000 paid-impression floor.
+const VIEW_FLOOR = 1000;
+// Before this many hours a post is still being distributed.
+const MIN_HOURS = 24;
+// The window "this quarter" means when placing a post against its peers.
+const STANDING_DAYS = 90;
+// Fewest peers needed before a standing is worth stating.
+const STANDING_MIN = 8;
+// Fewest creatives on each side before a tag comparison is worth stating.
+const TAG_MIN = 2;
+
+const PLATFORM = {
+  ig: { label: 'Instagram', linkField: 'ig_link' },
+  fb: { label: 'Facebook',  linkField: 'fb_link' },
+  tt: { label: 'TikTok',    linkField: 'tt_link' },
+};
+
+const num = (v) => (v === null || v === undefined ? null : Number(v));
+const r1 = (v) => (v === null || v === undefined ? null : Math.round(Number(v) * 10) / 10);
+const pct = (v) => (v === null || v === undefined ? null : Math.round(Number(v)));
+
+// Threshold rows encode Brand Say / Others Say in the platform string.
+function platformKey(plat, type) {
+  return `${plat}_${type === 'Others Say' ? 'os' : 'organic'}`;
+}
+
+// ---------------------------------------------------------------------
+//  Threshold lookup. Mirrors the thr() SQL function, in JS, so one read
+//  covers every platform and metric this post needs. Brand-specific
+//  rows win over globals; metric names are matched by prefix so
+//  'retention' and 'retention_rate' both resolve.
+// ---------------------------------------------------------------------
+function pickThreshold(rows, platKey, metricPrefix, durationS) {
+  const d = Number(durationS);
+  const candidates = rows.filter((r) =>
+    r.platform === platKey &&
+    String(r.metric || '').toLowerCase().startsWith(metricPrefix) &&
+    (r.min_duration === null || !isFinite(d) || d >= Number(r.min_duration)) &&
+    (r.max_duration === null || !isFinite(d) || d <= Number(r.max_duration)));
+  if (!candidates.length) return null;
+  // Brand rows first, then the narrowest duration band.
+  candidates.sort((a, b) => {
+    const brand = (a.brand_id ? 0 : 1) - (b.brand_id ? 0 : 1);
+    if (brand) return brand;
+    const span = (x) => (x.max_duration === null ? 1e9 : Number(x.max_duration)) -
+                        (x.min_duration === null ? 0 : Number(x.min_duration));
+    return span(a) - span(b);
+  });
+  return candidates[0];
+}
+
+// Where one rate falls inside its own threshold band.
+function grade(rate, th) {
+  if (rate === null || !th) return null;
+  const v = Number(rate);
+  const poorLt = th.poor_lt === null ? null : Number(th.poor_lt);
+  const goodGte = th.good_gte === null ? null : Number(th.good_gte);
+  if (goodGte !== null && v >= goodGte) return 'Good';
+  if (poorLt !== null && v < poorLt) return 'Poor';
+  return 'Average';
+}
+
+// ---------------------------------------------------------------------
+//  1. Why it got that rating
+// ---------------------------------------------------------------------
+const WATCH_WORDS = { Good: 'people watch it', Average: 'people watch some of it', Poor: 'people drop off early' };
+const ENGAGE_WORDS = { Good: 'and they interact with it', Average: 'and interaction is middling', Poor: 'but almost nobody interacts' };
+const S_RANK = { Good: 0, Average: 1, Poor: 2 };
+
+function reasonFor(cqr, retG, engG) {
+  if (!retG && !engG) return 'No threshold is set for this platform and length, so there is nothing to grade it against.';
+  if (retG && !engG) return `Rated ${cqr || 'unscored'} on retention alone: ${WATCH_WORDS[retG]}. No engagement threshold is set for this platform.`;
+  if (!retG && engG) return `Rated ${cqr || 'unscored'} on engagement alone: ${ENGAGE_WORDS[engG].replace(/^and |^but /, '')}. No retention threshold is set for this platform and length.`;
+  if (retG === engG) return `Rated ${cqr || 'unscored'} on both halves: retention ${retG} and engagement ${engG}.`;
+  // The interesting case: the two halves disagree, which the single grade hides.
+  const lead = `Rated ${cqr || 'unscored'}, but the two halves disagree.`;
+  const split = `Retention ${retG} and engagement ${engG}: ${WATCH_WORDS[retG]}, ${ENGAGE_WORDS[engG]}.`;
+  const retBetter = (S_RANK[retG] ?? 9) < (S_RANK[engG] ?? 9);
+  if (retBetter) {
+    return `${lead} ${split} ${retG === 'Good'
+      ? 'The content holds attention; it is the reason to act on it that is missing.'
+      : 'Watching is the stronger half here, so the gap is in what the post asks people to do.'}`;
+  }
+  return `${lead} ${split} ${engG === 'Good'
+    ? 'The people who stay care; most never get that far, so the opening is what to fix.'
+    : 'Interaction is the stronger half here, so the gap is in the opening.'}`;
+}
+
+// ---------------------------------------------------------------------
+//  2. Where it sits against the brand's own organic
+// ---------------------------------------------------------------------
+function standingWords(percentile) {
+  if (percentile === null) return null;
+  if (percentile >= 90) return 'among your strongest organic posts this quarter';
+  if (percentile >= 70) return 'in the stronger half of your organic this quarter';
+  if (percentile >= 40) return 'around your organic average this quarter';
+  if (percentile >= 20) return 'in the weaker half of your organic this quarter';
+  return 'among your weakest organic posts this quarter';
+}
+
+function placeAmong(value, peers) {
+  const vals = peers.filter((v) => v !== null && v !== undefined && isFinite(v)).map(Number);
+  if (value === null || value === undefined || vals.length < STANDING_MIN) {
+    return { percentile: null, peers: vals.length };
+  }
+  const below = vals.filter((v) => v < Number(value)).length;
+  return { percentile: Math.round((below / vals.length) * 100), peers: vals.length };
+}
+
+// ---------------------------------------------------------------------
+//  3. Recommendation, per platform
+// ---------------------------------------------------------------------
+function recommendFor({ platLabel, cqr, retG, engG, standing, delivered, tooNew, missing }) {
+  if (missing) {
+    return { action: 'no_data', confidence: 'none',
+      text: `No ${platLabel} data came back for this post, so there is nothing to judge. That is not the same as a weak post — check the post is still live and, if it is a collaboration owned by the creator's account, that the numbers are being collected from their side.` };
+  }
+  if (tooNew) {
+    return { action: 'wait', confidence: 'none',
+      text: `Under ${MIN_HOURS} hours old on ${platLabel}. Distribution is still running, so leave it and read it again tomorrow.` };
+  }
+  if (!delivered) {
+    return { action: 'wait', confidence: 'none',
+      text: `Too little delivery on ${platLabel} to judge yet (under ${VIEW_FLOOR.toLocaleString()} views). Wait rather than act on this.` };
+  }
+  if (!cqr && !retG && !engG) {
+    return { action: 'no_grade', confidence: 'none',
+      text: `No benchmark is set for ${platLabel} at this length, so the numbers cannot be graded. Add the thresholds for this platform and the rating will appear on its own.` };
+  }
+  const strong = standing && standing.percentile !== null && standing.percentile >= 70;
+  const weakStanding = standing && standing.percentile !== null && standing.percentile < 30;
+
+  if (cqr === 'Good') {
+    return { action: 'boost', confidence: strong ? 'high' : 'medium',
+      text: `Boost on ${platLabel}.${strong ? ' It is one of your stronger organic posts this quarter, so it has earned the spend.' : ' It cleared both halves of the rating organically.'}` };
+  }
+  if (cqr === 'Poor') {
+    return { action: 'hold', confidence: weakStanding ? 'high' : 'medium',
+      text: `Do not put spend behind this on ${platLabel}. It did not earn attention organically, and paid reach will not fix that.` };
+  }
+  // Average: the split decides what to do with it.
+  if (retG === 'Good' && engG && engG !== 'Good') {
+    return { action: 'boost_reach', confidence: 'medium',
+      text: `Worth boosting on ${platLabel}, but for reach rather than engagement. People watch it, so the spend buys views; do not judge it afterwards on comments and shares, because it was never earning those.` };
+  }
+  if (engG === 'Good' && retG && retG !== 'Good') {
+    return { action: 'recut', confidence: 'medium',
+      text: `Hold the spend on ${platLabel} and recut the opening. The people who stay engage with it, so the idea works; most never get far enough to see it.` };
+  }
+  // Still Average, but one half is actually Poor: name it rather than
+  // calling the whole thing middling.
+  if (retG === 'Poor' || engG === 'Poor') {
+    const weak = retG === 'Poor' ? 'retention' : 'engagement';
+    const other = retG === 'Poor' ? `engagement ${engG || 'ungraded'}` : `retention ${retG || 'ungraded'}`;
+    return { action: 'hold', confidence: 'medium',
+      text: `Hold the spend on ${platLabel}. ${weak === 'retention' ? 'People drop off early' : 'Almost nobody interacts'}, and ${other} is not enough on its own to carry a boost.` };
+  }
+  return { action: 'hold', confidence: 'low',
+    text: `Middling on ${platLabel} on both halves. There is no case here for spend ahead of a stronger post.` };
+}
+
+// ---------------------------------------------------------------------
+//  4. Velocity, from the history table
+// ---------------------------------------------------------------------
+async function velocityFor(creativeId) {
+  try {
+    const { rows } = await query(
+      `select platform, captured_at, views, total_interactions
+         from organic_perf_history
+        where creative_id = $1
+        order by platform, captured_at`, [creativeId]);
+    const byPlat = {};
+    for (const r of rows) (byPlat[r.platform] ||= []).push(r);
+    const out = {};
+    for (const [plat, pts] of Object.entries(byPlat)) {
+      if (pts.length < 2) { out[plat] = { points: pts.length, text: null }; continue; }
+      const last = pts[pts.length - 1], prev = pts[pts.length - 2];
+      const gained = num(last.views) - num(prev.views);
+      const hours = (new Date(last.captured_at) - new Date(prev.captured_at)) / 3600000;
+      const share = num(last.views) ? gained / num(last.views) : 0;
+      out[plat] = {
+        points: pts.length,
+        since: pts[0].captured_at,
+        gained_views: gained,
+        hours_between: r1(hours),
+        still_climbing: share >= 0.02,
+        text: share >= 0.02
+          ? `Still picking up views — it added ${gained.toLocaleString()} in the last ${Math.max(1, Math.round(hours))} hours, so the rating may yet improve.`
+          : `Views have flattened, so this rating is close to final.`,
+      };
+    }
+    return out;
+  } catch (err) {
+    // Migration 006 not run yet. History is an addition, not a dependency.
+    if (err.code === '42P01') return {};
+    throw err;
+  }
+}
+
+// ---------------------------------------------------------------------
+//  5. What it has in common with past paid winners
+//
+//  For each element this post carries, compare the brand's paid
+//  creative-platform pairs that share it against those that do not, on
+//  the share rated Good. Same gate as the nightly element analysis: at
+//  least two distinct creatives on each side and a real gap, otherwise
+//  it is noise dressed as a reason.
+// ---------------------------------------------------------------------
+function winnerMatches(creative, paidUnits) {
+  if (!paidUnits.length) return { matches: [], supports: 0, against: 0, basis: 0 };
+  const valueOf = (c, f) => (f === 'length_bucket' ? V.lengthBucket(c.duration_s) : c[f]);
+  const distinct = (us) => new Set(us.map((u) => u.id)).size;
+  const goodRate = (us) => (us.length ? (us.filter((u) => u.cqr === 'Good').length / us.length) * 100 : 0);
+  const matches = [];
+
+  for (const el of V.ELEMENTS) {
+    const mine = valueOf(creative, el.field);
+    if (mine === null || mine === undefined || mine === '') continue;
+    if (el.kind === 'bool' && mine !== true) continue;   // only "has it" is an element
+
+    const known = paidUnits.filter((u) => {
+      const v = valueOf(u, el.field);
+      return v !== null && v !== undefined && v !== '';
+    });
+    const withU = known.filter((u) => valueOf(u, el.field) === mine);
+    const withoutU = known.filter((u) => valueOf(u, el.field) !== mine);
+    const nW = distinct(withU), nO = distinct(withoutU);
+    if (nW < TAG_MIN || nO < TAG_MIN) continue;
+
+    const gW = goodRate(withU), gO = goodRate(withoutU);
+    const diff = gW - gO;
+    if (Math.abs(diff) < 10) continue;                   // no real difference
+
+    matches.push({
+      key: el.kind === 'bool' ? el.field : `${el.field}=${mine}`,
+      label: V.elementLabel(el, mine),
+      timing: el.timing,
+      helps: diff > 0,
+      with: { creatives: nW, goodRate: Math.round(gW) },
+      without: { creatives: nO, goodRate: Math.round(gO) },
+      strength: Math.abs(diff),
+      early: Math.min(nW, nO) < 5,
+    });
+  }
+  matches.sort((a, b) => b.strength - a.strength);
+  return {
+    matches,
+    supports: matches.filter((m) => m.helps).length,
+    against: matches.filter((m) => !m.helps).length,
+    basis: distinct(paidUnits),
+  };
+}
+
+function matchSentence(m) {
+  const when = m.timing === 'opening' ? 'in the opening' : 'across the video';
+  return m.helps
+    ? `${m.label} — ${when}, your paid creatives with this are rated Good more often than those without.${m.early ? ' Early sign, small groups.' : ''}`
+    : `${m.label} — ${when}, your paid creatives with this are rated Good less often than those without.${m.early ? ' Early sign, small groups.' : ''}`;
+}
+
+// ---------------------------------------------------------------------
+//  The build
+// ---------------------------------------------------------------------
+async function buildValidation(brandId, creativeId) {
+  const [creativeR, organicR, thresholdR, peerR, paidR] = await Promise.all([
+    query(
+      `select c.creative_id, c.brand_id, c.type, c.campaign, c.date, c.duration_s,
+              c.ig_link, c.fb_link, c.tt_link,
+              c.format, c.product_role, c.content_intent, c.narrative_structure,
+              c.hook_device, c.hook_subject, c.hook_pace, c.language, c.talent,
+              c.production_style, c.aspect_ratio,
+              c.opens_with_face, c.opens_with_product, c.logo_first_3s,
+              c.has_text_overlay, c.captions, c.voiceover, c.music, c.cta
+         from creatives c
+        where c.creative_id = $1 and c.brand_id = $2`, [creativeId, brandId]),
+
+    query(
+      `select o.platform, o.views, o.reach, o.likes, o.comments, o.shares, o.saves,
+              o.total_interactions, o.avg_watch_time, o.time_posted,
+              s.cqr, s.engagement_rate, s.retention_rate
+         from organic_perf o
+         left join v_organic_scored s
+           on s.creative_id = o.creative_id and s.platform = o.platform
+        where o.creative_id = $1`, [creativeId]),
+
+    query(
+      `select brand_id, platform, metric, min_duration, max_duration, poor_lt, good_gte
+         from cqr_thresholds
+        where brand_id = $1 or brand_id is null`, [brandId]),
+
+    // The brand's own organic, same window, for the standing. Scored rows
+    // only — an unscored post is not a yardstick.
+    query(
+      `select s.platform, s.retention_rate, s.engagement_rate, s.cqr
+         from v_organic_scored s
+         join creatives c on c.creative_id = s.creative_id
+        where c.brand_id = $1
+          and c.creative_id <> $2
+          and (c.date is null or c.date >= current_date - ($3)::int)`,
+      [brandId, creativeId, STANDING_DAYS]),
+
+    // Paid creative-platform pairs with their tags, for the winners match.
+    query(
+      `select c.creative_id as id, c.duration_s, c.format, c.product_role,
+              c.content_intent, c.narrative_structure, c.hook_device, c.hook_subject,
+              c.hook_pace, c.language, c.talent, c.production_style, c.aspect_ratio,
+              c.opens_with_face, c.opens_with_product, c.logo_first_3s,
+              c.has_text_overlay, c.captions, c.voiceover, c.music, c.cta, c.type,
+              v.cqr, v.impressions
+         from v_paid_meta_creative v
+         join creatives c on c.creative_id = v.creative_id
+        where v.brand_id = $1 and v.creative_id is not null and v.impressions >= 10000
+       union all
+       select c.creative_id as id, c.duration_s, c.format, c.product_role,
+              c.content_intent, c.narrative_structure, c.hook_device, c.hook_subject,
+              c.hook_pace, c.language, c.talent, c.production_style, c.aspect_ratio,
+              c.opens_with_face, c.opens_with_product, c.logo_first_3s,
+              c.has_text_overlay, c.captions, c.voiceover, c.music, c.cta, c.type,
+              v.cqr, v.impressions
+         from v_paid_tiktok_creative v
+         join creatives c on c.creative_id = v.creative_id
+        where v.brand_id = $1 and v.creative_id is not null and v.impressions >= 10000`,
+      [brandId]),
+  ]);
+
+  if (!creativeR.rows.length) return null;
+  const c = creativeR.rows[0];
+  const velocity = await velocityFor(creativeId);
+
+  const posted = organicR.rows.map((r) => r.time_posted).filter(Boolean).sort()[0] || c.date;
+  const hoursSince = posted ? (Date.now() - new Date(posted).getTime()) / 3600000 : null;
+
+  const orgBy = Object.fromEntries(organicR.rows.map((r) => [r.platform, r]));
+  const peersBy = {};
+  for (const p of peerR.rows) (peersBy[p.platform] ||= []).push(p);
+
+  // Which platforms this post is expected on: a link was captured, or a
+  // row came back. A link with no row is the honest "no data" case.
+  const expected = Object.keys(PLATFORM).filter((p) => c[PLATFORM[p].linkField] || orgBy[p]);
+
+  const platforms = expected.map((plat) => {
+    const meta = PLATFORM[plat];
+    const o = orgBy[plat];
+    const platKey = platformKey(plat, c.type);
+    const retTh = pickThreshold(thresholdR.rows, platKey, 'retention', c.duration_s);
+    const engTh = pickThreshold(thresholdR.rows, platKey, 'engagement', c.duration_s);
+
+    if (!o) {
+      return {
+        platform: plat, label: meta.label, missing: true, cqr: null,
+        recommendation: recommendFor({ platLabel: meta.label, missing: true }),
+      };
+    }
+
+    const retG = grade(o.retention_rate, retTh);
+    const engG = grade(o.engagement_rate, engTh);
+    const delivered = num(o.views) !== null && num(o.views) >= VIEW_FLOOR;
+    const tooNew = hoursSince !== null && hoursSince < MIN_HOURS;
+    const peers = peersBy[plat] || [];
+
+    const standing = {
+      retention: placeAmong(o.retention_rate, peers.map((p) => p.retention_rate)),
+      engagement: placeAmong(o.engagement_rate, peers.map((p) => p.engagement_rate)),
+    };
+    // One headline standing: retention leads, the way organic is read.
+    const lead = standing.retention.percentile !== null ? standing.retention : standing.engagement;
+    standing.words = standingWords(lead.percentile);
+    standing.peers = lead.peers;
+    standing.percentile = lead.percentile;
+    standing.basis = standing.retention.percentile !== null ? 'retention' : 'engagement';
+
+    return {
+      platform: plat,
+      label: meta.label,
+      missing: false,
+      cqr: o.cqr || null,
+      views: num(o.views),
+      reach: num(o.reach),
+      interactions: num(o.total_interactions),
+      avg_watch_time: r1(o.avg_watch_time),
+      time_posted: o.time_posted,
+      retention: {
+        rate: r1(o.retention_rate), grade: retG,
+        band: retTh ? { poor_lt: num(retTh.poor_lt), good_gte: num(retTh.good_gte), source: retTh.brand_id ? 'brand' : 'global' } : null,
+        percentile: standing.retention.percentile,
+      },
+      engagement: {
+        rate: o.engagement_rate === null ? null : Math.round(Number(o.engagement_rate) * 100) / 100,
+        grade: engG,
+        band: engTh ? { poor_lt: num(engTh.poor_lt), good_gte: num(engTh.good_gte), source: engTh.brand_id ? 'brand' : 'global' } : null,
+        percentile: standing.engagement.percentile,
+      },
+      reason: reasonFor(o.cqr, retG, engG),
+      standing,
+      velocity: velocity[plat] || null,
+      delivered, too_new: tooNew,
+      recommendation: recommendFor({
+        platLabel: meta.label, cqr: o.cqr, retG, engG, standing, delivered, tooNew, missing: false,
+      }),
+    };
+  });
+
+  // Where the platforms disagree, say so once, at the top. A single
+  // verdict for the post would be the wrong unit of decision.
+  const judged = platforms.filter((p) => !p.missing && p.delivered && !p.too_new && p.cqr);
+  const grades = [...new Set(judged.map((p) => p.cqr))];
+  let split = null;
+  if (judged.length > 1 && grades.length > 1) {
+    const best = judged.filter((p) => p.cqr === 'Good').map((p) => p.label);
+    const worst = judged.filter((p) => p.cqr === 'Poor').map((p) => p.label);
+    if (best.length && worst.length) {
+      split = `This is two decisions, not one: ${best.join(' and ')} earned the spend, ${worst.join(' and ')} did not.`;
+    } else {
+      split = `It did not land the same way on every platform — ${judged.map((p) => `${p.label} ${p.cqr}`).join(', ')} — so treat each platform on its own.`;
+    }
+  }
+
+  const winners = winnerMatches(c, paidR.rows);
+
+  const flags = [];
+  if (!organicR.rows.length) flags.push('No organic numbers have come back for this post on any platform yet.');
+  for (const p of platforms) if (p.missing) flags.push(`${p.label}: a link is on file but no numbers have come back. Collaboration posts owned by the creator's account never return to the brand token.`);
+  if (hoursSince !== null && hoursSince < MIN_HOURS) flags.push(`Posted ${Math.max(1, Math.round(hoursSince))} hours ago. Organic distribution is still running.`);
+  for (const p of platforms) if (!p.missing && !p.delivered) flags.push(`${p.label}: ${(p.views || 0).toLocaleString()} views is below the ${VIEW_FLOOR.toLocaleString()}-view floor, so the rating is not yet a signal.`);
+
+  return {
+    creative_id: c.creative_id,
+    type: c.type,
+    campaign: c.campaign || '',
+    duration_s: c.duration_s === null ? null : Number(c.duration_s),
+    posted_at: posted || null,
+    hours_since_post: hoursSince === null ? null : Math.round(hoursSince),
+    platforms,
+    split,
+    winners: {
+      ...winners,
+      sentences: winners.matches.slice(0, 5).map(matchSentence),
+      verdict: !winners.matches.length
+        ? (winners.basis < TAG_MIN * 2
+            ? 'Not enough paid history on this brand yet to say what its winners have in common.'
+            : 'Nothing in this post stands out either way against your paid winners.')
+        : winners.supports > winners.against
+          ? 'What this post is made of has tended to work on paid for this brand.'
+          : winners.against > winners.supports
+            ? 'What this post is made of has tended to underperform on paid for this brand.'
+            : 'This post carries elements that have gone both ways on paid.',
+    },
+    flags,
+    thresholds_found: thresholdR.rows.length,
+  };
+}
+
+module.exports = { buildValidation, VIEW_FLOOR, MIN_HOURS };
