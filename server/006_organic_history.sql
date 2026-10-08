@@ -48,6 +48,13 @@ create or replace function organic_perf_snapshot() returns trigger as $$
 declare
   last_row organic_perf_history;
 begin
+  -- organic_perf can hold rows for posts whose creative is not registered
+  -- yet. They have no creative to attach history to, and a trigger that
+  -- raised here would break the pull that wrote them.
+  if new.creative_id is null then
+    return null;
+  end if;
+
   select * into last_row
     from organic_perf_history
    where creative_id = new.creative_id
@@ -92,7 +99,9 @@ create trigger organic_perf_history_trg
 -- ---------------------------------------------------------------------
 --  Seed: today's numbers become each post's first history point, so
 --  velocity starts accumulating from now rather than from the first
---  future change.
+--  future change. Rows with no creative_id are organic pulls for posts
+--  that were never registered as creatives; they are skipped, and they
+--  start a history of their own once the creative is added.
 -- ---------------------------------------------------------------------
 insert into organic_perf_history
   (creative_id, platform, captured_at, views, reach, likes, comments,
@@ -100,4 +109,5 @@ insert into organic_perf_history
 select creative_id, platform, date_trunc('minute', now()), views, reach,
        likes, comments, shares, saves, total_interactions, avg_watch_time, time_posted
   from organic_perf
+ where creative_id is not null
 on conflict (creative_id, platform, captured_at) do nothing;
