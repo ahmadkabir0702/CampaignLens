@@ -695,7 +695,10 @@ async function loadOrganicValidation(detailsEl, creativeId) {
     box.innerHTML = buildValidationHTML(data);
     box.dataset.loadedFor = creativeId;
   } catch (err) {
-    box.innerHTML = `<div class="organic-empty">Could not load validation: ${String(err.message || err)}</div>`;
+    // The numbers themselves came with the dashboard payload, so a failed
+    // validation call falls back to showing them rather than nothing.
+    const fallback = box.dataset.fallback ? decodeURIComponent(box.dataset.fallback) : '';
+    box.innerHTML = `<div class="organic-empty">Could not load the validation detail: ${String(err.message || err)}</div>${fallback}`;
   }
 }
 
@@ -711,7 +714,14 @@ function buildValidationHTML(v) {
     return `<div class="organic-empty">This creative has no organic platform on file, so there is nothing to validate.</div>`;
   }
 
-  const gradeChip = (g) => g ? `<span class="val-badge ${GRADE_CLASS[g] || 'inv-bg'}">${g}</span>` : `<span class="val-badge inv-bg">No threshold</span>`;
+  const gradeChip = (g) => g ? `<span class="val-badge ${GRADE_CLASS[g] || 'inv-bg'}">${g}</span>` : '';
+
+  // "No data" and "no benchmark" are different things and the panel says
+  // which. Instagram and Facebook do not return watch time for organic
+  // posts, so their retention is absent, not unmeasured-and-weak.
+  const statusChip = (status) => status === 'no_data'
+    ? `<span class="val-badge inv-bg">Not reported</span>`
+    : `<span class="val-badge inv-bg">No benchmark</span>`;
 
   // A rate with its grade and, where there are enough peers, its standing.
   const rateRow = (label, part, unit) => {
@@ -721,8 +731,26 @@ function buildValidationHTML(v) {
       ? '' : `<span class="orgval-pct">${part.percentile}th percentile</span>`;
     return `<div class="orgval-rate">
       <span class="organic-stat-label">${label}</span>
-      <span class="orgval-rate-right">${place}<span class="organic-stat-val">${val}</span>${gradeChip(part.grade)}</span>
+      <span class="orgval-rate-right">${place}<span class="organic-stat-val">${val}</span>${part.grade ? gradeChip(part.grade) : statusChip(part.status)}</span>
     </div>`;
+  };
+
+  // The raw counts, in each platform's own naming.
+  const countsBlock = (p) => {
+    const isFb = p.platform === 'fb';
+    const rows = [
+      [isFb ? 'Video views' : 'Views', p.views],
+      ['Reach', p.reach],
+      [isFb ? 'Reactions' : 'Likes', p.likes],
+      ['Comments', p.comments],
+      ['Saves', p.saves],
+      ['Shares', p.shares],
+    ].filter(([, v]) => v !== null && v !== undefined);
+    const watch = p.avg_watch_time
+      ? `<div class="organic-stat-row"><span class="organic-stat-label">Avg watch</span><span class="organic-stat-val">${p.avg_watch_time}s</span></div>` : '';
+    return `<div class="orgval-counts">${rows.map(([l, v]) =>
+      `<div class="organic-stat-row"><span class="organic-stat-label">${l}</span><span class="organic-stat-val">${fmtN(v)}</span></div>`
+    ).join('')}${watch}</div>`;
   };
 
   const platBlocks = v.platforms.map(p => {
@@ -748,8 +776,10 @@ function buildValidationHTML(v) {
     return `<div class="orgval-plat">
       <div class="orgval-plat-head">
         <span class="organic-platform" style="margin:0">${esc(p.label)}</span>
-        ${gradeChip(p.cqr)}
+        ${p.cqr ? gradeChip(p.cqr) : `<span class="val-badge inv-bg">Unrated</span>`}
       </div>
+      ${countsBlock(p)}
+      <div class="orgval-divider">How it is judged</div>
       ${rateRow('Retention', p.retention, '%')}
       ${rateRow('Engagement', p.engagement, '%')}
       <div class="orgval-line"><b>Why:</b> ${esc(p.reason)}</div>
@@ -977,14 +1007,10 @@ function renderDetail(d) {
       ${statsHTML}
       ${buildCreativeBriefHTML(d)}
 
-      <details class="org-details" style="margin-top:12px;">
-        <summary class="org-summary">Organic Performance <span style="color:var(--c-muted);font-size:10px;">Click to expand ▼</span></summary>
-        <div class="org-content">${buildOrganicHTML(d)}</div>
-      </details>
-
       <details class="org-details" style="margin-top:12px;" ontoggle="loadOrganicValidation(this, '${d.id}')">
-        <summary class="org-summary">Organic Validation <span style="color:var(--c-muted);font-size:10px;">Why this rating, and whether to boost ▼</span></summary>
-        <div class="org-content" id="orgValContent"><div class="organic-empty">Loading…</div></div>
+        <summary class="org-summary">Organic Performance <span style="color:var(--c-muted);font-size:10px;">Numbers, why this rating, and whether to boost ▼</span></summary>
+        <div class="org-content"
+             data-fallback="${encodeURIComponent(buildOrganicHTML(d))}"><div class="organic-empty">Loading…</div></div>
       </details>
 
       <div style="margin-top:14px">${recsHTML}</div>

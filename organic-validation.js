@@ -79,9 +79,21 @@ function pickThreshold(rows, platKey, metricPrefix, durationS) {
   return candidates[0];
 }
 
-// Where one rate falls inside its own threshold band.
+/**
+ * Where one rate falls inside its own threshold band.
+ *
+ * Three outcomes, kept apart on purpose. A platform that never returns
+ * average watch time has no retention to grade, which is not the same
+ * as a benchmark nobody has set, and neither is a weak post.
+ */
+function statusOf(rate, th) {
+  if (rate === null || rate === undefined) return 'no_data';
+  if (!th) return 'no_threshold';
+  return 'graded';
+}
+
 function grade(rate, th) {
-  if (rate === null || !th) return null;
+  if (rate === null || rate === undefined || !th) return null;
   const v = Number(rate);
   const poorLt = th.poor_lt === null ? null : Number(th.poor_lt);
   const goodGte = th.good_gte === null ? null : Number(th.good_gte);
@@ -97,10 +109,23 @@ const WATCH_WORDS = { Good: 'people watch it', Average: 'people watch some of it
 const ENGAGE_WORDS = { Good: 'and they interact with it', Average: 'and interaction is middling', Poor: 'but almost nobody interacts' };
 const S_RANK = { Good: 0, Average: 1, Poor: 2 };
 
-function reasonFor(cqr, retG, engG) {
-  if (!retG && !engG) return 'No threshold is set for this platform and length, so there is nothing to grade it against.';
-  if (retG && !engG) return `Rated ${cqr || 'unscored'} on retention alone: ${WATCH_WORDS[retG]}. No engagement threshold is set for this platform.`;
-  if (!retG && engG) return `Rated ${cqr || 'unscored'} on engagement alone: ${ENGAGE_WORDS[engG].replace(/^and |^but /, '')}. No retention threshold is set for this platform and length.`;
+// Why one half is missing, in the words that match the actual cause.
+function missingWhy(half, status) {
+  const metric = half === 'retention' ? 'Retention' : 'Engagement';
+  if (status === 'no_data') {
+    return half === 'retention'
+      ? 'Retention is not available here: this platform does not return average watch time for organic posts.'
+      : 'Engagement is not available here: this platform returned no interaction counts for the post.';
+  }
+  return `${metric} is not graded here: no benchmark is set for this platform${half === 'retention' ? ' and length' : ''}.`;
+}
+
+function reasonFor(cqr, retG, engG, retStatus, engStatus) {
+  if (!retG && !engG) {
+    return `${missingWhy('retention', retStatus)} ${missingWhy('engagement', engStatus)} There is nothing to grade this post against yet.`;
+  }
+  if (retG && !engG) return `Rated ${cqr || 'unscored'} on retention alone: ${WATCH_WORDS[retG]}. ${missingWhy('engagement', engStatus)}`;
+  if (!retG && engG) return `Rated ${cqr || 'unscored'} on engagement alone: ${ENGAGE_WORDS[engG].replace(/^and |^but /, '')}. ${missingWhy('retention', retStatus)}`;
   if (retG === engG) return `Rated ${cqr || 'unscored'} on both halves: retention ${retG} and engagement ${engG}.`;
   // The interesting case: the two halves disagree, which the single grade hides.
   const lead = `Rated ${cqr || 'unscored'}, but the two halves disagree.`;
@@ -140,7 +165,7 @@ function placeAmong(value, peers) {
 // ---------------------------------------------------------------------
 //  3. Recommendation, per platform
 // ---------------------------------------------------------------------
-function recommendFor({ platLabel, cqr, retG, engG, standing, delivered, tooNew, missing }) {
+function recommendFor({ platLabel, cqr, retG, engG, retStatus, engStatus, standing, delivered, tooNew, missing }) {
   if (missing) {
     return { action: 'no_data', confidence: 'none',
       text: `No ${platLabel} data came back for this post, so there is nothing to judge. That is not the same as a weak post — check the post is still live and, if it is a collaboration owned by the creator's account, that the numbers are being collected from their side.` };
@@ -154,8 +179,11 @@ function recommendFor({ platLabel, cqr, retG, engG, standing, delivered, tooNew,
       text: `Too little delivery on ${platLabel} to judge yet (under ${VIEW_FLOOR.toLocaleString()} views). Wait rather than act on this.` };
   }
   if (!cqr && !retG && !engG) {
+    const bothMissing = retStatus === 'no_data' && engStatus === 'no_data';
     return { action: 'no_grade', confidence: 'none',
-      text: `No benchmark is set for ${platLabel} at this length, so the numbers cannot be graded. Add the thresholds for this platform and the rating will appear on its own.` };
+      text: bothMissing
+        ? `${platLabel} returned no watch time and no interaction counts for this post, so there is nothing to grade. Check the post is still live and reachable from the brand token.`
+        : `Nothing gradeable came back for ${platLabel} at this length. ${retStatus === 'no_threshold' || engStatus === 'no_threshold' ? 'Adding the missing benchmark for this platform will make the rating appear on its own.' : ''}`.trim() };
   }
   const strong = standing && standing.percentile !== null && standing.percentile >= 70;
   const weakStanding = standing && standing.percentile !== null && standing.percentile < 30;
@@ -177,11 +205,26 @@ function recommendFor({ platLabel, cqr, retG, engG, standing, delivered, tooNew,
     return { action: 'recut', confidence: 'medium',
       text: `Hold the spend on ${platLabel} and recut the opening. The people who stay engage with it, so the idea works; most never get far enough to see it.` };
   }
+  // Only one half exists on this platform, so the rating rests on it
+  // alone. Saying "both halves" here would be a claim about data that
+  // was never collected.
+  const halves = [retG, engG].filter(Boolean).length;
+  if (halves === 1) {
+    const only = retG ? 'retention' : 'engagement';
+    const g = retG || engG;
+    if (g === 'Poor') {
+      return { action: 'hold', confidence: 'medium',
+        text: `Hold the spend on ${platLabel}. ${only === 'retention' ? 'People drop off early' : 'Almost nobody interacts'}, and it is the only half this platform reports, so there is nothing else to weigh against it.` };
+    }
+    return { action: 'hold', confidence: 'low',
+      text: `Middling on ${platLabel}, judged on ${only} alone because it is the only half this platform reports. Not weak, but not a case for spend ahead of a stronger post either.` };
+  }
+
   // Still Average, but one half is actually Poor: name it rather than
   // calling the whole thing middling.
   if (retG === 'Poor' || engG === 'Poor') {
     const weak = retG === 'Poor' ? 'retention' : 'engagement';
-    const other = retG === 'Poor' ? `engagement ${engG || 'ungraded'}` : `retention ${retG || 'ungraded'}`;
+    const other = retG === 'Poor' ? `engagement ${engG}` : `retention ${retG}`;
     return { action: 'hold', confidence: 'medium',
       text: `Hold the spend on ${platLabel}. ${weak === 'retention' ? 'People drop off early' : 'Almost nobody interacts'}, and ${other} is not enough on its own to carry a boost.` };
   }
@@ -384,6 +427,8 @@ async function buildValidation(brandId, creativeId) {
 
     const retG = grade(o.retention_rate, retTh);
     const engG = grade(o.engagement_rate, engTh);
+    const retStatus = statusOf(o.retention_rate, retTh);
+    const engStatus = statusOf(o.engagement_rate, engTh);
     const delivered = num(o.views) !== null && num(o.views) >= VIEW_FLOOR;
     const tooNew = hoursSince !== null && hoursSince < MIN_HOURS;
     const peers = peersBy[plat] || [];
@@ -404,28 +449,35 @@ async function buildValidation(brandId, creativeId) {
       label: meta.label,
       missing: false,
       cqr: o.cqr || null,
+      // Raw counts, so the panel shows the numbers and what they mean in
+      // one place rather than in two sections the reader has to join up.
       views: num(o.views),
       reach: num(o.reach),
+      likes: num(o.likes),
+      comments: num(o.comments),
+      shares: num(o.shares),
+      saves: num(o.saves),
       interactions: num(o.total_interactions),
       avg_watch_time: r1(o.avg_watch_time),
       time_posted: o.time_posted,
       retention: {
-        rate: r1(o.retention_rate), grade: retG,
+        rate: r1(o.retention_rate), grade: retG, status: retStatus,
         band: retTh ? { poor_lt: num(retTh.poor_lt), good_gte: num(retTh.good_gte), source: retTh.brand_id ? 'brand' : 'global' } : null,
         percentile: standing.retention.percentile,
       },
       engagement: {
         rate: o.engagement_rate === null ? null : Math.round(Number(o.engagement_rate) * 100) / 100,
-        grade: engG,
+        grade: engG, status: engStatus,
         band: engTh ? { poor_lt: num(engTh.poor_lt), good_gte: num(engTh.good_gte), source: engTh.brand_id ? 'brand' : 'global' } : null,
         percentile: standing.engagement.percentile,
       },
-      reason: reasonFor(o.cqr, retG, engG),
+      reason: reasonFor(o.cqr, retG, engG, retStatus, engStatus),
       standing,
       velocity: velocity[plat] || null,
       delivered, too_new: tooNew,
       recommendation: recommendFor({
-        platLabel: meta.label, cqr: o.cqr, retG, engG, standing, delivered, tooNew, missing: false,
+        platLabel: meta.label, cqr: o.cqr, retG, engG, retStatus, engStatus,
+        standing, delivered, tooNew, missing: false,
       }),
     };
   });
