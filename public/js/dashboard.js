@@ -455,10 +455,14 @@ function renderKPIs(data) {
     .filter(d => (d.date || '').startsWith(thisMonth) && KPI_RANK[d.cqr] !== undefined)
     .sort((a, b) => rank(a) - rank(b) || (b.reach || 0) - (a.reach || 0))
     .slice(0, 5);
-  // Worst first, then most spend, so the one named is the one costing most.
+  // Worst first, then most recent. Deliberately NOT by spend: the figure
+  // on a creative is its lifetime spend, and most of that was spent while
+  // it was still performing. Showing it against a creative that has only
+  // just turned weak reads as money already wasted, which is not what
+  // happened.
   KPI_LISTS.weak = data
     .filter(d => d.boostState === 'running' && KPI_RANK[d.cqr] !== undefined)
-    .sort((a, b) => rank(b) - rank(a) || (b.spend || 0) - (a.spend || 0))
+    .sort((a, b) => rank(b) - rank(a) || String(b.date || '').localeCompare(String(a.date || '')))
     .slice(0, 5);
   const top = KPI_LISTS.top[0];
   const worst = KPI_LISTS.weak[0];
@@ -506,7 +510,7 @@ function renderKPIs(data) {
     namedTile('Top creative this month', top, 'Best rated this month',
               'No rated creative published this month yet', 'top') +
     namedTile('Weakest live creative', worst,
-              worst ? `${fmt(Math.round(worst.spend || 0))} behind it` : '',
+              worst ? (worst.campaign || 'Currently running') : '',
               'Nothing rated is currently running', 'weak');
 
   // A list left open while the data reloads would show stale rows.
@@ -541,7 +545,7 @@ function toggleKpiList(key) {
         <tr onclick="selectCard('${d.id}')" title="Open this creative">
           <td class="kpi-list-n">${i + 1}</td>
           <td>${d.short || d.id}<div class="fat-dates">${d.campaign || ''}${d.month ? ' · ' + d.month : ''}</div></td>
-          <td class="kpi-list-num">${key === 'weak' ? fmt(Math.round(d.spend || 0)) : fmtN(d.reach || 0) + ' reach'}</td>
+          <td class="kpi-list-num">${key === 'weak' ? '' : fmtN(d.reach || 0) + ' reach'}</td>
           <td class="kpi-list-grade"><span class="cqr-badge ${cqrClass(d.cqr)}">${d.cqr}</span></td>
         </tr>`).join('')}
       </tbody>
