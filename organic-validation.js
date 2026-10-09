@@ -480,6 +480,14 @@ function reactionRead(o) {
 //  The build
 // ---------------------------------------------------------------------
 async function buildValidation(brandId, creativeId) {
+  // The peer query needs this creative's type, so that one read comes
+  // first and the rest run together behind it.
+  const typeR = await query(
+    `select type from creatives where creative_id = $1 and brand_id = $2`,
+    [creativeId, brandId]);
+  if (!typeR.rows.length) return null;
+  const creativeType = typeR.rows[0].type;
+
   const [creativeR, organicR, thresholdR, peerR, paidR] = await Promise.all([
     queryTolerant(
       `select c.creative_id, c.brand_id, c.type, c.campaign, c.date, c.duration_s,
@@ -510,14 +518,21 @@ async function buildValidation(brandId, creativeId) {
 
     // The brand's own organic, same window, for the standing. Scored rows
     // only — an unscored post is not a yardstick.
+    // Peers for the standing, and for working out what this platform
+    // actually reports. Both have to be like for like on type as well as
+    // platform. Brand Say posts come through the platform APIs and carry
+    // watch time; Others Say posts are scraped and never do. And the two
+    // store engagement on different scales, so ranking one against the
+    // other compares 0.02 with 2.57 and produces a meaningless percentile.
     query(
       `select s.platform, s.retention_rate, s.engagement_rate, s.cqr
          from v_organic_scored s
          join creatives c on c.creative_id = s.creative_id
         where c.brand_id = $1
           and c.creative_id <> $2
+          and c.type is not distinct from $4
           and (c.date is null or c.date >= current_date - ($3)::int)`,
-      [brandId, creativeId, STANDING_DAYS]),
+      [brandId, creativeId, STANDING_DAYS, creativeType]),
 
     // Paid creative-platform pairs with their tags, for the winners match.
     query(
