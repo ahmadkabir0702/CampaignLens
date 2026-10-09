@@ -65,7 +65,10 @@ summary:focus-visible,.nav-item:focus-visible,.card:focus-visible,
   outline:none; box-shadow:0 0 0 3px rgba(0,0,80,.18); border-radius:var(--r-btn);
 }
 
-@media (prefers-reduced-motion:reduce){*{animation:none!important;transition:none!important}}
+/* Reduced motion is handled per component, near the bottom of this file.
+   A blanket transition:none used to live here, which removed the press
+   and hover feedback as well as the travel. Reduced motion asks for a
+   gentler equivalent, not for the interface to stop answering. */
 
 /* ---------- Shell: one top bar, no sidebar ------------------------ */
 .app{display:flex;flex-direction:column;height:100vh;overflow:hidden}
@@ -108,7 +111,11 @@ summary:focus-visible,.nav-item:focus-visible,.card:focus-visible,
 
 /* ---------- Page head + filters ----------------------------------- */
 .page-head{display:flex;align-items:center;gap:12px;margin-bottom:16px;flex-wrap:wrap}
-.page-head h1{font:400 26px/34px var(--font);color:var(--ink-900)}
+/* Tracking is size-specific. Letters read too far apart as they grow, so
+   display sizes tighten and small labels open up a fraction. A single
+   letter-spacing value across a type scale is wrong at one end or the
+   other, and this file used to set 0 on everything down to 26px. */
+.page-head h1{font:400 26px/34px var(--font);color:var(--ink-900);letter-spacing:-.021em}
 .page-head .spacer{flex:1}
 
 select,.search-input,.modal-input,.kfi-select{
@@ -208,7 +215,7 @@ select:focus,.search-input:focus,.modal-input:focus{outline:none;border-color:va
 /* A tile that filters the grid says so by behaving like a control. */
 .kpi-click{cursor:pointer;transition:box-shadow .15s var(--ease),transform .15s var(--ease)}
 .kpi-click:hover{box-shadow:0 2px 10px rgba(0,0,80,.10);transform:translateY(-1px)}
-.kpi-named{font:400 18px/26px var(--font);color:var(--ink-900);
+.kpi-named{font:400 18px/26px var(--font);color:var(--ink-900);letter-spacing:-.011em;
   margin-top:2px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 .kpi-none{color:var(--ink-400)}
 .kpi-more{font:400 11.5px var(--font);color:var(--ink-400);
@@ -216,9 +223,28 @@ select:focus,.search-input:focus,.modal-input:focus{outline:none;border-color:va
 .kpi-open{box-shadow:0 0 0 2px var(--navy) inset}
 
 /* The five behind a named tile, opened under the bar rather than on
-   another page. */
-.kpi-drawer{background:var(--white);border-radius:var(--r-card);
-  padding:16px 20px;margin:-14px 0 28px}
+   another page.
+
+   Three elements rather than one: the outer clips and carries the height
+   a spring drives, the inner carries the slide and fade, and the card
+   carries the surface and scales out of the tile that opened it. Height
+   is a layout property and §11 asks for transform and opacity only, but
+   the grid below has to be pushed down, so the compromise is to keep the
+   layout work on this one small subtree and put every pixel of visible
+   motion on the compositor. */
+.kpi-drawer{height:0;overflow:hidden;margin:0}
+.kpi-drawer-inner{
+  padding-bottom:28px;
+  transform:translateY(var(--dz,0px));
+  opacity:var(--df,1);
+  will-change:transform,opacity;
+}
+.kpi-drawer-card{
+  background:var(--white);border-radius:var(--r-card);padding:16px 20px;
+  transform:scale(var(--ds,1));
+  transform-origin:50% 0;
+  will-change:transform;
+}
 .kpi-drawer-head{display:flex;align-items:center;justify-content:space-between;
   font:500 14px/20px var(--font);color:var(--ink-900);margin-bottom:6px}
 .kpi-drawer-close{border:0;background:none;cursor:pointer;
@@ -238,9 +264,9 @@ select:focus,.search-input:focus,.modal-input:focus{outline:none;border-color:va
 .kpi,.stat-card{background:var(--white);border-radius:var(--r-card);padding:18px 20px;border:0}
 .kpi-label,.stat-title{
   font:400 13px/18px var(--font);color:var(--ink-600);
-  text-transform:none;letter-spacing:0;margin-bottom:8px;
+  text-transform:none;letter-spacing:.004em;margin-bottom:8px;
 }
-.kpi-val,.stat-value{font:400 28px/34px var(--font);letter-spacing:0;color:var(--ink-900)}
+.kpi-val,.stat-value{font:400 28px/34px var(--font);letter-spacing:-.022em;color:var(--ink-900)}
 .kpi-sub,.stat-sub{font:400 13px/19px var(--font);color:var(--ink-600);margin-top:4px}
 
 /* ---------- Chips and tags — pills, sentence case ------------------ */
@@ -373,7 +399,7 @@ select:focus,.search-input:focus,.modal-input:focus{outline:none;border-color:va
   .card:hover .card-thumb img{transform:none}
 }
 
-.card-name{font:500 16px/22px var(--font);color:var(--ink-900);word-break:break-all;margin-bottom:1px}
+.card-name{font:500 16px/22px var(--font);color:var(--ink-900);letter-spacing:-.008em;word-break:break-all;margin-bottom:1px}
 .card-campaign{font:400 13px/19px var(--font);color:var(--ink-600);margin-bottom:11px}
 .card-tags{display:flex;gap:6px;flex-wrap:wrap;margin-bottom:14px}
 
@@ -381,7 +407,7 @@ select:focus,.search-input:focus,.modal-input:focus{outline:none;border-color:va
 .mini-bar-row{display:grid;grid-template-columns:44px 1fr 56px;align-items:center;gap:10px}
 .mini-bar-label{
   font:400 12.5px/1 var(--font);color:var(--ink-600);
-  text-transform:none;letter-spacing:0;
+  text-transform:none;letter-spacing:.006em;
 }
 .mini-bar-track{height:5px;background:var(--canvas);border-radius:3px;overflow:hidden}
 .mini-bar-fill{height:100%;border-radius:3px;background:var(--navy)}
@@ -393,14 +419,33 @@ select:focus,.search-input:focus,.modal-input:focus{outline:none;border-color:va
 }
 
 /* ---------- Modals ------------------------------------------------- */
+/* The scrim dims to focus and blurs what is behind, so the page reads as
+   pushed back rather than merely tinted. Its opacity is driven by a
+   spring, hence the custom property. */
 .modal-overlay,.creative-modal-overlay{
-  position:fixed;inset:0;background:rgba(0,0,80,.28);
+  position:fixed;inset:0;background:rgba(10,10,46,.26);
+  -webkit-backdrop-filter:blur(14px) saturate(115%);
+  backdrop-filter:blur(14px) saturate(115%);
   display:none;align-items:center;justify-content:center;z-index:100;padding:24px;
+  opacity:var(--scrim,1);
 }
 .creative-modal,.modal-overlay>div{
   background:var(--white);border:0;border-radius:var(--r-card);
   box-shadow:var(--shadow-pop);max-width:900px;width:100%;max-height:88vh;overflow-y:auto;
 }
+/* Enter and exit on one path: it grows out of the card that opened it and
+   shrinks back into it. Blur moves with the scale so the panel reads as a
+   surface arriving, not an image cross-fading. */
+.creative-modal{
+  transform:translateY(var(--sheet-y,0px)) scale(var(--sheet-s,1));
+  filter:blur(var(--sheet-blur,0px));
+  will-change:transform,filter;
+}
+/* The header is the handle. Dragging it down dismisses, which is how a
+   sheet behaves on touch; the grab is 1:1 and resists past the top. */
+.creative-modal .detail-header{touch-action:none;cursor:grab}
+.creative-modal.is-dragging{cursor:grabbing}
+.creative-modal.is-dragging .detail-header{cursor:grabbing}
 .creative-modal-overlay{z-index:100}
 #addCreativeModal{z-index:110}
 #actionModal{z-index:120}
@@ -413,7 +458,7 @@ select:focus,.search-input:focus,.modal-input:focus{outline:none;border-color:va
 
 .detail-header{display:flex;align-items:flex-start;justify-content:space-between;gap:16px;margin-bottom:20px}
 .detail-title{
-  font:400 26px/34px var(--font);color:var(--ink-900);letter-spacing:0;
+  font:400 26px/34px var(--font);color:var(--ink-900);letter-spacing:-.021em;
   display:flex;align-items:center;gap:9px;flex-wrap:wrap;
 }
 .detail-meta{font:400 14px/20px var(--font);color:var(--ink-600);margin-top:5px}
@@ -427,7 +472,7 @@ select:focus,.search-input:focus,.modal-input:focus{outline:none;border-color:va
 .detail-metrics{display:grid;grid-template-columns:repeat(auto-fit,minmax(160px,1fr));gap:14px}
 .dm{background:var(--canvas-2);border:0;border-radius:var(--r-card);padding:16px}
 .dm-label{font:400 13px/18px var(--font);color:var(--ink-600);text-transform:none;letter-spacing:0;margin-bottom:7px}
-.dm-val{font:400 24px/30px var(--font);letter-spacing:0;color:var(--ink-900)}
+.dm-val{font:400 24px/30px var(--font);letter-spacing:-.018em;color:var(--ink-900)}
 .big-cqr{font-size:20px}
 .dm-val.big-cqr{background:none!important;padding:0}
 .dm-val.cqr-good{color:var(--pos);background:none}
@@ -1122,3 +1167,159 @@ select:focus,.search-input:focus,.modal-input:focus{outline:none;border-color:va
 }
 .rv-content-sub { margin-top: 6px; color: #7A2A2A; }
 .rv-content-note { margin-top: 12px; font-size: 12px; color: #4A4A75; }
+
+/* =====================================================================
+   Fluid interface layer — Creative Hub
+   ---------------------------------------------------------------------
+   Press feedback, materials and the accessibility signals, following
+   Apple's fluid-interface guidance translated to the web. The motion
+   itself lives in js/motion.js, because a CSS transition cannot be
+   grabbed and reversed halfway through; springs can.
+   ===================================================================== */
+
+/* ---------- 1. Response: feedback on the press, not the release ------
+   Every interactive surface in the Hub used to answer on :hover only,
+   which is nothing at all on a touchscreen and arrives late everywhere
+   else. js/motion.js adds .is-pressed on pointerdown and drops it after
+   10px of movement, so a scroll that begins on a card does not leave the
+   card lit. Large surfaces scale less than small ones: the same 3% on a
+   280px card reads as a lurch. */
+[data-press]{
+  transition:transform .09s cubic-bezier(.3,0,.4,1),
+             box-shadow .09s cubic-bezier(.3,0,.4,1),
+             background-color .12s var(--ease);
+  -webkit-tap-highlight-color:transparent;
+}
+.card[data-press].is-pressed,
+.kpi[data-press].is-pressed{transform:scale(.988)}
+.kpi-list tr[data-press].is-pressed td{background:var(--sel)}
+.sort-btn[data-press].is-pressed,
+.pt[data-press].is-pressed,
+.filters-btn[data-press].is-pressed,
+.filter-pill[data-press].is-pressed,
+.nav-item[data-press].is-pressed,
+.close-btn[data-press].is-pressed,
+.kpi-drawer-close[data-press].is-pressed,
+.btn-outline[data-press].is-pressed,
+.modal-btn[data-press].is-pressed{transform:scale(.955)}
+.card-play[data-press].is-pressed,
+.detail-play[data-press].is-pressed{transform:scale(.92);background:#fff}
+.detail-play[data-press].is-pressed{transform:translate(-50%,-50%) scale(.92)}
+/* Pressing a card should feel like pushing it into the page, so the lift
+   it has on hover comes off at the same time. */
+.card[data-press].is-pressed{box-shadow:0 1px 3px rgba(0,0,80,.10)}
+.kpi-click.is-pressed{box-shadow:0 1px 3px rgba(0,0,80,.08)}
+
+/* A hit target you have to aim at is a latency of its own. The drawer
+   close was a 20px glyph with 2px of padding. */
+.kpi-drawer-close{
+  width:30px;height:30px;display:grid;place-items:center;
+  border-radius:var(--r-btn);margin:-4px -6px -4px 0;
+}
+.kpi-drawer-close:hover{background:var(--canvas-2)}
+
+/* ---------- 2. Material: the one bar content actually passes under ----
+   The top bar is a flex sibling of the scroll area, so nothing ever
+   travels beneath it and translucency there would be decoration. The
+   grid header is different: the whole card grid scrolls under it, so it
+   becomes a floating layer, and the hard 1px rule under it is replaced
+   by a scroll edge effect that only appears once there is something
+   overlapping to separate from. */
+.grid-header{
+  position:sticky;top:0;z-index:5;
+  padding:12px 0 11px;margin-bottom:2px;
+  background:rgba(234,239,243,.72);
+  -webkit-backdrop-filter:blur(18px) saturate(170%);
+  backdrop-filter:blur(18px) saturate(170%);
+}
+.grid-header::after{
+  content:'';position:absolute;left:0;right:0;top:100%;height:18px;
+  pointer-events:none;
+  background:linear-gradient(to bottom,rgba(234,239,243,.85),rgba(234,239,243,0));
+}
+/* Vibrancy: text over a blurred, moving backdrop needs more contrast and
+   a touch more weight than the same text on a solid panel, or it goes
+   soft as the content behind it changes. */
+.grid-header .grid-header-title{color:var(--ink-700);font-weight:400;letter-spacing:.004em}
+.grid-header .sort-btn{
+  background:rgba(255,255,255,.78);
+  -webkit-backdrop-filter:blur(6px);backdrop-filter:blur(6px);
+  border-color:rgba(220,220,230,.9);
+}
+.grid-header .sort-btn.active{
+  background:var(--sel);border-color:var(--sel-line);
+  -webkit-backdrop-filter:none;backdrop-filter:none;
+}
+
+/* A bigger surface reads as thicker: more blur and a deeper shadow than
+   a chip gets. The modal is the largest floating surface here. */
+.creative-modal{box-shadow:0 24px 60px -12px rgba(0,0,80,.30),0 4px 12px rgba(0,0,80,.08)}
+
+/* ---------- 3. Reduced motion ----------------------------------------
+   Not "no feedback": the press, the colour and the opacity all stay. The
+   travel, the scale and the parallax go, and the springs in motion.js
+   set their end value immediately. */
+@media (prefers-reduced-motion:reduce){
+  .card-thumb img{transition:none}
+  .card:hover .card-thumb img{transform:none}
+  /* Keep the press, drop the displacement. */
+  .card[data-press].is-pressed,
+  .kpi[data-press].is-pressed{transform:none;background:var(--canvas-2)}
+  .sort-btn[data-press].is-pressed,
+  .pt[data-press].is-pressed,
+  .filters-btn[data-press].is-pressed,
+  .filter-pill[data-press].is-pressed,
+  .nav-item[data-press].is-pressed,
+  .close-btn[data-press].is-pressed,
+  .kpi-drawer-close[data-press].is-pressed,
+  .btn-outline[data-press].is-pressed,
+  .modal-btn[data-press].is-pressed{transform:none;background:var(--sel)}
+  .card-play[data-press].is-pressed{transform:none}
+  .detail-play[data-press].is-pressed{transform:translate(-50%,-50%)}
+  .kpi-drawer-card,.kpi-drawer-inner,.creative-modal{transform:none!important}
+  .creative-modal{filter:none!important}
+  /* The sheet still arrives, as a short cross-fade rather than a move. */
+  .kpi-drawer-inner{transition:opacity .2s ease}
+}
+
+/* ---------- 4. Reduced transparency ----------------------------------
+   Frostier means solid: raise the background to opaque and drop the blur
+   rather than leaving a half-legible pane. */
+@media (prefers-reduced-transparency:reduce){
+  .modal-overlay,.creative-modal-overlay{
+    background:rgba(10,10,46,.55);
+    -webkit-backdrop-filter:none;backdrop-filter:none;
+  }
+  .grid-header{
+    background:var(--canvas);
+    -webkit-backdrop-filter:none;backdrop-filter:none;
+    border-bottom:1px solid var(--line-soft);
+  }
+  .grid-header::after{display:none}
+  .grid-header .sort-btn{
+    background:var(--white);
+    -webkit-backdrop-filter:none;backdrop-filter:none;
+    border-color:var(--line);
+  }
+  .card-play,.detail-play{background:#fff}
+}
+
+/* ---------- 5. Increased contrast ------------------------------------
+   Near-solid backgrounds with a border that is actually visible. */
+@media (prefers-contrast:more){
+  .card,.kpi,.kpi-drawer-card{border:1px solid var(--ink-300)}
+  .grid-header{
+    background:var(--white);
+    -webkit-backdrop-filter:none;backdrop-filter:none;
+    border-bottom:1px solid var(--ink-300);
+  }
+  .grid-header::after{display:none}
+  .sort-btn{border-color:var(--ink-400);color:var(--ink-900)}
+  .sort-btn.active{background:var(--navy);color:#fff;border-color:var(--navy)}
+  .card-play,.detail-play{background:#fff;box-shadow:0 0 0 1.5px var(--navy)}
+  .modal-overlay,.creative-modal-overlay{
+    background:rgba(10,10,46,.7);
+    -webkit-backdrop-filter:none;backdrop-filter:none;
+  }
+  .kpi-list td{border-bottom-color:var(--ink-300)}
+}

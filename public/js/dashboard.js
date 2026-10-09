@@ -472,7 +472,7 @@ function renderKPIs(data) {
 
   const tile = (label, value, sub, o = {}) => `
     <div class="kpi ${o.filter ? 'kpi-click' : ''}"
-         ${o.filter ? `onclick="hubTileFilter('${o.filter}')" title="Show these in the grid"` : ''}>
+         ${o.filter ? `data-press onclick="hubTileFilter('${o.filter}')" title="Show these in the grid"` : ''}>
       <div class="kpi-label">${label}</div>
       <div class="kpi-val"${o.color ? ` style="color:${o.color}"` : ''}>${value}</div>
       <div class="kpi-sub">${sub}</div>
@@ -481,7 +481,8 @@ function renderKPIs(data) {
   // A named creative rather than a number, so it is wider and opens the
   // creative instead of filtering to it.
   const namedTile = (label, d, sub, emptySub, key) => d ? `
-    <div class="kpi kpi-wide kpi-click" onclick="toggleKpiList('${key}')" title="Show the top five">
+    <div class="kpi kpi-wide kpi-click" data-press
+         onclick="toggleKpiList('${key}', this)" title="Show the top five">
       <div class="kpi-label">${label}<span class="kpi-more" id="kpi-more-${key}">${
         KPI_LISTS[key].length > 1 ? `+${KPI_LISTS[key].length - 1} more` : ''}</span></div>
       <div class="kpi-named">${d.short || d.id}</div>
@@ -519,15 +520,66 @@ function renderKPIs(data) {
 
 let kpiListOpen = null;
 
-function closeKpiList() {
-  kpiListOpen = null;
+// ---------------------------------------------------------------------
+//  The top-five drawer
+//
+//  One spring drives a single 0..1 progress, and the height, slide, fade
+//  and scale are all read off it. Driving them from separate springs
+//  would let them desync; driving them from one cannot.
+//
+//  Because the spring re-reads its position every time it is re-targeted,
+//  clicking the tile again while the drawer is still closing reverses
+//  from wherever it had got to, at the speed it was already moving. There
+//  is no wait for the close to finish and no jump back to the top.
+// ---------------------------------------------------------------------
+let drawerP = 0;          // what is on screen right now
+let drawerH = 0;          // measured natural height of the content
+let drawerSpring = null;
+
+function paintDrawer(p) {
   const el = document.getElementById('kpi-drawer');
-  if (el) { el.hidden = true; el.innerHTML = ''; }
+  if (!el) return;
+  drawerP = p;
+  const inner = el.querySelector('.kpi-drawer-inner');
+  const card  = el.querySelector('.kpi-drawer-card');
+  el.style.height = Math.max(0, drawerH * p) + 'px';
+  if (inner) {
+    // Comes down from behind the tile rather than appearing in place.
+    inner.style.setProperty('--dz', (-12 * (1 - p)).toFixed(2) + 'px');
+    // Fades in ahead of the move so it is legible before it arrives.
+    inner.style.setProperty('--df', Math.max(0, Math.min(1, p * 1.7)).toFixed(3));
+  }
+  if (card) card.style.setProperty('--ds', (0.965 + 0.035 * p).toFixed(4));
+}
+
+function getDrawerSpring() {
+  if (drawerSpring) return drawerSpring;
+  if (!window.Motion) return null;
+  drawerSpring = Motion.spring(() => drawerP, (p) => paintDrawer(p), { preset: 'sheet' });
+  return drawerSpring;
+}
+
+function closeKpiList() {
+  const el = document.getElementById('kpi-drawer');
+  kpiListOpen = null;
   document.querySelectorAll('.kpi-wide').forEach(k => k.classList.remove('kpi-open'));
+  if (!el) return;
+  const done = () => {
+    if (kpiListOpen !== null) return;      // reopened while this was running
+    el.innerHTML = '';
+    el.style.height = '0px';
+    // Fully closed means out of the document, not a zero-height box that
+    // still takes tab stops.
+    el.hidden = true;
+  };
+  const s = getDrawerSpring();
+  if (!s) { done(); return; }
+  // Out along the path it came in on, and only emptied once it has gone.
+  s.to(0, { onRest: done });
 }
 
 /** The five behind a named tile, opened under the bar. */
-function toggleKpiList(key) {
+function toggleKpiList(key, trigger) {
   const el = document.getElementById('kpi-drawer');
   if (!el) return;
   if (kpiListOpen === key) return closeKpiList();
@@ -536,25 +588,44 @@ function toggleKpiList(key) {
   if (!rows.length) return closeKpiList();
   const heading = key === 'top' ? 'Best rated this month' : 'Weakest creatives currently running';
 
+  // Visible before it is measured: scrollHeight on a display:none box is
+  // zero, and this element ships hidden.
+  el.hidden = false;
   el.innerHTML = `
+    <div class="kpi-drawer-inner"><div class="kpi-drawer-card">
     <div class="kpi-drawer-head">${heading}
-      <button class="kpi-drawer-close" onclick="closeKpiList()" title="Close">×</button>
+      <button class="kpi-drawer-close" data-press onclick="closeKpiList()" title="Close">×</button>
     </div>
     <table class="kpi-list">
       <tbody>${rows.map((d, i) => `
-        <tr onclick="selectCard('${d.id}')" title="Open this creative">
+        <tr data-press onclick="selectCard('${d.id}', this)" title="Open this creative">
           <td class="kpi-list-n">${i + 1}</td>
           <td>${d.short || d.id}<div class="fat-dates">${d.campaign || ''}${d.month ? ' · ' + d.month : ''}</div></td>
           <td class="kpi-list-num">${key === 'weak' ? '' : fmtN(d.reach || 0) + ' reach'}</td>
           <td class="kpi-list-grade"><span class="cqr-badge ${cqrClass(d.cqr)}">${d.cqr}</span></td>
         </tr>`).join('')}
       </tbody>
-    </table>`;
-  el.hidden = false;
+    </table>
+    </div></div>`;
+
   kpiListOpen = key;
   document.querySelectorAll('.kpi-wide').forEach(k => k.classList.remove('kpi-open'));
-  const tile = document.querySelector(`.kpi-wide[onclick*="${key}"]`);
+  const tile = trigger || document.querySelector(`.kpi-wide[onclick*="${key}"]`);
   if (tile) tile.classList.add('kpi-open');
+
+  // Natural height, read while the box is still clipped to nothing.
+  // scrollHeight reports the content regardless of the height we set.
+  drawerH = el.scrollHeight;
+
+  const card = el.querySelector('.kpi-drawer-card');
+  // It grows out of the tile that opened it, so the two read as one
+  // thing rather than a panel that happened to appear nearby.
+  if (card && window.Motion) Motion.anchorOrigin(card, tile);
+
+  const s = getDrawerSpring();
+  if (!s) { el.style.height = drawerH + 'px'; return; }
+  paintDrawer(drawerP);
+  s.to(1);
 }
 
 /**
@@ -592,7 +663,7 @@ function cardMediaHTML(d) {
   return `<div class="card-thumb">
     <img src="${escapeHtml(d.thumbnail)}" alt="" loading="lazy"
          onerror="this.closest('.card-thumb').remove()">
-    ${open ? `<button class="card-play" title="Open on ${escapeHtml(links[0].name)}"
+    ${open ? `<button class="card-play" data-press title="Open on ${escapeHtml(links[0].name)}"
        aria-label="Open on ${escapeHtml(links[0].name)}"
        onclick="event.stopPropagation();window.open('${escapeHtml(open)}','_blank','noopener')"
       >${playMark(20)}</button>` : ''}
@@ -640,7 +711,7 @@ function renderCards(data) {
     const durTag  = d.duration     ? `<span class="tag-duration">${d.duration}s</span>` : '';
     const ctTag   = d.contentType  ? `<span class="tag-content-type">${d.contentType}</span>` : '';
 
-    return `<div class="card ${d.id===selectedId?'selected':''}" onclick="selectCard('${d.id}')">
+    return `<div class="card ${d.id===selectedId?'selected':''}" data-press onclick="selectCard('${d.id}', this)">
       <div class="card-top">
         <div class="card-plat"><div class="status-dot ${isAct?'status-active-dot':isNotBoosted?'':'status-stopped-dot'}"></div>${platHTML}</div>
         <div style="display:flex;align-items:center;gap:3px;flex-wrap:wrap;justify-content:flex-end">
@@ -668,16 +739,209 @@ function renderCards(data) {
 
 let retChart = null, radarChart = null;
 
-function selectCard(id) {
-  const item = ALL.find(d=>d.id===id);
-  if (item) { document.getElementById('creativeModalOverlay').style.display = 'flex'; renderDetail(item); }
+// ---------------------------------------------------------------------
+//  The creative panel
+//
+//  Two independent springs, because a single spring on a combined 2D
+//  distance desyncs the moment the two axes are moving at different
+//  speeds. One owns how open the panel is (scrim, scale, blur); the
+//  other owns the drag offset. Every paint writes the sum, so the two
+//  never fight over the transform.
+//
+//  Grab the header and it tracks the pointer 1:1 from wherever you took
+//  hold of it. Dragging up resists instead of stopping, and on release
+//  the decision is made from where the gesture was HEADING rather than
+//  where the finger happened to be, so a short fast flick dismisses and
+//  a long slow drag that stopped halfway does not.
+// ---------------------------------------------------------------------
+let modalP = 0, modalY = 0;
+let modalPSpring = null, modalYSpring = null;
+let modalDrag = null;
+const MODAL_DISMISS_VELOCITY = 650;   // px/s, a deliberate flick
+
+function modalEls() {
+  return {
+    overlay: document.getElementById('creativeModalOverlay'),
+    panel: document.getElementById('creativeModalContent'),
+  };
 }
 
-function closeCreativeModal(e) {
-  if (e && e.target.id === 'creativeModalOverlay') {
-    document.getElementById('creativeModalOverlay').style.display = 'none';
-    document.getElementById('creativeModalContent').innerHTML = '';
+/** No spring available: land on the open state rather than mid-flight. */
+function paintModalOpenNow() {
+  modalP = 1; modalY = 0; paintModal();
+}
+
+function paintModal() {
+  const { overlay, panel } = modalEls();
+  if (!overlay || !panel) return;
+  const p = modalP;
+  overlay.style.setProperty('--scrim', Math.max(0, Math.min(1, p)).toFixed(3));
+  // The enter path and the drag share one axis: 18px of travel on the
+  // way in, plus whatever the hand has added.
+  panel.style.setProperty('--sheet-y', (18 * (1 - p) + modalY).toFixed(2) + 'px');
+  panel.style.setProperty('--sheet-s', (0.94 + 0.06 * p).toFixed(4));
+  // Blur and scale move together so it reads as a surface arriving.
+  panel.style.setProperty('--sheet-blur', (6 * (1 - p)).toFixed(2) + 'px');
+}
+
+function modalSprings() {
+  if (!window.Motion) return null;
+  if (!modalPSpring) {
+    modalPSpring = Motion.spring(() => modalP, (v) => { modalP = v; paintModal(); }, { preset: 'move' });
+    modalYSpring = Motion.spring(() => modalY, (v) => { modalY = v; paintModal(); }, { preset: 'snap' });
   }
+  return { p: modalPSpring, y: modalYSpring };
+}
+
+/**
+ * Show the creative panel. The one way it is ever opened.
+ *
+ * creators.js fills the same overlay and used to reveal it by setting
+ * display itself. Once the panel carries spring-driven scale, blur and
+ * scrim, doing that leaves whatever the last close wrote still on the
+ * element, so the panel would come back shrunk and blurred behind a
+ * transparent scrim. Both callers come through here instead.
+ *
+ * @param {Element} [trigger] what was clicked, so it grows out of it
+ */
+function showCreativePanel(trigger) {
+  const { overlay, panel } = modalEls();
+  if (!overlay || !panel) return;
+  overlay.style.display = 'flex';
+
+  const sp = modalSprings();
+  if (!sp) { paintModalOpenNow(); return; }
+  // Out of the thing that was clicked, which is the spatial cue that
+  // says this panel is that card opened rather than a new screen.
+  if (trigger) Motion.anchorOrigin(panel, trigger);
+  else panel.style.transformOrigin = '50% 40%';
+
+  modalY = 0;
+  sp.y.stop();
+  // Start from closed every time, so a reopen is a journey rather than
+  // a panel that was already there.
+  modalP = 0;
+  paintModal();
+  sp.p.to(1);
+  installModalDrag();
+}
+
+function selectCard(id, trigger) {
+  const item = ALL.find(d => d.id === id);
+  if (!item) return;
+  const { overlay } = modalEls();
+  overlay.style.display = 'flex';
+  // The panel opens whatever happens while filling it. renderDetail
+  // reaches for a chart library and several optional endpoints, and a
+  // throw in there used to abort this function before the animation
+  // started, leaving a panel on screen at scale 0.94 with a transparent
+  // scrim: invisible, but covering the page and swallowing clicks.
+  try {
+    renderDetail(item);
+  } catch (err) {
+    console.error('[hub] renderDetail failed, panel still opened', err);
+  }
+  showCreativePanel(trigger);
+}
+
+/**
+ * Close along the same path it opened on.
+ *
+ * opts.keepY is for a dismiss that came from a drag: the gesture already
+ * owns the y axis and has been handed its release velocity, so touching
+ * y here would snap the panel back to centre while it faded out.
+ */
+function closeCreativeModal(e, opts) {
+  opts = opts || {};
+  if (e && e.target && e.target.id !== 'creativeModalOverlay') return;
+  const { overlay, panel } = modalEls();
+  if (!overlay) return;
+  const sp = modalSprings();
+  if (!sp) {
+    overlay.style.display = 'none';
+    if (panel) panel.innerHTML = '';
+    return;
+  }
+  sp.p.to(0, {
+    onRest: () => {
+      // A reopen may have happened while this was still running.
+      if (modalP > 0.01) return;
+      overlay.style.display = 'none';
+      if (panel) panel.innerHTML = '';
+      modalY = 0;
+      paintModal();
+    },
+  });
+  if (!opts.keepY) sp.y.to(0, { velocity: opts.velocity || 0 });
+}
+
+function installModalDrag() {
+  const { panel } = modalEls();
+  if (!panel || panel._dragWired) return;
+  panel._dragWired = true;
+
+  const tracker = new Motion.Tracker();
+
+  panel.addEventListener('pointerdown', (e) => {
+    const header = e.target.closest && e.target.closest('.detail-header');
+    if (!header) return;
+    // Buttons and links inside the header stay buttons.
+    if (e.target.closest('button, a, input, select, summary')) return;
+    if (e.button !== undefined && e.button !== 0) return;
+
+    const sp = modalSprings();
+    if (!sp) return;
+    // Take over mid-flight: adopt what is on screen, do not restart.
+    sp.y.stop();
+    sp.p.stop();
+    modalDrag = { startY: e.clientY, baseY: modalY, h: panel.getBoundingClientRect().height };
+    tracker.reset(modalY);
+    panel.classList.add('is-dragging');
+    panel.setPointerCapture(e.pointerId);
+  });
+
+  panel.addEventListener('pointermove', (e) => {
+    if (!modalDrag) return;
+    const raw = modalDrag.baseY + (e.clientY - modalDrag.startY);
+    // Down is free. Up has nowhere to go, so it resists rather than
+    // stopping dead, which reads as responsive instead of frozen.
+    modalY = raw >= 0 ? raw : Motion.rubberband(raw, modalDrag.h);
+    tracker.add(modalY);
+    // While dragging, the panel stays fully present: fading it out as it
+    // moves would hide the thing the hand is holding.
+    modalP = 1;
+    paintModal();
+  });
+
+  const release = (e) => {
+    if (!modalDrag) return;
+    const { h } = modalDrag;
+    modalDrag = null;
+    panel.classList.remove('is-dragging');
+    if (e && e.pointerId !== undefined && panel.hasPointerCapture(e.pointerId)) {
+      panel.releasePointerCapture(e.pointerId);
+    }
+
+    const v = tracker.velocity();
+    const sp = modalSprings();
+    if (!sp) return;
+    // Where it is going, not where it stopped.
+    const projected = modalY + Motion.project(v);
+    const dismiss = projected > h * 0.32 || v > MODAL_DISMISS_VELOCITY;
+
+    if (dismiss) {
+      // Hand the release velocity straight to the spring so there is no
+      // seam between the drag and the animation that finishes it.
+      sp.y.to(h + 120, { velocity: v, bounce: 0, duration: 0.35 });
+      closeCreativeModal(null, { keepY: true });
+    } else {
+      sp.y.to(0, { velocity: v });
+      sp.p.to(1);
+    }
+  };
+
+  panel.addEventListener('pointerup', release);
+  panel.addEventListener('pointercancel', release);
 }
 
 function getMetricsHTML(item, titleLabel) {
@@ -1166,7 +1430,7 @@ function originOf(d) {
 function lineageRow(x) {
   const bits = [x.campaign, x.month].filter(Boolean).join(' · ');
   const hook = (x.hookRate || x.hookRate === 0) ? kpiPct(x.hookRate) : '—';
-  return `<button class="lin-row" onclick="selectCard('${x.id}')">
+  return `<button class="lin-row" data-press onclick="selectCard('${x.id}', this)">
       <span class="lin-name">${x.short || x.id}</span>
       <span class="lin-meta">${bits}</span>
       <span class="lin-metric">Hook ${hook}</span>
@@ -1233,7 +1497,7 @@ function renderDetail(d) {
   const previewHTML = d.thumbnail ? `
     <div class="detail-media">
       <img src="${escapeHtml(d.thumbnail)}" alt="" onerror="this.closest('.detail-media').remove()">
-      ${previewLink ? `<button class="detail-play" title="Open on ${escapeHtml(previewLink.name)}"
+      ${previewLink ? `<button class="detail-play" data-press title="Open on ${escapeHtml(previewLink.name)}"
          aria-label="Open on ${escapeHtml(previewLink.name)}"
          onclick="window.open('${escapeHtml(previewLink.url)}','_blank','noopener')"
         >${playMark(26)}</button>` : ''}
@@ -1272,7 +1536,7 @@ function renderDetail(d) {
           ${creatorHTML}${repText}${linkBtns}
         </div>
         ${previewHTML}
-        <button class="close-btn" onclick="closeCreativeModal({target:{id:'creativeModalOverlay'}})">×</button>
+        <button class="close-btn" data-press onclick="closeCreativeModal({target:{id:'creativeModalOverlay'}})">×</button>
       </div>
 
       ${buildLineageHTML(d)}
