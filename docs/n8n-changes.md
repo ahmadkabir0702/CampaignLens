@@ -126,6 +126,39 @@ null.
 
 ---
 
+## 6. Pull Facebook's organic-only video metrics
+
+**New.** A boosted post is the same post, so the counters the pipeline
+reads include the paid delivery. `total_video_views`, `views`, `reach`
+and `total_interactions` are all combined figures. That is why
+`cqr_organic_label` returns `Boosted` and refuses to grade: once spend
+starts, the organic numbers stop being organic.
+
+Facebook is the one platform where this is fixable. Meta publishes
+organic-only and paid-only variants of the video metrics:
+
+```
+total_video_views_organic
+total_video_impressions_organic
+total_video_view_total_time_organic
+```
+
+with matching `_paid` versions. Reference:
+https://developers.facebook.com/docs/graph-api/reference/video/video_insights/
+
+**Change.** On `Get FB Video Insights`, add the organic variants
+alongside the existing totals rather than replacing them, so nothing
+that reads the current columns breaks. Map them into new columns on
+`organic_perf` (`views_organic`, `view_time_organic`) and the panel can
+then give a boosted Facebook post a genuine organic rating with the
+paid delivery excluded.
+
+Instagram and TikTok do not split organic from paid on a post's own
+insights, so for those two a boosted post stays irreducibly mixed and
+the honest answer remains that it had spend behind it.
+
+---
+
 ## Nothing needed for community posts
 
 The Community sub-type is entered in the app when a creative is added, so

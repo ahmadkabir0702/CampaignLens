@@ -121,7 +121,7 @@ const signalNote = (type) => (isOthersSay(type)
  * producing lines like "Rated No Watch Time on engagement".
  */
 const CQR_STATES = {
-  'boosted':        'Spend went behind this post, so its numbers are organic and paid together.',
+  'boosted':        'Spend went behind this post. A boosted post is the same post, so its view and interaction counts include the paid delivery, and the rating below is worked out from those mixed numbers rather than from organic performance alone.',
   'too early':      `Posted less than ${MIN_HOURS} hours ago, so it is still being distributed.`,
   'counts hidden':  'The account has hidden its like counts, so there is nothing to rate.',
   'no views':       'No views have come back for this post.',
@@ -244,10 +244,10 @@ function recommendFor({ platLabel, rated, state, standing, delivered, tooNew, mi
   }
   // Already running. The rating still shows, but the decision is made.
   if (String(state || '').toLowerCase() === 'boosted') {
-    return { action: 'already_boosted', confidence: rated ? 'medium' : 'none',
+    return { action: 'already_boosted', confidence: 'none',
       text: rated
-        ? `Already running on ${platLabel}. The organic rating of ${rated} is what it earned before the spend; judge it from here on its paid performance.`
-        : `Already running on ${platLabel}, and there was not enough organic data to rate it before the spend started.` };
+        ? `Already running on ${platLabel}, so the boost decision is made. Read the ${rated} above with care: it comes from counts that include the paid delivery, so it is not a measure of how the content did on its own. Judge it from here on its paid performance.`
+        : `Already running on ${platLabel}, and there is not enough to rate it on. Judge it on its paid performance instead.` };
   }
   if (tooNew) {
     return { action: 'wait', confidence: 'none',
