@@ -312,6 +312,8 @@ if (sf === 'ACTIVE')                data = data.filter(d => d.adStatus === 'ACTI
   if (sf === 'BOOSTED')               data = data.filter(d => d.isBoosted);
   if (sf === 'NOT_BOOSTED')           data = data.filter(d => !d.isBoosted);
   if (sf === 'VALIDATED_NOT_BOOSTED') data = data.filter(d => d.isValidated && !d.isBoosted);
+  if (sf === 'FATIGUING')             data = data.filter(d => d.fatiguing && d.boostState === 'running');
+  if (sf === 'BOOST_ENDED')           data = data.filter(d => d.boostState === 'ended');
   if (srcf === 'brand')     data = data.filter(d => d.type === 'Brand Say');
   if (srcf === 'creator_led') data = data.filter(d => d.type === 'Brand Say' && d.creatorLed);
   if (srcf === 'creator')   data = data.filter(d => d.type === 'Others Say' && d.source !== 'community');
@@ -407,28 +409,106 @@ function render() {
   }
 }
 
+/**
+ * The summary bar.
+ *
+ * Every tile answers "what needs me", not "how much do we have". A count
+ * of what exists cannot be good or bad, so nobody reads it twice. These
+ * can all read zero, and zero is good news on each one.
+ */
+const KPI_RANK = { Good: 0, Average: 1, Poor: 2 };
+
 function renderKPIs(data) {
   const totalAssets = data.length;
-  const bsCount = data.filter(d=>d.type==='Brand Say').length;
-  const osCount = data.filter(d=>d.type==='Others Say').length;
-  const valCount = data.filter(d=>d.isValidated).length;
-  const totalImp = data.reduce((s,d)=>s+(d.impressions||0),0);
-  let totalOrgViews = 0;
+  const bsCount = data.filter(d => d.type === 'Brand Say').length;
+  const osCount = data.filter(d => d.type === 'Others Say').length;
+
+  // Three boost states. A creative switched off after running is not the
+  // same thing as one that never had spend, and "not boosted" read as both.
+  const running = data.filter(d => d.boostState === 'running').length;
+  const ended   = data.filter(d => d.boostState === 'ended').length;
+  const never   = data.filter(d => d.boostState === 'never').length;
+
+  // Views against views. Impressions counted a different thing from the
+  // organic figure beside it, so the two were never comparable.
+  let orgViews = 0;
   data.forEach(d => {
-    if (d.igOrganic) totalOrgViews += (d.igOrganic.views||0);
-    if (d.fbOrganic) totalOrgViews += (d.fbOrganic.videoViews||0);
-    if (d.ttOrganic) totalOrgViews += (d.ttOrganic.views||0);
+    if (d.igOrganic) orgViews += (d.igOrganic.views || 0);
+    if (d.fbOrganic) orgViews += (d.fbOrganic.videoViews || 0);
+    if (d.ttOrganic) orgViews += (d.ttOrganic.views || 0);
   });
- const boostedCount = data.filter(d=>d.isBoosted).length;
-  const notBoostedCount = data.filter(d=>!d.isBoosted).length;
+  const paidViews = data.reduce((s, d) => s + (d.paidViews || 0), 0);
+  const viewTotal = orgViews + paidViews;
+  const orgShare = viewTotal ? Math.round((orgViews / viewTotal) * 100) : 0;
+
+  const readyToBoost = data.filter(d => d.needsBoostWarning).length;
+  const fatiguing = data.filter(d => d.fatiguing && d.boostState === 'running').length;
+
+  const thisMonth = new Date().toISOString().slice(0, 7);
+  const rank = d => (KPI_RANK[d.cqr] ?? 9);
+  const top = data
+    .filter(d => (d.date || '').startsWith(thisMonth) && KPI_RANK[d.cqr] !== undefined)
+    .sort((a, b) => rank(a) - rank(b) || (b.reach || 0) - (a.reach || 0))[0];
+  // Worst first, then most spend, so the one named is the one costing most.
+  const worst = data
+    .filter(d => d.boostState === 'running' && KPI_RANK[d.cqr] !== undefined)
+    .sort((a, b) => rank(b) - rank(a) || (b.spend || 0) - (a.spend || 0))[0];
+
   const row = document.getElementById('kpi-row');
   if (!row) return;
-  row.innerHTML=`
-    <div class="kpi"><div class="kpi-label">Total Assets</div><div class="kpi-val">${totalAssets}</div><div class="kpi-sub">${boostedCount} boosted · ${notBoostedCount} not boosted</div></div>
-    <div class="kpi"><div class="kpi-label">BS vs OS Split</div><div class="kpi-val">${Math.round(bsCount/(totalAssets||1)*100)}% / ${Math.round(osCount/(totalAssets||1)*100)}%</div><div class="kpi-sub">${bsCount} Brand Say · ${osCount} Others Say</div></div>
-    <div class="kpi"><div class="kpi-label">Validated Assets</div><div class="kpi-val" style="color:var(--c-good)">${valCount}</div><div class="kpi-sub">CQR Good or Average</div></div>
-    <div class="kpi"><div class="kpi-label">Total Org Views</div><div class="kpi-val" style="color:var(--c-os)">${fmtN(totalOrgViews)}</div><div class="kpi-sub">IG, FB, TT Combined</div></div>
-    <div class="kpi"><div class="kpi-label">Total Paid Impr.</div><div class="kpi-val">${fmtN(totalImp)}</div><div class="kpi-sub">${boostedCount} amplified assets</div></div>`;
+
+  const tile = (label, value, sub, o = {}) => `
+    <div class="kpi ${o.filter ? 'kpi-click' : ''}"
+         ${o.filter ? `onclick="applyKpiFilter('${o.filter}')" title="Show these in the grid"` : ''}>
+      <div class="kpi-label">${label}</div>
+      <div class="kpi-val"${o.color ? ` style="color:${o.color}"` : ''}>${value}</div>
+      <div class="kpi-sub">${sub}</div>
+    </div>`;
+
+  // A named creative rather than a number, so it is wider and opens the
+  // creative instead of filtering to it.
+  const namedTile = (label, d, sub, emptySub) => d ? `
+    <div class="kpi kpi-wide kpi-click" onclick="selectCard('${d.id}')" title="Open this creative">
+      <div class="kpi-label">${label}</div>
+      <div class="kpi-named">${d.short || d.id}</div>
+      <div class="kpi-sub"><span class="cqr-badge ${cqrClass(d.cqr)}" style="margin-right:6px">${d.cqr}</span>${sub}</div>
+    </div>` : `
+    <div class="kpi kpi-wide">
+      <div class="kpi-label">${label}</div>
+      <div class="kpi-named kpi-none">Nothing to show</div>
+      <div class="kpi-sub">${emptySub}</div>
+    </div>`;
+
+  row.innerHTML =
+    tile('Total Assets', totalAssets,
+         `${running} running · ${ended} boost ended · ${never} never boosted`) +
+    tile('BS vs OS Split',
+         `${Math.round(bsCount / (totalAssets || 1) * 100)}% / ${Math.round(osCount / (totalAssets || 1) * 100)}%`,
+         `${bsCount} Brand Say · ${osCount} Others Say`) +
+    tile('Organic vs Paid views', `${fmtN(orgViews)} / ${fmtN(paidViews)}`,
+         `${orgShare}% of views earned, not bought`, { color: 'var(--c-os)' }) +
+    tile('Ready to boost', readyToBoost,
+         readyToBoost ? 'Earned it organically, no spend behind them' : 'Nothing waiting',
+         { filter: 'VALIDATED_NOT_BOOSTED', color: readyToBoost ? 'var(--warn)' : undefined }) +
+    tile('Fatiguing', fatiguing,
+         fatiguing ? 'Running, and rated worse now than at launch' : 'Nothing running has slipped',
+         { filter: 'FATIGUING', color: fatiguing ? 'var(--neg)' : undefined }) +
+    namedTile('Top creative this month', top, 'Best rated this month',
+              'No rated creative published this month yet') +
+    namedTile('Weakest live creative', worst,
+              worst ? `${fmt(Math.round(worst.spend || 0))} behind it` : '',
+              'Nothing rated is currently running');
+}
+
+// Tiles filter the grid. A number you cannot act on is decoration.
+function applyKpiFilter(value) {
+  const sel = document.getElementById('status-filter');
+  if (!sel) return;
+  sel.value = value;
+  const wrap = sel.closest('.dd');
+  if (wrap && wrap._ddRepaint) wrap._ddRepaint();
+  if (typeof onDraftChange === 'function') onDraftChange();
+  if (typeof applyFilters === 'function') applyFilters();
 }
 
 // The platforms a creative actually lives on, in the order the pipeline
@@ -480,8 +560,8 @@ function renderCards(data) {
     const hkPct  = Math.round((d.hookRate/maxHook)*100);
     const hdPct  = Math.round((d.holdRate/maxHold)*100);
     const rchPct = Math.round((d.reach/maxReach)*100);
-    const isAct  = d.adStatus === 'ACTIVE';
-    const isNotBoosted = d.adStatus === 'NOT_BOOSTED';
+    const isAct  = d.boostState === 'running';
+    const isNotBoosted = d.boostState === 'never';
     const displayCqr = (d.cqr && d.cqr !== 'Invalid') ? d.cqr : d.bestOrgCqr || 'Invalid';
 
     const platHTML = d.platform === 'both'
@@ -514,7 +594,11 @@ function renderCards(data) {
         <div class="mini-bar-row"><div class="mini-bar-label">Hook</div><div class="mini-bar-track"><div class="mini-bar-fill" style="width:${hkPct}%;background:${hookColor(d.hookRate)}"></div></div><div class="mini-bar-val" style="color:${hookColor(d.hookRate)}">${(d.hookRate||0).toFixed(1)}%</div></div>
         <div class="mini-bar-row"><div class="mini-bar-label">Hold</div><div class="mini-bar-track"><div class="mini-bar-fill" style="width:${hdPct}%;background:#000050"></div></div><div class="mini-bar-val">${hlValFormatted}</div></div>
       </div>
-    <div class="card-footer"><span class="cqr-badge ${isNotBoosted?'inv-bg':cqrClass(displayCqr)}">${isNotBoosted?'Not Boosted':displayCqr}</span></div>
+    <div class="card-footer">
+      <span class="cqr-badge ${isNotBoosted?'inv-bg':cqrClass(displayCqr)}">${isNotBoosted?'Never boosted':displayCqr}</span>
+      ${d.boostState === 'ended' ? `<span class="card-type inv-bg" style="margin-left:4px">Boost ended${d.boostEnded ? ' ' + new Date(d.boostEnded).toLocaleDateString('en-GB',{day:'numeric',month:'short'}) : ''}</span>` : ''}
+      ${d.fatiguing && d.boostState === 'running' ? `<span class="card-type creator-led-tag" style="margin-left:4px" title="Rated ${d.fatigueFrom} in its first week, ${d.fatigueTo} last week">Fatiguing</span>` : ''}
+    </div>
     </div>`;
   }).join('');
 }
