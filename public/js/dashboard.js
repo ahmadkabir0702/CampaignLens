@@ -417,6 +417,9 @@ function render() {
  * can all read zero, and zero is good news on each one.
  */
 const KPI_RANK = { Good: 0, Average: 1, Poor: 2 };
+// The ranked five behind each named tile, filled by renderKPIs and read
+// by the drawer.
+const KPI_LISTS = { top: [], weak: [] };
 
 function renderKPIs(data) {
   const totalAssets = data.length;
@@ -446,13 +449,19 @@ function renderKPIs(data) {
 
   const thisMonth = new Date().toISOString().slice(0, 7);
   const rank = d => (KPI_RANK[d.cqr] ?? 9);
-  const top = data
+  // Five of each, kept for the drawer. The tile names the leader; the
+  // rest are one click away rather than another page.
+  KPI_LISTS.top = data
     .filter(d => (d.date || '').startsWith(thisMonth) && KPI_RANK[d.cqr] !== undefined)
-    .sort((a, b) => rank(a) - rank(b) || (b.reach || 0) - (a.reach || 0))[0];
+    .sort((a, b) => rank(a) - rank(b) || (b.reach || 0) - (a.reach || 0))
+    .slice(0, 5);
   // Worst first, then most spend, so the one named is the one costing most.
-  const worst = data
+  KPI_LISTS.weak = data
     .filter(d => d.boostState === 'running' && KPI_RANK[d.cqr] !== undefined)
-    .sort((a, b) => rank(b) - rank(a) || (b.spend || 0) - (a.spend || 0))[0];
+    .sort((a, b) => rank(b) - rank(a) || (b.spend || 0) - (a.spend || 0))
+    .slice(0, 5);
+  const top = KPI_LISTS.top[0];
+  const worst = KPI_LISTS.weak[0];
 
   const row = document.getElementById('kpi-row');
   if (!row) return;
@@ -467,9 +476,10 @@ function renderKPIs(data) {
 
   // A named creative rather than a number, so it is wider and opens the
   // creative instead of filtering to it.
-  const namedTile = (label, d, sub, emptySub) => d ? `
-    <div class="kpi kpi-wide kpi-click" onclick="selectCard('${d.id}')" title="Open this creative">
-      <div class="kpi-label">${label}</div>
+  const namedTile = (label, d, sub, emptySub, key) => d ? `
+    <div class="kpi kpi-wide kpi-click" onclick="toggleKpiList('${key}')" title="Show the top five">
+      <div class="kpi-label">${label}<span class="kpi-more" id="kpi-more-${key}">${
+        KPI_LISTS[key].length > 1 ? `+${KPI_LISTS[key].length - 1} more` : ''}</span></div>
       <div class="kpi-named">${d.short || d.id}</div>
       <div class="kpi-sub"><span class="cqr-badge ${cqrClass(d.cqr)}" style="margin-right:6px">${d.cqr}</span>${sub}</div>
     </div>` : `
@@ -494,10 +504,53 @@ function renderKPIs(data) {
          fatiguing ? 'Running, and rated worse now than at launch' : 'Nothing running has slipped',
          { filter: 'FATIGUING', color: fatiguing ? 'var(--neg)' : undefined }) +
     namedTile('Top creative this month', top, 'Best rated this month',
-              'No rated creative published this month yet') +
+              'No rated creative published this month yet', 'top') +
     namedTile('Weakest live creative', worst,
               worst ? `${fmt(Math.round(worst.spend || 0))} behind it` : '',
-              'Nothing rated is currently running');
+              'Nothing rated is currently running', 'weak');
+
+  // A list left open while the data reloads would show stale rows.
+  closeKpiList();
+}
+
+let kpiListOpen = null;
+
+function closeKpiList() {
+  kpiListOpen = null;
+  const el = document.getElementById('kpi-drawer');
+  if (el) { el.hidden = true; el.innerHTML = ''; }
+  document.querySelectorAll('.kpi-wide').forEach(k => k.classList.remove('kpi-open'));
+}
+
+/** The five behind a named tile, opened under the bar. */
+function toggleKpiList(key) {
+  const el = document.getElementById('kpi-drawer');
+  if (!el) return;
+  if (kpiListOpen === key) return closeKpiList();
+
+  const rows = KPI_LISTS[key] || [];
+  if (!rows.length) return closeKpiList();
+  const heading = key === 'top' ? 'Best rated this month' : 'Weakest creatives currently running';
+
+  el.innerHTML = `
+    <div class="kpi-drawer-head">${heading}
+      <button class="kpi-drawer-close" onclick="closeKpiList()" title="Close">×</button>
+    </div>
+    <table class="kpi-list">
+      <tbody>${rows.map((d, i) => `
+        <tr onclick="selectCard('${d.id}')" title="Open this creative">
+          <td class="kpi-list-n">${i + 1}</td>
+          <td>${d.short || d.id}<div class="fat-dates">${d.campaign || ''}${d.month ? ' · ' + d.month : ''}</div></td>
+          <td class="kpi-list-num">${key === 'weak' ? fmt(Math.round(d.spend || 0)) : fmtN(d.reach || 0) + ' reach'}</td>
+          <td class="kpi-list-grade"><span class="cqr-badge ${cqrClass(d.cqr)}">${d.cqr}</span></td>
+        </tr>`).join('')}
+      </tbody>
+    </table>`;
+  el.hidden = false;
+  kpiListOpen = key;
+  document.querySelectorAll('.kpi-wide').forEach(k => k.classList.remove('kpi-open'));
+  const tile = document.querySelector(`.kpi-wide[onclick*="${key}"]`);
+  if (tile) tile.classList.add('kpi-open');
 }
 
 // Tiles filter the grid. A number you cannot act on is decoration.
