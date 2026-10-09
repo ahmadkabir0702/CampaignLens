@@ -219,6 +219,9 @@ select:focus,.search-input:focus,.modal-input:focus{outline:none;border-color:va
 
 .bs-tag{background:var(--plum-bg);color:var(--plum)}
 .os-tag{background:var(--pos-bg);color:var(--pos)}
+/* Community posts sit under Others Say but are not briefed content, so
+   they carry their own tag next to the OS one rather than replacing it. */
+.community-tag{background:var(--sel);color:var(--ink-700)}
 .tag-repurposed{background:var(--canvas);color:var(--ink-600);font-weight:400}
 .tag-validated{background:var(--pos-bg);color:var(--pos)}
 .tag-duration,.tag-content-type{
@@ -446,6 +449,19 @@ select:focus,.search-input:focus,.modal-input:focus{outline:none;border-color:va
 .orgval-divider{font:500 11.5px/16px var(--font);color:var(--ink-400);
   text-transform:uppercase;letter-spacing:.04em;
   padding-top:10px;border-top:1px solid var(--line);margin-bottom:2px}
+.orgval-react-bar{display:flex;height:8px;border-radius:var(--r-pill);overflow:hidden;
+  margin:8px 0 9px;background:var(--canvas-2)}
+.orgval-react-seg{display:block;height:8px}
+.orgval-react-keys{display:flex;flex-wrap:wrap;gap:4px 12px;margin-bottom:2px}
+.orgval-react-key{display:inline-flex;align-items:center;gap:5px;
+  font:400 12px var(--font);color:var(--ink-600)}
+.orgval-react-dot{width:8px;height:8px;border-radius:50%;display:inline-block}
+.react-like{background:#4A6FA5}
+.react-love{background:#C2487A}
+.react-haha{background:#D9A520}
+.react-wow{background:#7A5BB5}
+.react-sad{background:#5A8A96}
+.react-angry{background:var(--neg)}
 .orgval-when{font:400 11.5px var(--font);color:var(--ink-400);
   background:var(--canvas-2);border-radius:var(--r-pill);padding:1px 7px}
 .orgval-rec-wrap{margin-top:auto;padding-top:12px}

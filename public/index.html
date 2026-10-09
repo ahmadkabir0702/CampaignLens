@@ -300,6 +300,12 @@
              <option value="Others Say">Others Say</option>
            </select>
 
+           <select id="ac-source" class="modal-input" style="margin-bottom:10px; display:none;" onchange="previewCreativeId()">
+             <option value="" disabled selected>Who posted it?</option>
+             <option value="creator">Creator (briefed and paid)</option>
+             <option value="community">Community (posted by the public)</option>
+           </select>
+
            <select id="ac-repurposed" class="modal-input" style="margin-bottom:10px; display:none;" onchange="toggleOriginalIdField()">
              <option value="" disabled selected>Is Repurposed?</option>
              <option value="No">No</option>
@@ -423,6 +429,15 @@
               <div>
                 <label for="content-type-filter">Content type</label>
                 <select id="content-type-filter" onchange="onDraftChange()"><option value="all">All content types</option></select>
+              </div>
+              <div>
+                <label for="source-filter">Posted by</label>
+                <select id="source-filter" onchange="onDraftChange()">
+                  <option value="all">Everyone</option>
+                  <option value="brand">Brand</option>
+                  <option value="creator">Creators</option>
+                  <option value="community">Community</option>
+                </select>
               </div>
               <div>
                 <label for="origin-filter">Origin</label>

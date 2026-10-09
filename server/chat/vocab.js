@@ -76,6 +76,13 @@ const VOCAB = {
     title: 'Made by',
     values: { BrandSay: ['Brand Say'], OthersSay: ['Others Say'] },
   },
+  source: {
+    title: 'Posted by',
+    values: {
+      creator:   ['A briefed creator', 'Others Say content from a creator the brand paid'],
+      community: ['Someone in the community', 'Posted by a member of the public, not briefed'],
+    },
+  },
   platform: {
     title: 'Platform',
     values: { meta: ['Meta'], tiktok: ['TikTok'], facebook: ['Facebook'], instagram: ['Instagram'] },
@@ -121,7 +128,7 @@ function title(field, fallback) {
 /** Plain labels for everything classified on one creative. */
 function creativeLabels(c) {
   const out = {};
-  for (const f of ['format', 'hook_device', 'content_intent', 'narrative_structure', 'hook_subject', 'hook_pace', 'product_role', 'type', 'language', 'talent', 'production_style', 'aspect_ratio']) {
+  for (const f of ['format', 'hook_device', 'content_intent', 'narrative_structure', 'hook_subject', 'hook_pace', 'product_role', 'type', 'source', 'language', 'talent', 'production_style', 'aspect_ratio']) {
     if (c[f]) out[f] = label(f, c[f]);
   }
   return out;
@@ -164,6 +171,7 @@ const ELEMENTS = [
   { field: 'aspect_ratio', kind: 'cat', timing: 'whole' },
   { field: 'length_bucket', kind: 'cat', timing: 'whole' },
   { field: 'type', kind: 'cat', timing: 'whole' },
+  { field: 'source', kind: 'cat', timing: 'whole' },
 ];
 
 /** Length bucket from duration, in code. */

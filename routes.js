@@ -433,6 +433,9 @@ app.get('/api/brands', async (req, res) => {
     // date is no longer taken from the form. The real post date comes from the
     // platform on first sync; until then the row gets today as a placeholder.
     const { campaign, type, repurposed, originalId, creator, creator_id, description } = req.body;
+    // Others Say covers briefed creator content and posts by the public.
+    // They are judged and acted on differently, so which one is recorded.
+    const source = req.body.source || null;
     const date = null;
     let ig, fb, tt;
     let brand;
@@ -442,6 +445,11 @@ app.get('/api/brands', async (req, res) => {
     if (!['Brand Say', 'Others Say'].includes(type)) {
       return res.status(400).json({ error: 'Invalid Type selected.' });
     }
+    if (type === 'Others Say' && !['creator', 'community'].includes(source)) {
+      return res.status(400).json({ error: 'Choose whether this is creator or community content.' });
+    }
+    // Brand Say has no sub-type, so a stray value is dropped rather than stored.
+    const sourceValue = type === 'Others Say' ? source : null;
     if (!campaign) return res.status(400).json({ error: 'Campaign is required.' });
 
     // Links are checked here as well as in the browser. The browser check is
@@ -580,6 +588,7 @@ app.get('/api/brands', async (req, res) => {
             creativeId, brand, campaign, type, date: date || null,
             repurposed: repurposed === 'Yes', originalId: originalId || null,
             ig: ig || null, fb: fb || null, tt: tt || null,
+            source: sourceValue,
             creator: creator || null,
             creatorId: creator_id || null,
             mediaUrl: videoLink,
@@ -619,11 +628,11 @@ app.get('/api/brands', async (req, res) => {
         `insert into creatives
            (creative_id, brand_id, date, campaign, type, is_repurposed,
             original_creative_id, content_type, ig_link, fb_link, tt_link,
-            creator_profile, creator_id)
-         values ($1,$2,coalesce($3::date, current_date),$4,$5,$6,$7,'Video',$8,$9,$10,$11,$12)`,
+            creator_profile, creator_id, source)
+         values ($1,$2,coalesce($3::date, current_date),$4,$5,$6,$7,'Video',$8,$9,$10,$11,$12,$13)`,
         [creativeId, brand, date || null, campaign, type, repurposed === 'Yes',
          originalId || null, ig || null, fb || null, tt || null,
-         creator || null, creator_id || null]
+         creator || null, creator_id || null, sourceValue]
       );
       return res.json({
         success: true, creativeId, queued: false,

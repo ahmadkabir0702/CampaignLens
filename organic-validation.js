@@ -26,6 +26,36 @@
 const { query } = require('./db');
 const V = require('./server/chat/vocab');
 
+/**
+ * Run a query, and if Postgres reports a column that does not exist,
+ * run it again without that column.
+ *
+ * A migration that has not been applied yet should cost the panel one
+ * feature, not take it down. The chat side does the same thing for the
+ * same reason, after a missed migration took it offline for every brand.
+ */
+const warnedColumns = new Set();
+async function queryTolerant(sql, params) {
+  try {
+    return await query(sql, params);
+  } catch (err) {
+    const m = err && err.code === '42703' && /column (?:\w+\.)?"?([a-z0-9_]+)"? does not exist/i.exec(err.message || '');
+    if (!m) throw err;
+    const col = m[1];
+    if (!warnedColumns.has(col)) {
+      console.warn(`[organic-validation] ${col} is missing, continuing without it. Run the pending migration.`);
+      warnedColumns.add(col);
+    }
+    const stripped = sql
+      .split('\n')
+      .map((line) => line.replace(new RegExp(`\\s*[a-z]+\\.${col}\\s*(?:as\\s+\\w+)?\\s*,`, 'gi'), ' ')
+                         .replace(new RegExp(`,\\s*[a-z]+\\.${col}\\s*(?:as\\s+\\w+)?\\s*$`, 'gi'), ''))
+      .join('\n');
+    if (stripped === sql) throw err;
+    return queryTolerant(stripped, params);
+  }
+}
+
 // A post below this many views has not been delivered enough to judge.
 // Organic reach is granted by the algorithm, so the floor is far lower
 // than the 10,000 paid-impression floor.
@@ -349,11 +379,65 @@ function matchSentence(m) {
 }
 
 // ---------------------------------------------------------------------
+//  Facebook reaction breakdown
+//
+//  The only sentiment signal the official APIs give without reading
+//  anyone's comments. A like and an angry both count as one reaction in
+//  the totals, so a post can look engaged while the engagement is people
+//  objecting to it. Wow is left out of both sides: it reads as surprise,
+//  which is not a verdict either way.
+// ---------------------------------------------------------------------
+const REACTIONS = ['like', 'love', 'haha', 'wow', 'sad', 'angry'];
+const REACTION_LABEL = { like: 'Like', love: 'Love', haha: 'Haha', wow: 'Wow', sad: 'Sad', angry: 'Angry' };
+// Below this many reactions the split is noise, not a mood.
+const REACTION_MIN = 50;
+
+function reactionRead(o) {
+  const counts = {};
+  let total = 0;
+  for (const r of REACTIONS) {
+    const v = o[`reaction_${r}`];
+    if (v === null || v === undefined) continue;
+    counts[r] = Number(v);
+    total += Number(v);
+  }
+  if (!Object.keys(counts).length) return null;
+
+  const positive = (counts.like || 0) + (counts.love || 0) + (counts.haha || 0);
+  const negative = (counts.sad || 0) + (counts.angry || 0);
+  const negShare = total ? (negative / total) * 100 : 0;
+  const warm = (counts.love || 0) + (counts.haha || 0);
+
+  let verdict;
+  if (total < REACTION_MIN) {
+    verdict = `Only ${total.toLocaleString()} reactions so far, too few to read a mood from.`;
+  } else if (negShare >= 10) {
+    verdict = `${Math.round(negShare)}% of reactions are sad or angry. That is high enough to read the post before putting spend behind it, because those reactions count towards engagement exactly like a like does.`;
+  } else if (warm / total >= 0.25) {
+    verdict = `Reactions skew warm rather than polite: ${Math.round((warm / total) * 100)}% are love or haha rather than a plain like. People felt something.`;
+  } else {
+    verdict = 'Reactions are almost all plain likes, so there is no strong feeling either way.';
+  }
+
+  return {
+    counts,
+    total,
+    rows: REACTIONS.filter((r) => counts[r] !== undefined)
+      .map((r) => ({ key: r, label: REACTION_LABEL[r], count: counts[r],
+                     share: total ? Math.round((counts[r] / total) * 100) : 0 })),
+    positive, negative,
+    negative_share: Math.round(negShare * 10) / 10,
+    enough: total >= REACTION_MIN,
+    verdict,
+  };
+}
+
+// ---------------------------------------------------------------------
 //  The build
 // ---------------------------------------------------------------------
 async function buildValidation(brandId, creativeId) {
   const [creativeR, organicR, thresholdR, peerR, paidR] = await Promise.all([
-    query(
+    queryTolerant(
       `select c.creative_id, c.brand_id, c.type, c.campaign, c.date, c.duration_s,
               c.ig_link, c.fb_link, c.tt_link,
               c.format, c.product_role, c.content_intent, c.narrative_structure,
@@ -364,9 +448,11 @@ async function buildValidation(brandId, creativeId) {
          from creatives c
         where c.creative_id = $1 and c.brand_id = $2`, [creativeId, brandId]),
 
-    query(
+    queryTolerant(
       `select o.platform, o.views, o.reach, o.likes, o.comments, o.shares, o.saves,
               o.total_interactions, o.avg_watch_time, o.time_posted,
+              o.reaction_like, o.reaction_love, o.reaction_haha,
+              o.reaction_wow, o.reaction_sad, o.reaction_angry,
               s.cqr, s.engagement_rate, s.retention_rate
          from organic_perf o
          left join v_organic_scored s
@@ -476,6 +562,7 @@ async function buildValidation(brandId, creativeId) {
       saves: num(o.saves),
       interactions: num(o.total_interactions),
       avg_watch_time: r1(o.avg_watch_time),
+      reactions: reactionRead(o),
       time_posted: o.time_posted,
       retention: {
         rate: r1(num(o.retention_rate) === null ? null : Number(o.retention_rate) * DISPLAY_SCALE.retention),
