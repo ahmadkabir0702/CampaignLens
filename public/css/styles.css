@@ -194,7 +194,47 @@ select:focus,.search-input:focus,.modal-input:focus{outline:none;border-color:va
 .filter-clear:hover{color:var(--ink-900)}
 
 /* ---------- KPI cards --------------------------------------------- */
-.kpi-row{display:grid;grid-template-columns:repeat(5,1fr);gap:14px;margin-bottom:28px}
+/* Ten columns so five number tiles fill the first row exactly and the
+   two named-creative tiles fill the second. A creative name needs more
+   width than a count, and rounding 7 tiles into 5 columns leaves a gap. */
+.kpi-row{display:grid;grid-template-columns:repeat(10,1fr);gap:14px;margin-bottom:28px}
+.kpi-row > .kpi{grid-column:span 2}
+.kpi-row > .kpi-wide{grid-column:span 5}
+@media (max-width:1100px){
+  .kpi-row{grid-template-columns:repeat(4,1fr)}
+  .kpi-row > .kpi{grid-column:span 2}
+  .kpi-row > .kpi-wide{grid-column:span 4}
+}
+/* A tile that filters the grid says so by behaving like a control. */
+.kpi-click{cursor:pointer;transition:box-shadow .15s var(--ease),transform .15s var(--ease)}
+.kpi-click:hover{box-shadow:0 2px 10px rgba(0,0,80,.10);transform:translateY(-1px)}
+.kpi-named{font:400 18px/26px var(--font);color:var(--ink-900);
+  margin-top:2px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.kpi-none{color:var(--ink-400)}
+.kpi-more{font:400 11.5px var(--font);color:var(--ink-400);
+  text-transform:none;letter-spacing:0;margin-left:8px}
+.kpi-open{box-shadow:0 0 0 2px var(--navy) inset}
+
+/* The five behind a named tile, opened under the bar rather than on
+   another page. */
+.kpi-drawer{background:var(--white);border-radius:var(--r-card);
+  padding:16px 20px;margin:-14px 0 28px}
+.kpi-drawer-head{display:flex;align-items:center;justify-content:space-between;
+  font:500 14px/20px var(--font);color:var(--ink-900);margin-bottom:6px}
+.kpi-drawer-close{border:0;background:none;cursor:pointer;
+  font:400 20px/20px var(--font);color:var(--ink-400);padding:0 2px}
+.kpi-drawer-close:hover{color:var(--ink-900)}
+.kpi-list{width:100%;border-collapse:collapse}
+.kpi-list tr{cursor:pointer}
+.kpi-list tr:hover td{background:var(--canvas-2)}
+.kpi-list td{font:400 14px var(--font);color:var(--ink-900);
+  padding:9px 8px;border-bottom:1px solid var(--line-soft)}
+.kpi-list tr:last-child td{border-bottom:none}
+.kpi-list td:first-child{padding-left:0}
+.kpi-list td:last-child{padding-right:0}
+.kpi-list-n{color:var(--ink-400);width:24px;font-variant-numeric:tabular-nums}
+.kpi-list-num{text-align:right;font-variant-numeric:tabular-nums;color:var(--ink-600);white-space:nowrap}
+.kpi-list-grade{text-align:right;width:90px}
 .kpi,.stat-card{background:var(--white);border-radius:var(--r-card);padding:18px 20px;border:0}
 .kpi-label,.stat-title{
   font:400 13px/18px var(--font);color:var(--ink-600);

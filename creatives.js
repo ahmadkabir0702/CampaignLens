@@ -85,7 +85,57 @@ function paidBlock(row, platform) {
   };
 }
 
+// Views and the run's end date per creative, which the summary bar needs
+// and the lifetime views do not carry. Optional: a brand with no paid
+// history, or a database without migration 011, simply gets nothing.
+async function paidExtras(brandId) {
+  const out = { views: {}, window: {} };
+  try {
+    const { rows } = await query(
+      `select creative_id, sum(video_plays) as video_plays, max(date) as last_day
+         from (
+           select creative_id, video_plays, date from v_paid_meta_scored where brand_id = $1
+           union all
+           select creative_id, video_plays, date from v_paid_tiktok_scored where brand_id = $1
+         ) x
+        where creative_id is not null
+        group by creative_id`, [brandId]);
+    for (const r of rows) {
+      out.views[r.creative_id] = Number(r.video_plays) || 0;
+      out.window[r.creative_id] = { last_day: r.last_day };
+    }
+  } catch (err) { if (err.code !== '42P01') throw err; }
+
+  // Fatigue: the rating of its first week against its last week. Only
+  // meaningful once a creative has run a fortnight, which the view's own
+  // dates let us check.
+  try {
+    const { rows } = await query(
+      `select creative_id, platform, window_name, cqr, from_date, to_date, impressions
+         from v_paid_windowed
+        where brand_id = $1 and window_name in ('first_7','last_7','lifetime')`, [brandId]);
+    const byId = {};
+    for (const r of rows) (((byId[r.creative_id] ||= {})[r.platform] ||= {}))[r.window_name] = r;
+    const RANK = { Good: 0, Average: 1, Poor: 2 };
+    for (const [id, plats] of Object.entries(byId)) {
+      let faded = false, from = null, to = null;
+      for (const w of Object.values(plats)) {
+        const life = w.lifetime, first = w.first_7, last = w.last_7;
+        if (!life || !first || !last) continue;
+        const runDays = Math.round((new Date(life.to_date) - new Date(life.from_date)) / 86400000) + 1;
+        if (runDays < 14) continue;                       // no two windows to compare
+        if (Number(last.impressions) < 1000) continue;    // too thin to read
+        if (RANK[first.cqr] === undefined || RANK[last.cqr] === undefined) continue;
+        if (RANK[last.cqr] > RANK[first.cqr]) { faded = true; from = first.cqr; to = last.cqr; }
+      }
+      out.window[id] = { ...(out.window[id] || {}), faded, fadedFrom: from, fadedTo: to };
+    }
+  } catch (err) { if (err.code !== '42P01') throw err; }
+  return out;
+}
+
 async function buildPayload(brandId) {
+  const extras = await paidExtras(brandId);
   const [brandR, contentR, metaR, ttR, organicR, bestR, boostR, accountR, campR] =
     await Promise.all([
       query(`select brand_id, name from brands where brand_id = $1`, [brandId]),
@@ -220,6 +270,22 @@ async function buildPayload(brandId) {
 
       _meta: m,
       _tt: t,
+
+      // Paid video views, so the summary can compare like with like
+      // against organic views rather than against impressions.
+      paidViews: extras.views[id] || 0,
+
+      // Three states, not two. A creative that ran and was switched off
+      // is not the same as one that never had spend behind it.
+      boostState: !isBoosted ? 'never'
+                : (both.some(x => x.adStatus === 'ACTIVE') ? 'running' : 'ended'),
+      boostEnded: (extras.window[id] || {}).last_day
+        ? new Date(extras.window[id].last_day).toISOString().slice(0, 10) : null,
+
+      // Rated worse in its last week than its first, and still running.
+      fatiguing: !!(extras.window[id] || {}).faded,
+      fatigueFrom: (extras.window[id] || {}).fadedFrom || null,
+      fatigueTo: (extras.window[id] || {}).fadedTo || null,
 
       // content
       contentHook: c.content_hook || '',
