@@ -472,7 +472,7 @@ function renderKPIs(data) {
 
   const tile = (label, value, sub, o = {}) => `
     <div class="kpi ${o.filter ? 'kpi-click' : ''}"
-         ${o.filter ? `onclick="applyKpiFilter('${o.filter}')" title="Show these in the grid"` : ''}>
+         ${o.filter ? `onclick="hubTileFilter('${o.filter}')" title="Show these in the grid"` : ''}>
       <div class="kpi-label">${label}</div>
       <div class="kpi-val"${o.color ? ` style="color:${o.color}"` : ''}>${value}</div>
       <div class="kpi-sub">${sub}</div>
@@ -557,8 +557,14 @@ function toggleKpiList(key) {
   if (tile) tile.classList.add('kpi-open');
 }
 
-// Tiles filter the grid. A number you cannot act on is decoration.
-function applyKpiFilter(value) {
+/**
+ * Tiles filter the grid. A number you cannot act on is decoration.
+ *
+ * Named hubTileFilter, not applyKpiFilter: kpi-dashboard.js already owns
+ * that name for the Campaign KPIs tab and loads after this file, so the
+ * tiles silently called the wrong function and did nothing.
+ */
+function hubTileFilter(value) {
   const sel = document.getElementById('status-filter');
   if (!sel) return;
   sel.value = value;
