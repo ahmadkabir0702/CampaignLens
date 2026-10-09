@@ -283,6 +283,7 @@ function getData() {
   const ctf     = (document.getElementById('content-type-filter') || {}).value || 'all';
   const af      = (document.getElementById('action-filter')       || {}).value || 'all';
   const of      = (document.getElementById('origin-filter')       || {}).value || 'all';
+  const srcf    = (document.getElementById('source-filter')       || {}).value || 'all';
 
   if (tf !== 'all')   data = data.filter(d => d.type === tf);
   if (mf !== 'all')   data = data.filter(d => d.month === mf);
@@ -311,6 +312,9 @@ if (sf === 'ACTIVE')                data = data.filter(d => d.adStatus === 'ACTI
   if (sf === 'BOOSTED')               data = data.filter(d => d.isBoosted);
   if (sf === 'NOT_BOOSTED')           data = data.filter(d => !d.isBoosted);
   if (sf === 'VALIDATED_NOT_BOOSTED') data = data.filter(d => d.isValidated && !d.isBoosted);
+  if (srcf === 'brand')     data = data.filter(d => d.type === 'Brand Say');
+  if (srcf === 'creator')   data = data.filter(d => d.type === 'Others Say' && d.source !== 'community');
+  if (srcf === 'community') data = data.filter(d => d.source === 'community');
   if (of === 'original')       data = data.filter(d => !d.isRepurposed);
   if (of === 'repurposed')     data = data.filter(d => d.isRepurposed);
   if (of === 'has_repurposed') data = data.filter(d => repurposesOf(d.id).length > 0);
@@ -496,7 +500,7 @@ function renderCards(data) {
       <div class="card-top">
         <div class="card-plat"><div class="status-dot ${isAct?'status-active-dot':isNotBoosted?'':'status-stopped-dot'}"></div>${platHTML}</div>
         <div style="display:flex;align-items:center;gap:3px;flex-wrap:wrap;justify-content:flex-end">
-          <span class="card-type ${d.type==='Brand Say'?'bs-tag':'os-tag'}">${d.type==='Brand Say'?'BS':'OS'}</span>${repTag}
+          <span class="card-type ${d.type==='Brand Say'?'bs-tag':'os-tag'}">${d.type==='Brand Say'?'BS':'OS'}</span>${d.source==='community'?'<span class="card-type community-tag">Community</span>':''}${repTag}
         </div>
       </div>
       ${cardMediaHTML(d)}
@@ -735,6 +739,22 @@ function buildValidationHTML(v) {
     </div>`;
   };
 
+  // Facebook reaction split. The one sentiment signal available without
+  // reading comments, and the one that can contradict the totals: a sad
+  // and an angry count towards engagement exactly like a like does.
+  const reactionsBlock = (p) => {
+    const r = p.reactions;
+    if (!r || !r.rows || !r.rows.length) return '';
+    const bar = r.rows.filter(x => x.count > 0).map(x =>
+      `<span class="orgval-react-seg react-${x.key}" style="width:${x.share}%" title="${x.label} ${x.count}"></span>`).join('');
+    const keys = r.rows.filter(x => x.count > 0).map(x =>
+      `<span class="orgval-react-key"><span class="orgval-react-dot react-${x.key}"></span>${x.label} ${x.share}%</span>`).join('');
+    return `<div class="orgval-divider">How people reacted</div>
+      <div class="orgval-react-bar">${bar}</div>
+      <div class="orgval-react-keys">${keys}</div>
+      <div class="orgval-line ${r.negative_share >= 10 && r.enough ? '' : 'orgval-muted'}">${esc(r.verdict)}</div>`;
+  };
+
   // The raw counts, in each platform's own naming.
   const countsBlock = (p) => {
     const isFb = p.platform === 'fb';
@@ -779,6 +799,7 @@ function buildValidationHTML(v) {
         ${p.cqr ? gradeChip(p.cqr) : `<span class="val-badge inv-bg">Unrated</span>`}
       </div>
       ${countsBlock(p)}
+      ${reactionsBlock(p)}
       <div class="orgval-divider">How it is judged</div>
       ${rateRow('Retention', p.retention, '%')}
       ${rateRow('Engagement', p.engagement, '%')}
@@ -995,7 +1016,7 @@ function renderDetail(d) {
     <div class="cm-body">
       <div class="detail-header">
         <div>
-          <div class="detail-title">${d.short}<span class="card-type ${d.type==='Brand Say'?'bs-tag':'os-tag'}" style="margin-left:6px">${d.type}</span>${valUI}</div>
+          <div class="detail-title">${d.short}<span class="card-type ${d.type==='Brand Say'?'bs-tag':'os-tag'}" style="margin-left:6px">${d.type}</span>${d.source==='community'?'<span class="card-type community-tag" style="margin-left:4px">Community</span>':''}${valUI}</div>
           <div class="detail-meta">${metaParts.join(' · ')}</div>
           ${creatorHTML}${repText}${linkBtns}
         </div>
@@ -1170,6 +1191,14 @@ function toggleCreativeFields() {
   const type = document.getElementById('ac-type').value;
   const repurposedSelect = document.getElementById('ac-repurposed');
   const originalIdSelect = document.getElementById('ac-original-id');
+  const sourceSelect = document.getElementById('ac-source');
+  // Others Say splits into creator and community. Brand Say has no sub-type.
+  if (sourceSelect) {
+    const isOthers = type === 'Others Say';
+    sourceSelect.style.display = isOthers ? 'block' : 'none';
+    sourceSelect.required = isOthers;
+    if (!isOthers) sourceSelect.value = '';
+  }
   if (type === 'Brand Say') {
     repurposedSelect.style.display = 'block';
     repurposedSelect.required = true;
@@ -1351,6 +1380,7 @@ function acReadForm() {
     description: (document.getElementById('ac-description') || {}).value || '',
     campaign: document.getElementById('ac-campaign').value,
     type: document.getElementById('ac-type').value,
+    source: (document.getElementById('ac-source') || {}).value || '',
     repurposed: document.getElementById('ac-repurposed').value || 'No',
     originalId: document.getElementById('ac-original-id').value || '',
     plats,
@@ -1361,6 +1391,7 @@ function acReadForm() {
 function acValidate(f) {
   if (!f.campaign) return 'Select a campaign.';
   if (!f.type) return 'Select a category.';
+  if (f.type === 'Others Say' && !f.source) return 'Choose whether this is creator or community content.';
   const anyOn = AC_PLATS.some(p => f.plats[p.k].on);
   if (!anyOn) return 'Turn on at least one platform. A creative with no links cannot have stats.';
   let bad = false;
@@ -1445,6 +1476,7 @@ function acRenderReview(f) {
     ${f.description ? line('Description', f.description) : ''}
     ${line('Campaign', f.campaign)}
     ${line('Category', f.type)}
+    ${f.type === 'Others Say' ? line('Posted by', f.source === 'community' ? 'Community (posted by the public)' : 'Creator (briefed and paid)') : ''}
     ${f.type === 'Brand Say' ? line('Repurposed', f.repurposed) : ''}
     ${f.repurposed === 'Yes' && f.originalId ? line('Original creative', f.originalId) : ''}
     ${AC_PLATS.map(p => {
@@ -1515,6 +1547,7 @@ async function submitCreative(e) {
 
   const campaign = f.campaign;
   const type = f.type;
+  const source = f.source || null;
   const ig = f.plats.ig.on ? f.plats.ig.link : '';
   const fb = f.plats.fb.on ? f.plats.fb.link : '';
   const tt = f.plats.tt.on ? f.plats.tt.link : '';
@@ -1550,7 +1583,7 @@ async function submitCreative(e) {
     const res = await fetch('/api/add-creative', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ campaign, type, ig, fb, tt, repurposed, originalId, description, brand: BRAND_NAME,
+      body: JSON.stringify({ campaign, type, source, ig, fb, tt, repurposed, originalId, description, brand: BRAND_NAME,
         content_confirmed: !!(AC_CONTENT && AC_CONTENT.verdict === 'different') }),
       signal: AbortSignal.timeout(120000)
     });

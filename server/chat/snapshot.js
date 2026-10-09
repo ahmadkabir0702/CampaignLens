@@ -59,7 +59,7 @@ function rankCmp(a, b) {
 async function qCreatives(pool, brand) {
   const { rows } = await queryTolerant(pool, 
     `select c.${C.id} as id, c.${C.hook} as hook, c.${C.format} as format, c.${C.productRole} as product_role,
-            c.${C.type} as type, c.${C.campaign} as campaign, c.${C.isRepurposed} as is_repurposed,
+            c.${C.type} as type, c.source, c.${C.campaign} as campaign, c.${C.isRepurposed} as is_repurposed,
             c.${C.parentId} as parent_id, c.${C.publishedAt} as published_at, c.${C.durationS} as duration_s,
             c.segments, c.content_intent, c.narrative_structure, c.hook_device, c.hook_subject, c.hook_pace,
             c.logo_first_3s, c.captions, c.voiceover, c.music, c.cta, c.language, c.talent, c.production_style, c.aspect_ratio,

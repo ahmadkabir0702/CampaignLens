@@ -27,7 +27,7 @@ const schema = {
 
   creative: {
     id: 'creative_id', brand: 'brand_id', hook: 'content_hook', format: 'format',
-    productRole: 'product_role', type: 'type', campaign: 'campaign',
+    productRole: 'product_role', type: 'type', source: 'source', campaign: 'campaign',
     isRepurposed: 'is_repurposed', parentId: 'original_creative_id',
     publishedAt: 'date', durationS: 'duration_s', creatorId: 'creator_id',
     igLink: 'ig_link', fbLink: 'fb_link', ttLink: 'tt_link',

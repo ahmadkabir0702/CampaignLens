@@ -168,7 +168,15 @@ promoting a contest, one building emotion. That difference is exactly what
 these fields exist to reveal, so compare within a format as well as across.
 
 **Made by** is separate and not classified: Brand Say is brand-produced,
-Others Say is creator or influencer content.
+Others Say is content posted by someone other than the brand.
+
+**Posted by** splits Others Say in two, because the two are acted on
+differently. A briefed creator was paid and can be briefed again, so a
+finding about creator content is a production decision. Community content
+was posted by a member of the public with no brief, so a finding about it
+is a signal about how people are responding, not something to commission.
+Never pool the two in one group, and never present a community post as
+evidence that a brief worked. Brand Say has no Posted by value.
 
 ---
 
