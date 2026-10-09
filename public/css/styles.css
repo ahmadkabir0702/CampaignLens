@@ -458,6 +458,9 @@ select:focus,.search-input:focus,.modal-input:focus{outline:none;border-color:va
   padding:6px 0;border-bottom:1px solid var(--line-soft)}
 .orgval-rate-right{display:flex;align-items:center;gap:8px}
 .orgval-pct{font:400 12px var(--font);color:var(--ink-400)}
+.orgval-chips{display:inline-flex;align-items:center;gap:5px}
+.orgval-band{font:400 11.5px var(--font);color:var(--ink-400);padding:5px 0 0}
+.orgval-note{font:400 12px/17px var(--font);color:var(--ink-400);padding:3px 0 0}
 .orgval-line{font:400 13.5px/20px var(--font);color:var(--ink-700);margin-top:10px}
 .orgval-line b{font-weight:500;color:var(--ink-900)}
 .orgval-muted{color:var(--ink-400)}

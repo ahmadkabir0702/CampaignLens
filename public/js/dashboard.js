@@ -761,9 +761,24 @@ function buildValidationHTML(v) {
       <div class="orgval-line ${r.negative_share >= 10 && r.enough ? '' : 'orgval-muted'}">${esc(r.verdict)}</div>`;
   };
 
-  const judgedRows = (p) =>
-    rateRow('Retention', p.retention, '%', (p.expect || {}).retention) +
-    rateRow((p.engagement && p.engagement.label) || 'Engagement', p.engagement, '%', (p.expect || {}).engagement);
+  // One row, because the rating is based on one signal. Which one it is
+  // depends on type: retention for Brand Say, interaction for Others Say.
+  const judgedRows = (p) => {
+    const sg = p.signal;
+    if (!sg) return '';
+    const val = sg.value === null || sg.value === undefined ? '—' : `${sg.value}%`;
+    const place = sg.percentile === null || sg.percentile === undefined
+      ? '' : `<span class="orgval-pct">${sg.percentile}th percentile</span>`;
+    const band = sg.band
+      ? `<div class="orgval-band">Good from ${sg.band.good_gte}%, poor below ${sg.band.poor_lt}%</div>` : '';
+    return `<div class="orgval-rate">
+        <span class="organic-stat-label">${esc(sg.name)}</span>
+        <span class="orgval-rate-right">${place}<span class="organic-stat-val">${val}</span>${
+          sg.grade ? gradeChip(sg.grade) : `<span class="val-badge inv-bg">Not rated</span>`}</span>
+      </div>
+      ${band}
+      <div class="orgval-note">${esc(sg.note || '')}</div>`;
+  };
 
   // The raw counts, in each platform's own naming.
   const countsBlock = (p) => {
@@ -796,7 +811,7 @@ function buildValidationHTML(v) {
           ? `<div class="orgval-line orgval-muted">Only one reading so far, so there is no trend yet. A second pull will show whether it is still climbing.</div>`
           : '');
     const standing = p.standing && p.standing.words
-      ? `<div class="orgval-line"><b>Where it sits:</b> ${esc(p.standing.words)}, on ${esc(p.standing.basis)}, against ${p.standing.peers} other posts.</div>`
+      ? `<div class="orgval-line"><b>Where it sits:</b> ${esc(p.standing.words)}, against ${p.standing.peers} other posts of the same kind.</div>`
       : `<div class="orgval-line orgval-muted">Too few other organic posts in the last 90 days to place this one against them.</div>`;
     const recClass = p.recommendation.action === 'boost' ? 'orgval-rec-go'
                    : p.recommendation.action === 'hold' ? 'orgval-rec-stop'
@@ -806,8 +821,10 @@ function buildValidationHTML(v) {
     return `<div class="orgval-plat">
       <div class="orgval-plat-head">
         <span class="organic-platform" style="margin:0">${esc(p.label)}</span>
-        ${p.boosted ? `<span class="val-badge inv-bg">Boosted</span>`
-          : p.cqr ? gradeChip(p.cqr) : `<span class="val-badge inv-bg">Unrated</span>`}
+        <span class="orgval-chips">
+          ${p.cqr ? gradeChip(p.cqr) : `<span class="val-badge inv-bg">Not rated</span>`}
+          ${p.state ? `<span class="val-badge inv-bg" title="${esc(p.state_note || '')}">${esc(p.state)}</span>` : ''}
+        </span>
       </div>
       ${countsBlock(p)}
       ${reactionsBlock(p)}
