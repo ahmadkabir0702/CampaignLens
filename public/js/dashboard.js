@@ -545,11 +545,11 @@ function paintDrawer(p) {
   el.style.height = Math.max(0, drawerH * p) + 'px';
   if (inner) {
     // Comes down from behind the tile rather than appearing in place.
-    inner.style.setProperty('--dz', (-12 * (1 - p)).toFixed(2) + 'px');
+    inner.style.setProperty('--dz', (-6 * (1 - p)).toFixed(2) + 'px');
     // Fades in ahead of the move so it is legible before it arrives.
-    inner.style.setProperty('--df', Math.max(0, Math.min(1, p * 1.7)).toFixed(3));
+    inner.style.setProperty('--df', Math.max(0, Math.min(1, p * 2)).toFixed(3));
   }
-  if (card) card.style.setProperty('--ds', (0.965 + 0.035 * p).toFixed(4));
+  if (card) card.style.setProperty('--ds', '1');
 }
 
 function getDrawerSpring() {
@@ -719,8 +719,8 @@ function renderCards(data) {
         </div>
       </div>
       ${cardMediaHTML(d)}
-      <div class="card-name">${d.id}</div>
-      <div style="font-size:9px;color:var(--c-muted);margin-top:-6px;margin-bottom:4px;">${d.short !== d.id ? d.short : ''}</div>
+      <div class="card-name">${d.short || d.id}</div>
+      <div class="card-id">${d.short && d.short !== d.id ? d.id : ''}</div>
       <div class="card-campaign">${d.campaign} · ${d.month}</div>
       <div class="card-tags">${durTag}${ctTag}${valTag}</div>
       <div class="mini-bars">
@@ -776,12 +776,11 @@ function paintModal() {
   if (!overlay || !panel) return;
   const p = modalP;
   overlay.style.setProperty('--scrim', Math.max(0, Math.min(1, p)).toFixed(3));
-  // The enter path and the drag share one axis: 18px of travel on the
-  // way in, plus whatever the hand has added.
-  panel.style.setProperty('--sheet-y', (18 * (1 - p) + modalY).toFixed(2) + 'px');
-  panel.style.setProperty('--sheet-s', (0.94 + 0.06 * p).toFixed(4));
-  // Blur and scale move together so it reads as a surface arriving.
-  panel.style.setProperty('--sheet-blur', (6 * (1 - p)).toFixed(2) + 'px');
+  // The enter path and the drag share one axis: 8px on the way in, plus
+  // whatever the hand has added.
+  panel.style.setProperty('--sheet-y', (8 * (1 - p) + modalY).toFixed(2) + 'px');
+  // Barely a scale. Enough to read as arriving, not enough to watch.
+  panel.style.setProperty('--sheet-s', (0.988 + 0.012 * p).toFixed(4));
 }
 
 function modalSprings() {
@@ -932,7 +931,7 @@ function installModalDrag() {
     if (dismiss) {
       // Hand the release velocity straight to the spring so there is no
       // seam between the drag and the animation that finishes it.
-      sp.y.to(h + 120, { velocity: v, bounce: 0, duration: 0.35 });
+      sp.y.to(h + 120, { velocity: v, bounce: 0, duration: 0.25 });
       closeCreativeModal(null, { keepY: true });
     } else {
       sp.y.to(0, { velocity: v });

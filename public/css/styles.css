@@ -24,9 +24,14 @@
   --warn:#8A5A12; --warn-bg:#FCF3E4;
   --plum:#3B2A6B; --plum-bg:#EDE9F7;
 
-  --r-btn:6px; --r-card:8px; --r-pill:999px;
+  /* Softer, more continuous corners. One token, so cards, tiles,
+     panels and inputs all move together. */
+  --r-btn:9px; --r-card:14px; --r-pill:999px;
   --shadow-pop:0 8px 24px -6px rgba(0,0,80,.14), 0 2px 6px rgba(0,0,80,.06);
-  --shadow-card:0 4px 14px -4px rgba(0,0,80,.12);
+  /* A surface at rest still casts something, or it reads as a hole in
+     the canvas rather than a card on it. */
+  --shadow-rest:0 1px 2px rgba(0,0,80,.05), 0 1px 1px rgba(0,0,80,.03);
+  --shadow-card:0 6px 20px -6px rgba(0,0,80,.13), 0 2px 5px rgba(0,0,80,.05);
 
   --font:'Rubik',-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;
   --ease:cubic-bezier(.2,0,.2,1);
@@ -215,7 +220,9 @@ select:focus,.search-input:focus,.modal-input:focus{outline:none;border-color:va
 /* A tile that filters the grid says so by behaving like a control. */
 .kpi-click{cursor:pointer;transition:box-shadow .15s var(--ease),transform .15s var(--ease)}
 .kpi-click:hover{box-shadow:0 2px 10px rgba(0,0,80,.10);transform:translateY(-1px)}
-.kpi-named{font:400 18px/26px var(--font);color:var(--ink-900);letter-spacing:-.011em;
+/* Sits beside 32px numbers, so 18px read as a caption rather than the
+   tile's subject. Weight carries it without taking more room. */
+.kpi-named{font:500 21px/28px var(--font);color:var(--ink-900);letter-spacing:-.016em;
   margin-top:2px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 .kpi-none{color:var(--ink-400)}
 .kpi-more{font:400 11.5px var(--font);color:var(--ink-400);
@@ -241,6 +248,7 @@ select:focus,.search-input:focus,.modal-input:focus{outline:none;border-color:va
 }
 .kpi-drawer-card{
   background:var(--white);border-radius:var(--r-card);padding:16px 20px;
+  box-shadow:var(--shadow-rest);
   transform:scale(var(--ds,1));
   transform-origin:50% 0;
   will-change:transform;
@@ -261,13 +269,21 @@ select:focus,.search-input:focus,.modal-input:focus{outline:none;border-color:va
 .kpi-list-n{color:var(--ink-400);width:24px;font-variant-numeric:tabular-nums}
 .kpi-list-num{text-align:right;font-variant-numeric:tabular-nums;color:var(--ink-600);white-space:nowrap}
 .kpi-list-grade{text-align:right;width:90px}
-.kpi,.stat-card{background:var(--white);border-radius:var(--r-card);padding:18px 20px;border:0}
-.kpi-label,.stat-title{
-  font:400 13px/18px var(--font);color:var(--ink-600);
-  text-transform:none;letter-spacing:.004em;margin-bottom:8px;
+.kpi,.stat-card{
+  background:var(--white);border-radius:var(--r-card);padding:18px 20px;border:0;
+  box-shadow:var(--shadow-rest);
 }
-.kpi-val,.stat-value{font:400 28px/34px var(--font);letter-spacing:-.022em;color:var(--ink-900)}
-.kpi-sub,.stat-sub{font:400 13px/19px var(--font);color:var(--ink-600);margin-top:4px}
+/* Hierarchy from size, weight and contrast together rather than size
+   alone: the label recedes, the number carries, the note sits under it.
+   These three used to be 13px, 28px and 13px in near-identical greys,
+   so the eye had to read the tile to find the number in it. */
+.kpi-label,.stat-title{
+  font:400 12px/17px var(--font);color:var(--ink-500);
+  text-transform:none;letter-spacing:.012em;margin-bottom:7px;
+}
+.kpi-val,.stat-value{font:400 32px/37px var(--font);letter-spacing:-.025em;color:var(--ink-900)}
+.kpi-sub,.stat-sub{font:400 12.5px/18px var(--font);color:var(--ink-400);margin-top:5px}
+.kpi-row{gap:16px}
 
 /* ---------- Chips and tags — pills, sentence case ------------------ */
 .kpi-pill,.cqr-badge,.val-badge,.card-type,
@@ -330,9 +346,11 @@ select:focus,.search-input:focus,.modal-input:focus{outline:none;border-color:va
 /* ---------- Creative cards ---------------------------------------- */
 .card-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(268px,1fr));gap:14px}
 
+.card-grid{gap:16px}
 .card{
   background:var(--white);border:0;border-radius:var(--r-card);
-  padding:16px 18px 14px;cursor:pointer;
+  padding:18px;cursor:pointer;
+  box-shadow:var(--shadow-rest);
   transition:box-shadow .15s var(--ease);
 }
 .card:hover{box-shadow:var(--shadow-card)}
@@ -354,7 +372,7 @@ select:focus,.search-input:focus,.modal-input:focus{outline:none;border-color:va
    not revealed on hover: it is the one thing on the card you can click
    through to, and hiding it would make it undiscoverable.               */
 .card-thumb{
-  position:relative;margin:-16px -18px 12px;overflow:hidden;
+  position:relative;margin:-18px -18px 14px;overflow:hidden;
   /* Fixed height, full width. An aspect-ratio with a max-height makes the
      browser shrink the WIDTH to keep the ratio, which left-aligns the frame
      inside the card instead of filling it. */
@@ -399,8 +417,19 @@ select:focus,.search-input:focus,.modal-input:focus{outline:none;border-color:va
   .card:hover .card-thumb img{transform:none}
 }
 
-.card-name{font:500 16px/22px var(--font);color:var(--ink-900);letter-spacing:-.008em;word-break:break-all;margin-bottom:1px}
-.card-campaign{font:400 13px/19px var(--font);color:var(--ink-600);margin-bottom:11px}
+/* The headline used to be the internal asset ID, with the name people
+   actually use rendered underneath at 9px in grey. Specific labels beat
+   generic ones, and 9px is below reading size, so they swapped. */
+.card-name{
+  font:500 16.5px/22px var(--font);color:var(--ink-900);letter-spacing:-.009em;
+  overflow-wrap:anywhere;margin-bottom:2px;
+}
+.card-id{
+  font:400 11.5px/15px var(--font);color:var(--ink-400);letter-spacing:.015em;
+  font-variant-numeric:tabular-nums;word-break:break-all;margin-bottom:3px;
+}
+.card-id:empty{display:none}
+.card-campaign{font:400 12.5px/18px var(--font);color:var(--ink-600);margin-bottom:12px}
 .card-tags{display:flex;gap:6px;flex-wrap:wrap;margin-bottom:14px}
 
 .mini-bars{display:flex;flex-direction:column;gap:9px;padding-top:13px;border-top:1px solid var(--line-soft)}
@@ -409,8 +438,8 @@ select:focus,.search-input:focus,.modal-input:focus{outline:none;border-color:va
   font:400 12.5px/1 var(--font);color:var(--ink-600);
   text-transform:none;letter-spacing:.006em;
 }
-.mini-bar-track{height:5px;background:var(--canvas);border-radius:3px;overflow:hidden}
-.mini-bar-fill{height:100%;border-radius:3px;background:var(--navy)}
+.mini-bar-track{height:4px;background:var(--line-soft);border-radius:999px;overflow:hidden}
+.mini-bar-fill{height:100%;border-radius:999px;background:var(--navy)}
 .mini-bar-val{font:400 13px var(--font);color:var(--ink-900);text-align:right}
 
 .card-footer{
@@ -423,12 +452,16 @@ select:focus,.search-input:focus,.modal-input:focus{outline:none;border-color:va
    pushed back rather than merely tinted. Its opacity is driven by a
    spring, hence the custom property. */
 .modal-overlay,.creative-modal-overlay{
-  position:fixed;inset:0;background:rgba(10,10,46,.26);
-  -webkit-backdrop-filter:blur(14px) saturate(115%);
-  backdrop-filter:blur(14px) saturate(115%);
+  position:fixed;inset:0;background:rgba(10,10,46,.34);
   display:none;align-items:center;justify-content:center;z-index:100;padding:24px;
   opacity:var(--scrim,1);
 }
+/* No backdrop blur. Dimming to focus is the behaviour §12 asks for; the
+   blur was how it was drawn, and it is the expensive part. Measured on a
+   126-card grid with software rendering: animating it cost 266ms frames,
+   and even switched on once at rest it cost a 100ms hitch at the end of
+   every open. A deeper plain dim does the same job for nothing, and the
+   panel's own shadow carries the separation. */
 .creative-modal,.modal-overlay>div{
   background:var(--white);border:0;border-radius:var(--r-card);
   box-shadow:var(--shadow-pop);max-width:900px;width:100%;max-height:88vh;overflow-y:auto;
@@ -436,10 +469,12 @@ select:focus,.search-input:focus,.modal-input:focus{outline:none;border-color:va
 /* Enter and exit on one path: it grows out of the card that opened it and
    shrinks back into it. Blur moves with the scale so the panel reads as a
    surface arriving, not an image cross-fading. */
+/* Transform only. An animated filter:blur on a panel this size forces a
+   full repaint and reblur of the whole subtree every frame, which is
+   what made this feel heavy. */
 .creative-modal{
   transform:translateY(var(--sheet-y,0px)) scale(var(--sheet-s,1));
-  filter:blur(var(--sheet-blur,0px));
-  will-change:transform,filter;
+  will-change:transform;
 }
 /* The header is the handle. Dragging it down dismisses, which is how a
    sheet behaves on touch; the grab is 1:1 and resists past the top. */
@@ -1277,7 +1312,6 @@ select:focus,.search-input:focus,.modal-input:focus{outline:none;border-color:va
   .card-play[data-press].is-pressed{transform:none}
   .detail-play[data-press].is-pressed{transform:translate(-50%,-50%)}
   .kpi-drawer-card,.kpi-drawer-inner,.creative-modal{transform:none!important}
-  .creative-modal{filter:none!important}
   /* The sheet still arrives, as a short cross-fade rather than a move. */
   .kpi-drawer-inner{transition:opacity .2s ease}
 }
@@ -1286,10 +1320,7 @@ select:focus,.search-input:focus,.modal-input:focus{outline:none;border-color:va
    Frostier means solid: raise the background to opaque and drop the blur
    rather than leaving a half-legible pane. */
 @media (prefers-reduced-transparency:reduce){
-  .modal-overlay,.creative-modal-overlay{
-    background:rgba(10,10,46,.55);
-    -webkit-backdrop-filter:none;backdrop-filter:none;
-  }
+  .modal-overlay,.creative-modal-overlay{background:rgba(10,10,46,.55)}
   .grid-header{
     background:var(--canvas);
     -webkit-backdrop-filter:none;backdrop-filter:none;
