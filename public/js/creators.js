@@ -271,7 +271,7 @@ function renderCreatorTab() {
             // A single-asset creator's averages are not a track record.
             const thin = c.videos < 2
               ? `<span class="tag-duration" title="Single asset — not yet a pattern">1 asset</span>` : '';
-            return `<tr style="cursor:pointer" onclick="openCreatorDetail('${c.name.replace(/'/g,"\\'")}')">
+            return `<tr data-press style="cursor:pointer" onclick="openCreatorDetail('${c.name.replace(/'/g,"\\'")}', this)">
               <td><div style="display:flex;align-items:center;gap:6px">${nameEl}${thin}</div></td>
               <td>${c.videos}</td>
               <td>
@@ -538,7 +538,9 @@ function drawCreatorCharts(list, all) {
 //  Detail — one creator's assets, so the conversation moves from
 //  "this creator is good" to "this asset worked, and here is why"
 // ---------------------------------------------------------------------
-function openCreatorDetail(name) {
+/** @param {Element} [trigger] the row that was clicked, so the panel
+ *  grows out of it rather than appearing from nowhere. */
+function openCreatorDetail(name, trigger) {
   const c = buildCreators().find(x => x.name === name);
   if (!c) return;
 
@@ -639,5 +641,8 @@ function openCreatorDetail(name) {
 
       ${assetBlocks}
     </div>`;
-  document.getElementById('creativeModalOverlay').style.display = 'flex';
+  // Through the shared opener in dashboard.js, so this panel arrives the
+  // same way the Creative Hub's does and picks up the same spring state.
+  if (typeof showCreativePanel === 'function') showCreativePanel(trigger);
+  else document.getElementById('creativeModalOverlay').style.display = 'flex';
 }

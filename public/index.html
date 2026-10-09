@@ -395,18 +395,18 @@
     </div>
 
     <div class="nav-tabs">
-      <div class="nav-item active" onclick="setNav('creatives',this)">Creative Hub</div>
-      <div class="nav-item" onclick="setNav('kpi',this)">Campaign KPIs</div>
-      <div class="nav-item" onclick="setNav('creators',this)">Creators</div>
+      <div class="nav-item active" data-press onclick="setNav('creatives',this)">Creative Hub</div>
+      <div class="nav-item" data-press onclick="setNav('kpi',this)">Campaign KPIs</div>
+      <div class="nav-item" data-press onclick="setNav('creators',this)">Creators</div>
       <!-- Temporarily hidden, uncomment to restore:
-      <div class="nav-item" onclick="setNav('signoff',this)">Campaign Sign-Off</div>
+      <div class="nav-item" data-press onclick="setNav('signoff',this)">Campaign Sign-Off</div>
       -->
     </div>
 
     <div class="topbar-right">
       <div id="brand-switcher-ui"></div>
       <select id="brand-switcher" onchange="switchBrand(this.value)" class="dd-native" aria-hidden="true" tabindex="-1"></select>
-      <button class="btn-outline" onclick="openAddCreativeModal()">
+      <button class="btn-outline" data-press onclick="openAddCreativeModal()">
         <svg viewBox="0 0 24 24"><path d="M12 5v14M5 12h14"/></svg>Add creative
       </button>
       <!-- Temporarily hidden, uncomment to restore:
@@ -430,13 +430,13 @@
                  placeholder="Search ID, name, creator, campaign or paste a post link" onkeyup="render()">
 
           <div class="platform-toggle">
-            <div class="pt active" id="pt-both" onclick="setPlatform('both',this)">All</div>
-            <div class="pt" id="pt-meta" onclick="setPlatform('meta',this)">Meta</div>
-            <div class="pt" id="pt-tt" onclick="setPlatform('tiktok',this)">TikTok</div>
+            <div class="pt active" id="pt-both" data-press onclick="setPlatform('both',this)">All</div>
+            <div class="pt" id="pt-meta" data-press onclick="setPlatform('meta',this)">Meta</div>
+            <div class="pt" id="pt-tt" data-press onclick="setPlatform('tiktok',this)">TikTok</div>
           </div>
 
           <div class="filters-wrap">
-            <button class="filters-btn" id="filters-btn" onclick="toggleFilters(event)">
+            <button class="filters-btn" id="filters-btn" data-press onclick="toggleFilters(event)">
               <svg viewBox="0 0 24 24"><path d="M3 5h18M6 12h12M10 19h4"/></svg>
               Filters <span class="filters-count" id="filters-count"></span>
             </button>
@@ -528,16 +528,16 @@
           <div class="grid-header">
             <div style="display:flex; align-items:center; gap:8px;">
               <div class="grid-header-title" id="grid-count"></div>
-              <button class="sort-btn" id="sort-dir-btn" style="font-weight:600; padding:4px 6px;" onclick="toggleSortDir()">⬇ Desc</button>
+              <button class="sort-btn" id="sort-dir-btn" data-press style="font-weight:600; padding:4px 6px;" onclick="toggleSortDir()">⬇ Desc</button>
             </div>
             <div class="sort-btns">
-              <div class="sort-btn active" id="sb-hook" onclick="setSort('hook',this)">Hook Rate</div>
-              <div class="sort-btn" id="sb-hold" onclick="setSort('hold',this)">Hold Rate</div>
-              <div class="sort-btn" id="sb-reach" onclick="setSort('reach',this)">Reach</div>
-              <div class="sort-btn" id="sb-cqr" onclick="setSort('cqr',this)">CQR</div>
-              <div class="sort-btn" id="sb-spend" onclick="setSort('spend',this)">Spend</div>
-              <div class="sort-btn" id="sb-date" onclick="setSort('date',this)">Date Posted</div>
-              <div class="sort-btn" id="sb-added" onclick="setSort('added',this)">Recently Added</div>
+              <div class="sort-btn active" id="sb-hook" data-press onclick="setSort('hook',this)">Hook Rate</div>
+              <div class="sort-btn" data-press id="sb-hold" onclick="setSort('hold',this)">Hold Rate</div>
+              <div class="sort-btn" data-press id="sb-reach" onclick="setSort('reach',this)">Reach</div>
+              <div class="sort-btn" data-press id="sb-cqr" onclick="setSort('cqr',this)">CQR</div>
+              <div class="sort-btn" data-press id="sb-spend" onclick="setSort('spend',this)">Spend</div>
+              <div class="sort-btn" data-press id="sb-date" onclick="setSort('date',this)">Date Posted</div>
+              <div class="sort-btn" data-press id="sb-added" onclick="setSort('added',this)">Recently Added</div>
             </div>
           </div>
           <div class="card-grid" id="card-grid"></div>
@@ -646,7 +646,7 @@ function syncFilterPills(){
   if (!box) return;
   box.innerHTML = act.map(f => {
     const txt = f.el.options[f.el.selectedIndex].text;
-    return `<span class="filter-pill"><b>${FILTER_LABELS[f.id]}</b> ${txt}` +
+    return `<span class="filter-pill" data-press><b>${FILTER_LABELS[f.id]}</b> ${txt}` +
            `<span onclick="removeFilter('${f.id}')">&times;</span></span>`;
   }).join('') + (act.length > 1 ? '<button class="filter-clear" onclick="clearFilters()">Clear all</button>' : '');
 }
@@ -672,6 +672,7 @@ function clearFilters(){
 
 window.addEventListener('load', () => setTimeout(syncFilterPills, 400));
 </script>
+  <script src="/js/motion.js"></script>
   <script src="/js/links.js"></script>
   <script src="/js/dashboard.js"></script>
   <script src="/js/creators.js"></script>
