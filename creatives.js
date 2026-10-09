@@ -90,7 +90,7 @@ async function buildPayload(brandId) {
     await Promise.all([
       query(`select brand_id, name from brands where brand_id = $1`, [brandId]),
 
-      query(`select creative_id, date, campaign, type, source, is_repurposed,
+      query(`select creative_id, date, campaign, type, source, creator_led, is_repurposed,
                     original_creative_id, content_hook, seg1, seg2, seg3, seg4, segments,
                     format, product_role, format_note,
                     content_type, duration_s, creator_profile, created_at,
@@ -192,6 +192,8 @@ async function buildPayload(brandId) {
       // Others Say splits into briefed creator content and posts by the
       // public. Null on Brand Say.
       source: c.source || null,
+      // Brand Say content fronted by a creator.
+      creatorLed: c.creator_led === true,
       campaign: c.campaign || '',
       month: monthLabel(c.date),
       date: c.date ? new Date(c.date).toISOString().slice(0, 10) : '',

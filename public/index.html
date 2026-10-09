@@ -306,6 +306,11 @@
              <option value="community">Community (posted by the public)</option>
            </select>
 
+           <div class="ac-field plat-row" id="ac-creator-led-row" style="display:none; margin-bottom:10px;">
+             <label class="tgl"><input type="checkbox" id="ac-creator-led"><span class="tgl-track"></span></label>
+             <span class="ac-toggle-label">Led by a creator</span>
+           </div>
+
            <select id="ac-repurposed" class="modal-input" style="margin-bottom:10px; display:none;" onchange="toggleOriginalIdField()">
              <option value="" disabled selected>Is Repurposed?</option>
              <option value="No">No</option>
@@ -435,6 +440,7 @@
                 <select id="source-filter" onchange="onDraftChange()">
                   <option value="all">Everyone</option>
                   <option value="brand">Brand</option>
+                  <option value="creator_led">Brand, creator-led</option>
                   <option value="creator">Creators</option>
                   <option value="community">Community</option>
                 </select>

@@ -836,17 +836,18 @@ function makeProcessor(ai) {
         `insert into creatives
            (creative_id, brand_id, date, campaign, type, is_repurposed,
             original_creative_id, content_type, ig_link, fb_link, tt_link,
-            source, content_hook, duration_s, segments,
+            source, creator_led, content_hook, duration_s, segments,
             format, product_role, format_note, creator_profile, creator_id,
             content_intent, narrative_structure, hook_device, hook_subject, hook_pace,
             opens_with_product, opens_with_face, has_text_overlay,
             timeline_attrs, time_to_product_s, product_screen_pct, cuts_per_10s, attrs_version)
          values ($1,$2,coalesce($3::date, current_date),$4,$5,$6,$7,'Video',
-                 $8,$9,$10,$11,$12,$13,$14,
-                 $15,$16,$17,$18,$19,
-                 $20,$21,$22,$23,$24,$25,$26,$27,$28,$29,$30,$31,1)
+                 $8,$9,$10,$11,$12,$13,$14,$15,
+                 $16,$17,$18,$19,$20,
+                 $21,$22,$23,$24,$25,$26,$27,$28,$29,$30,$31,$32,1)
          on conflict (creative_id) do update set
            source = coalesce(excluded.source, creatives.source),
+           creator_led = coalesce(excluded.creator_led, creatives.creator_led),
            content_hook = excluded.content_hook,
            duration_s = coalesce(excluded.duration_s, creatives.duration_s),
            segments = excluded.segments,
@@ -869,6 +870,7 @@ function makeProcessor(ai) {
         [creativeId, d.brand, d.date, d.campaign, d.type, d.repurposed,
          d.originalId, d.ig, d.fb, d.tt,
          d.source || null,
+         d.creatorLed === undefined ? null : d.creatorLed,
          a.hook, safeDur, JSON.stringify(timeline),
          a.format || null, a.product_role || null, a.format_note || null,
          d.creator || null, d.creatorId || null,
