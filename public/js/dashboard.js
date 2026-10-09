@@ -1180,6 +1180,9 @@ function openAddCreativeModal() {
   if (typeof enhanceSelectsIn === 'function') enhanceSelectsIn('addCreativeModal');
   if (typeof repaintFilterDropdowns === 'function') repaintFilterDropdowns();
   creativeIds.forEach(id => { orgIdSelect.innerHTML += `<option value="${id}">${id}</option>`; });
+  // Last, not first: the styled controls have to exist before anything can
+  // be hidden, or they are built visible around a hidden select.
+  toggleCreativeFields();
 }
 
 function closeAddCreativeModal() {
@@ -1197,17 +1200,29 @@ function closeAddCreativeModal() {
  * That is why Repurposed and Original Creative ID were showing on Others Say
  * creatives. Hide the wrapper when there is one.
  */
+/**
+ * Show or hide one field in the Add Creative form.
+ *
+ * Every field sits in a persistent .ac-field wrapper in the markup.
+ * dropdowns.js replaces each <select> with a styled control and moves the
+ * select into a div of its own, so toggling the select itself is both
+ * invisible and order-dependent: hide it before the styled controls are
+ * built and a fresh, visible wrapper appears around it a moment later.
+ * That is why every field was showing when the modal opened and behaving
+ * correctly only after the first pick. Toggling the outer wrapper works
+ * either way round.
+ */
 function acShowField(id, visible, { required = false, clear = true } = {}) {
   const el = document.getElementById(id);
   if (!el) return;
-  const shell = el.closest('.dd') || el.closest('.ac-field') || el;
+  const shell = el.closest('.ac-field') || el.closest('.dd') || el;
   shell.style.display = visible ? '' : 'none';
   el.required = visible && required;
   if (!visible && clear) {
     if (el.type === 'checkbox') el.checked = false;
     else el.value = '';
     // The styled button paints from the select, so it needs repainting
-    // after the value is cleared or it keeps showing the old choice.
+    // after a value is cleared or it keeps showing the old choice.
     const wrap = el.closest('.dd');
     if (wrap && wrap._ddRepaint) wrap._ddRepaint();
   }
