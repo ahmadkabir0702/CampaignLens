@@ -707,6 +707,84 @@ async function loadOrganicValidation(detailsEl, creativeId) {
   }
 }
 
+// ---------------------------------------------------------------------
+//  Creative fatigue. The rating elsewhere is a lifetime figure that
+//  takes the best single day a creative ever had, so decay is invisible
+//  there. This grades each stretch of time on its own.
+// ---------------------------------------------------------------------
+const fatigueCache = new Map();
+
+async function loadFatigue(detailsEl, creativeId) {
+  if (!detailsEl.open) return;
+  const box = detailsEl.querySelector('.org-content');
+  if (!box || box.dataset.loadedFor === creativeId) return;
+
+  if (fatigueCache.has(creativeId)) {
+    box.innerHTML = buildFatigueHTML(fatigueCache.get(creativeId));
+    box.dataset.loadedFor = creativeId;
+    return;
+  }
+  box.innerHTML = `<div class="organic-empty">Loading…</div>`;
+  try {
+    const res = await fetch(`/api/creative-fatigue?creative_id=${encodeURIComponent(creativeId)}`);
+    const data = await res.json();
+    if (!res.ok) throw new Error(data.error || 'Could not load');
+    fatigueCache.set(creativeId, data);
+    box.innerHTML = buildFatigueHTML(data);
+    box.dataset.loadedFor = creativeId;
+  } catch (err) {
+    box.innerHTML = `<div class="organic-empty">Could not load this: ${String(err.message || err)}</div>`;
+  }
+}
+
+function buildFatigueHTML(f) {
+  const esc = s => String(s ?? '').replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+  if (!f || !f.platforms || !f.platforms.length) {
+    return `<div class="organic-empty">This creative has not run as paid, so there is no run to read over time.</div>`;
+  }
+  const chip = g => g && GRADE_CLASS[g]
+    ? `<span class="val-badge ${GRADE_CLASS[g]}">${esc(g)}</span>`
+    : `<span class="val-badge inv-bg">${esc(g || '—')}</span>`;
+  const day = d => d ? new Date(d).toLocaleDateString('en-GB', { day: 'numeric', month: 'short' }) : '';
+
+  const blocks = f.platforms.map(p => {
+    const rows = p.windows.map(w => `
+      <tr class="${w.key === 'lifetime' ? 'fat-lifetime' : ''}">
+        <td>${esc(w.label)}<div class="fat-dates">${day(w.from)} to ${day(w.to)}</div></td>
+        <td class="fat-num">${w.hook_rate === null ? '—' : w.hook_rate + '%'}</td>
+        <td class="fat-num">${w.hold_rate === null ? '—' : w.hold_rate + '%'}</td>
+        <td class="fat-num">${fmtN(w.impressions || 0)}</td>
+        <td class="fat-grade">${chip(w.cqr)}${w.thin ? '<div class="fat-dates">thin</div>' : ''}</td>
+      </tr>`).join('');
+
+    const dirClass = p.trend ? `fat-${p.trend.direction}` : 'fat-none';
+    return `<div class="orgval-plat">
+      <div class="orgval-plat-head">
+        <span class="organic-platform" style="margin:0">${esc(p.label)}</span>
+        <span class="orgval-chips">${p.still_running
+          ? '<span class="val-badge val-good">Running</span>'
+          : `<span class="val-badge inv-bg">Stopped${p.ended ? ' ' + day(p.ended) : ''}</span>`}</span>
+      </div>
+      <table class="fat-table">
+        <thead><tr><th>Window</th><th class="fat-num">Hook</th><th class="fat-num">Hold</th><th class="fat-num">Impr.</th><th class="fat-grade">Rating</th></tr></thead>
+        <tbody>${rows}</tbody>
+      </table>
+      ${p.verdict ? `<div class="orgval-rec-wrap"><div class="orgval-rec ${dirClass}">${esc(p.verdict)}</div></div>` : ''}
+    </div>`;
+  }).join('');
+
+  const hist = (f.history || []).filter(h => h.channel === 'paid');
+  const histBlock = hist.length > 1
+    ? `<div class="orgval-winners"><div class="orgval-winners-head">Rating changes recorded</div>
+        <ul class="orgval-list">${hist.map(h =>
+          `<li>${day(h.changed_at)}: ${esc(h.platform)} ${h.is_first ? 'first read as' : 'moved to'} ${esc(h.cqr || 'unrated')}</li>`
+        ).join('')}</ul></div>`
+    : `<div class="orgval-winners"><div class="orgval-line orgval-muted">Rating changes are recorded from the night this was switched on, so the list fills up from here rather than reaching back.</div></div>`;
+
+  return `<div class="orgval-grid">${blocks}</div>${histBlock}
+    <div class="orgval-line orgval-muted" style="margin-top:12px">${esc(f.note || '')}</div>`;
+}
+
 const GRADE_CLASS = { Good: 'val-good', Average: 'val-avg', Poor: 'inv-bg' };
 const ACTION_LABEL = {
   boost: 'Boost', boost_reach: 'Boost for reach', recut: 'Recut the opening',
@@ -1053,6 +1131,11 @@ function renderDetail(d) {
       ${buildLineageHTML(d)}
       ${statsHTML}
       ${buildCreativeBriefHTML(d)}
+
+      <details class="org-details" style="margin-top:12px;" ontoggle="loadFatigue(this, '${d.id}')">
+        <summary class="org-summary">How it is holding up <span style="color:var(--c-muted);font-size:10px;">The rating over time, not lifetime ▼</span></summary>
+        <div class="org-content"><div class="organic-empty">Loading…</div></div>
+      </details>
 
       <details class="org-details" style="margin-top:12px;" ontoggle="loadOrganicValidation(this, '${d.id}')">
         <summary class="org-summary">Organic Performance <span style="color:var(--c-muted);font-size:10px;">Numbers, why this rating, and whether to boost ▼</span></summary>
