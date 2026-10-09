@@ -172,6 +172,7 @@ const ELEMENTS = [
   { field: 'length_bucket', kind: 'cat', timing: 'whole' },
   { field: 'type', kind: 'cat', timing: 'whole' },
   { field: 'source', kind: 'cat', timing: 'whole' },
+  { field: 'creator_led', kind: 'bool', timing: 'whole', label: 'Brand content fronted by a creator' },
 ];
 
 /** Length bucket from duration, in code. */

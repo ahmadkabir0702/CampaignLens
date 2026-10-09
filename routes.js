@@ -436,6 +436,10 @@ app.get('/api/brands', async (req, res) => {
     // Others Say covers briefed creator content and posts by the public.
     // They are judged and acted on differently, so which one is recorded.
     const source = req.body.source || null;
+    // Brand Say content built around a creator. Not Others Say: the brand
+    // briefed, shot and published it, so it is brand content that happens
+    // to be fronted by a creator.
+    const creatorLed = req.body.creator_led === true || req.body.creator_led === 'true';
     const date = null;
     let ig, fb, tt;
     let brand;
@@ -450,6 +454,8 @@ app.get('/api/brands', async (req, res) => {
     }
     // Brand Say has no sub-type, so a stray value is dropped rather than stored.
     const sourceValue = type === 'Others Say' ? source : null;
+    // Null on Others Say: there the creator made it, so the flag says nothing.
+    const creatorLedValue = type === 'Brand Say' ? creatorLed : null;
     if (!campaign) return res.status(400).json({ error: 'Campaign is required.' });
 
     // Links are checked here as well as in the browser. The browser check is
@@ -589,6 +595,7 @@ app.get('/api/brands', async (req, res) => {
             repurposed: repurposed === 'Yes', originalId: originalId || null,
             ig: ig || null, fb: fb || null, tt: tt || null,
             source: sourceValue,
+            creatorLed: creatorLedValue,
             creator: creator || null,
             creatorId: creator_id || null,
             mediaUrl: videoLink,
@@ -628,11 +635,11 @@ app.get('/api/brands', async (req, res) => {
         `insert into creatives
            (creative_id, brand_id, date, campaign, type, is_repurposed,
             original_creative_id, content_type, ig_link, fb_link, tt_link,
-            creator_profile, creator_id, source)
-         values ($1,$2,coalesce($3::date, current_date),$4,$5,$6,$7,'Video',$8,$9,$10,$11,$12,$13)`,
+            creator_profile, creator_id, source, creator_led)
+         values ($1,$2,coalesce($3::date, current_date),$4,$5,$6,$7,'Video',$8,$9,$10,$11,$12,$13,$14)`,
         [creativeId, brand, date || null, campaign, type, repurposed === 'Yes',
          originalId || null, ig || null, fb || null, tt || null,
-         creator || null, creator_id || null, sourceValue]
+         creator || null, creator_id || null, sourceValue, creatorLedValue]
       );
       return res.json({
         success: true, creativeId, queued: false,

@@ -222,6 +222,10 @@ select:focus,.search-input:focus,.modal-input:focus{outline:none;border-color:va
 /* Community posts sit under Others Say but are not briefed content, so
    they carry their own tag next to the OS one rather than replacing it. */
 .community-tag{background:var(--sel);color:var(--ink-700)}
+/* Brand-made content fronted by a creator. Sits beside the BS tag rather
+   than replacing it: it is still brand content. */
+.creator-led-tag{background:var(--warn-bg);color:var(--warn)}
+.ac-toggle-label{font:400 14px var(--font);color:var(--ink-700)}
 .tag-repurposed{background:var(--canvas);color:var(--ink-600);font-weight:400}
 .tag-validated{background:var(--pos-bg);color:var(--pos)}
 .tag-duration,.tag-content-type{

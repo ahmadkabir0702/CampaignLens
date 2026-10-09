@@ -313,6 +313,7 @@ if (sf === 'ACTIVE')                data = data.filter(d => d.adStatus === 'ACTI
   if (sf === 'NOT_BOOSTED')           data = data.filter(d => !d.isBoosted);
   if (sf === 'VALIDATED_NOT_BOOSTED') data = data.filter(d => d.isValidated && !d.isBoosted);
   if (srcf === 'brand')     data = data.filter(d => d.type === 'Brand Say');
+  if (srcf === 'creator_led') data = data.filter(d => d.type === 'Brand Say' && d.creatorLed);
   if (srcf === 'creator')   data = data.filter(d => d.type === 'Others Say' && d.source !== 'community');
   if (srcf === 'community') data = data.filter(d => d.source === 'community');
   if (of === 'original')       data = data.filter(d => !d.isRepurposed);
@@ -500,7 +501,7 @@ function renderCards(data) {
       <div class="card-top">
         <div class="card-plat"><div class="status-dot ${isAct?'status-active-dot':isNotBoosted?'':'status-stopped-dot'}"></div>${platHTML}</div>
         <div style="display:flex;align-items:center;gap:3px;flex-wrap:wrap;justify-content:flex-end">
-          <span class="card-type ${d.type==='Brand Say'?'bs-tag':'os-tag'}">${d.type==='Brand Say'?'BS':'OS'}</span>${d.source==='community'?'<span class="card-type community-tag">Community</span>':''}${repTag}
+          <span class="card-type ${d.type==='Brand Say'?'bs-tag':'os-tag'}">${d.type==='Brand Say'?'BS':'OS'}</span>${d.source==='community'?'<span class="card-type community-tag">Community</span>':''}${d.creatorLed?'<span class="card-type creator-led-tag">Creator-led</span>':''}${repTag}
         </div>
       </div>
       ${cardMediaHTML(d)}
@@ -1016,7 +1017,7 @@ function renderDetail(d) {
     <div class="cm-body">
       <div class="detail-header">
         <div>
-          <div class="detail-title">${d.short}<span class="card-type ${d.type==='Brand Say'?'bs-tag':'os-tag'}" style="margin-left:6px">${d.type}</span>${d.source==='community'?'<span class="card-type community-tag" style="margin-left:4px">Community</span>':''}${valUI}</div>
+          <div class="detail-title">${d.short}<span class="card-type ${d.type==='Brand Say'?'bs-tag':'os-tag'}" style="margin-left:6px">${d.type}</span>${d.source==='community'?'<span class="card-type community-tag" style="margin-left:4px">Community</span>':''}${d.creatorLed?'<span class="card-type creator-led-tag" style="margin-left:4px">Creator-led</span>':''}${valUI}</div>
           <div class="detail-meta">${metaParts.join(' · ')}</div>
           ${creatorHTML}${repText}${linkBtns}
         </div>
@@ -1187,42 +1188,52 @@ function closeAddCreativeModal() {
   toggleCreativeFields();
 }
 
-function toggleCreativeFields() {
-  const type = document.getElementById('ac-type').value;
-  const repurposedSelect = document.getElementById('ac-repurposed');
-  const originalIdSelect = document.getElementById('ac-original-id');
-  const sourceSelect = document.getElementById('ac-source');
-  // Others Say splits into creator and community. Brand Say has no sub-type.
-  if (sourceSelect) {
-    const isOthers = type === 'Others Say';
-    sourceSelect.style.display = isOthers ? 'block' : 'none';
-    sourceSelect.required = isOthers;
-    if (!isOthers) sourceSelect.value = '';
-  }
-  if (type === 'Brand Say') {
-    repurposedSelect.style.display = 'block';
-    repurposedSelect.required = true;
-  } else {
-    repurposedSelect.style.display = 'none';
-    repurposedSelect.required = false;
-    repurposedSelect.value = "";
-    originalIdSelect.style.display = 'none';
-    originalIdSelect.required = false;
-    originalIdSelect.value = "";
+/**
+ * Show or hide one field in the Add Creative form.
+ *
+ * dropdowns.js replaces each native <select> with a styled button, wrapping
+ * the select in a div.dd and moving it inside. Hiding the select therefore
+ * hides something that is already hidden, and the visible control stays put.
+ * That is why Repurposed and Original Creative ID were showing on Others Say
+ * creatives. Hide the wrapper when there is one.
+ */
+function acShowField(id, visible, { required = false, clear = true } = {}) {
+  const el = document.getElementById(id);
+  if (!el) return;
+  const shell = el.closest('.dd') || el.closest('.ac-field') || el;
+  shell.style.display = visible ? '' : 'none';
+  el.required = visible && required;
+  if (!visible && clear) {
+    if (el.type === 'checkbox') el.checked = false;
+    else el.value = '';
+    // The styled button paints from the select, so it needs repainting
+    // after the value is cleared or it keeps showing the old choice.
+    const wrap = el.closest('.dd');
+    if (wrap && wrap._ddRepaint) wrap._ddRepaint();
   }
 }
 
+// Each field appears only once the answer above it makes it relevant.
+function toggleCreativeFields() {
+  const type = document.getElementById('ac-type').value;
+  const isBrand = type === 'Brand Say';
+  const isOthers = type === 'Others Say';
+
+  // Others Say: who posted it, a creator or the public.
+  acShowField('ac-source', isOthers, { required: true });
+
+  // Brand Say: was it repurposed, and was it led by a creator.
+  acShowField('ac-repurposed', isBrand, { required: true });
+  acShowField('ac-creator-led', isBrand);
+
+  // Original creative only follows a Yes on repurposed.
+  toggleOriginalIdField();
+}
+
 function toggleOriginalIdField() {
+  const isBrand = document.getElementById('ac-type').value === 'Brand Say';
   const repurposed = document.getElementById('ac-repurposed').value;
-  const originalIdSelect = document.getElementById('ac-original-id');
-  if (repurposed === 'Yes') {
-    originalIdSelect.style.display = 'block';
-    originalIdSelect.required = true;
-  } else {
-    originalIdSelect.style.display = 'none';
-    originalIdSelect.required = false;
-    originalIdSelect.value = "";
-  }
+  acShowField('ac-original-id', isBrand && repurposed === 'Yes', { required: true });
 }
 
 let LAST_CREATIVE_ID = null;
@@ -1381,6 +1392,7 @@ function acReadForm() {
     campaign: document.getElementById('ac-campaign').value,
     type: document.getElementById('ac-type').value,
     source: (document.getElementById('ac-source') || {}).value || '',
+    creatorLed: !!(document.getElementById('ac-creator-led') || {}).checked,
     repurposed: document.getElementById('ac-repurposed').value || 'No',
     originalId: document.getElementById('ac-original-id').value || '',
     plats,
@@ -1477,6 +1489,7 @@ function acRenderReview(f) {
     ${line('Campaign', f.campaign)}
     ${line('Category', f.type)}
     ${f.type === 'Others Say' ? line('Posted by', f.source === 'community' ? 'Community (posted by the public)' : 'Creator (briefed and paid)') : ''}
+    ${f.type === 'Brand Say' ? line('Led by a creator', f.creatorLed ? 'Yes' : 'No') : ''}
     ${f.type === 'Brand Say' ? line('Repurposed', f.repurposed) : ''}
     ${f.repurposed === 'Yes' && f.originalId ? line('Original creative', f.originalId) : ''}
     ${AC_PLATS.map(p => {
@@ -1548,6 +1561,7 @@ async function submitCreative(e) {
   const campaign = f.campaign;
   const type = f.type;
   const source = f.source || null;
+  const creator_led = f.type === 'Brand Say' ? !!f.creatorLed : null;
   const ig = f.plats.ig.on ? f.plats.ig.link : '';
   const fb = f.plats.fb.on ? f.plats.fb.link : '';
   const tt = f.plats.tt.on ? f.plats.tt.link : '';
@@ -1583,7 +1597,7 @@ async function submitCreative(e) {
     const res = await fetch('/api/add-creative', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ campaign, type, source, ig, fb, tt, repurposed, originalId, description, brand: BRAND_NAME,
+      body: JSON.stringify({ campaign, type, source, creator_led, ig, fb, tt, repurposed, originalId, description, brand: BRAND_NAME,
         content_confirmed: !!(AC_CONTENT && AC_CONTENT.verdict === 'different') }),
       signal: AbortSignal.timeout(120000)
     });
