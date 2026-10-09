@@ -344,7 +344,7 @@ select:focus,.search-input:focus,.modal-input:focus{outline:none;border-color:va
 .sort-btn.active{background:var(--sel);border-color:var(--sel-line);color:var(--ink-900);font-weight:500}
 
 /* ---------- Creative cards ---------------------------------------- */
-.card-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(268px,1fr));gap:14px}
+.card-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(300px,1fr));gap:14px}
 
 .card-grid{gap:16px}
 .card{
@@ -366,24 +366,36 @@ select:focus,.search-input:focus,.modal-input:focus{outline:none;border-color:va
 .status-stopped-dot{background:var(--ink-300)}
 
 /* --- Creative still frames -------------------------------------------
-   The frame is the creative, so it runs to the card edge rather than
-   sitting inside the padding. 4:5, cropped from the top, because that is
-   where the hook is in vertical video. The play button is always visible,
-   not revealed on hover: it is the one thing on the card you can click
-   through to, and hiding it would make it undiscoverable.               */
+   Nearly everything here is shot vertical. The still used to run full
+   bleed across the top of the card at a fixed 200px height, which is a
+   landscape slice through a portrait frame: it cost 200px of card height
+   and showed a band of the video. It is now a portrait tile at the
+   creative's own 4:5, sitting beside the name, which is the same shape
+   the detail panel uses for the same picture. The card is about 40%
+   shorter as a result, so a screen holds far more of the grid.
+
+   Cropped from the top, because that is where the hook is. The play
+   button is always visible rather than revealed on hover: it is the one
+   thing on the card you can click through to, and hiding it would make
+   it undiscoverable.                                                    */
+.card-head{display:flex;gap:13px;align-items:flex-start;margin-bottom:14px}
+.card-ident{flex:1;min-width:0}
 .card-thumb{
-  position:relative;margin:-18px -18px 14px;overflow:hidden;
-  /* Fixed height, full width. An aspect-ratio with a max-height makes the
-     browser shrink the WIDTH to keep the ratio, which left-aligns the frame
-     inside the card instead of filling it. */
-  width:auto;height:200px;background:var(--bg);
-  border-radius:var(--r-card) var(--r-card) 0 0;
+  position:relative;flex:0 0 96px;width:96px;aspect-ratio:4/5;
+  overflow:hidden;border-radius:10px;background:var(--canvas);
+  display:grid;place-items:center;
 }
+/* Sits under the image and shows through when there is none, so every
+   card keeps the same shape and a missing still is visible as a gap in
+   the pipeline rather than as a different-looking card. */
+.card-thumb-mark{
+  font:500 10.5px/1 var(--font);color:var(--ink-300);letter-spacing:.08em;
+}
+.card-thumb-none{box-shadow:inset 0 0 0 1px var(--line-soft)}
 .card-thumb img{
-  width:100%;height:100%;object-fit:cover;object-position:top;display:block;
-  transition:transform .35s var(--ease);
+  position:absolute;inset:0;width:100%;height:100%;
+  object-fit:cover;object-position:top;display:block;
 }
-.card:hover .card-thumb img{transform:scale(1.04)}
 
 .card-play,.detail-play{
   position:absolute;display:grid;place-items:center;cursor:pointer;
@@ -392,9 +404,12 @@ select:focus,.search-input:focus,.modal-input:focus{outline:none;border-color:va
   box-shadow:0 1px 6px rgba(0,0,80,.18);
   transition:background .15s var(--ease),transform .15s var(--ease);
 }
-.card-play{right:10px;bottom:10px;width:34px;height:34px;border-radius:50%}
+.card-play{right:5px;bottom:5px;width:24px;height:24px;border-radius:50%}
+/* 24px is the right size to look at and the wrong size to hit. An
+   invisible 9px ring around it makes the target 42px without making the
+   button any bigger. */
+.card-play::after{content:"";position:absolute;inset:-9px;border-radius:50%}
 .card-play svg,.detail-play svg{margin-left:1px}
-.card:hover .card-play{background:#fff;transform:scale(1.06)}
 .card-play:hover,.detail-play:hover{background:#fff;transform:scale(1.1)}
 .card-play:focus-visible,.detail-play:focus-visible{
   outline:none;box-shadow:0 0 0 3px rgba(0,0,80,.25)
@@ -413,24 +428,27 @@ select:focus,.search-input:focus,.modal-input:focus{outline:none;border-color:va
 .detail-play:hover{transform:translate(-50%,-50%) scale(1.08)}
 
 @media (prefers-reduced-motion:reduce){
-  .card-thumb img,.card-play,.detail-play{transition:none}
-  .card:hover .card-thumb img{transform:none}
+  .card-play,.detail-play{transition:none}
 }
 
 /* The headline used to be the internal asset ID, with the name people
    actually use rendered underneath at 9px in grey. Specific labels beat
    generic ones, and 9px is below reading size, so they swapped. */
 .card-name{
-  font:500 16.5px/22px var(--font);color:var(--ink-900);letter-spacing:-.009em;
+  font:500 16px/21px var(--font);color:var(--ink-900);letter-spacing:-.009em;
   overflow-wrap:anywhere;margin-bottom:2px;
 }
 .card-id{
-  font:400 11.5px/15px var(--font);color:var(--ink-400);letter-spacing:.015em;
-  font-variant-numeric:tabular-nums;word-break:break-all;margin-bottom:3px;
+  font:400 11px/15px var(--font);color:var(--ink-400);letter-spacing:.015em;
+  font-variant-numeric:tabular-nums;margin-bottom:3px;
+  /* One line. Asset IDs run to 28 characters and used to wrap into three,
+     shoving everything under them down by a different amount on every
+     card. The full value is on the title attribute and in the panel. */
+  white-space:nowrap;overflow:hidden;text-overflow:ellipsis;
 }
 .card-id:empty{display:none}
 .card-campaign{font:400 12.5px/18px var(--font);color:var(--ink-600);margin-bottom:12px}
-.card-tags{display:flex;gap:6px;flex-wrap:wrap;margin-bottom:14px}
+.card-tags{display:flex;gap:6px;flex-wrap:wrap;margin-bottom:0}
 
 .mini-bars{display:flex;flex-direction:column;gap:9px;padding-top:13px;border-top:1px solid var(--line-soft)}
 .mini-bar-row{display:grid;grid-template-columns:44px 1fr 56px;align-items:center;gap:10px}
@@ -1295,8 +1313,6 @@ select:focus,.search-input:focus,.modal-input:focus{outline:none;border-color:va
    travel, the scale and the parallax go, and the springs in motion.js
    set their end value immediately. */
 @media (prefers-reduced-motion:reduce){
-  .card-thumb img{transition:none}
-  .card:hover .card-thumb img{transform:none}
   /* Keep the press, drop the displacement. */
   .card[data-press].is-pressed,
   .kpi[data-press].is-pressed{transform:none;background:var(--canvas-2)}
