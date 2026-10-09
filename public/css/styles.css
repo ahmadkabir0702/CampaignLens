@@ -442,6 +442,10 @@ select:focus,.search-input:focus,.modal-input:focus{outline:none;border-color:va
 .orgval-line{font:400 13.5px/20px var(--font);color:var(--ink-700);margin-top:10px}
 .orgval-line b{font-weight:500;color:var(--ink-900)}
 .orgval-muted{color:var(--ink-400)}
+.orgval-counts{margin-bottom:12px}
+.orgval-divider{font:500 11.5px/16px var(--font);color:var(--ink-400);
+  text-transform:uppercase;letter-spacing:.04em;
+  padding-top:10px;border-top:1px solid var(--line);margin-bottom:2px}
 .orgval-when{font:400 11.5px var(--font);color:var(--ink-400);
   background:var(--canvas-2);border-radius:var(--r-pill);padding:1px 7px}
 .orgval-rec-wrap{margin-top:auto;padding-top:12px}
