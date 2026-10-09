@@ -501,7 +501,7 @@ function renderCards(data) {
       <div class="card-top">
         <div class="card-plat"><div class="status-dot ${isAct?'status-active-dot':isNotBoosted?'':'status-stopped-dot'}"></div>${platHTML}</div>
         <div style="display:flex;align-items:center;gap:3px;flex-wrap:wrap;justify-content:flex-end">
-          <span class="card-type ${d.type==='Brand Say'?'bs-tag':'os-tag'}">${d.type==='Brand Say'?'BS':'OS'}</span>${d.source==='community'?'<span class="card-type community-tag">Community</span>':''}${d.creatorLed?'<span class="card-type creator-led-tag">Creator-led</span>':''}${repTag}
+          <span class="card-type ${d.type==='Brand Say'?'bs-tag':'os-tag'}">${d.type==='Brand Say'?'BS':'OS'}</span>${d.source==='community'?'<span class="card-type community-tag">Community page</span>':''}${d.creatorLed?'<span class="card-type creator-led-tag">Creator-led</span>':''}${repTag}
         </div>
       </div>
       ${cardMediaHTML(d)}
@@ -711,6 +711,7 @@ const GRADE_CLASS = { Good: 'val-good', Average: 'val-avg', Poor: 'inv-bg' };
 const ACTION_LABEL = {
   boost: 'Boost', boost_reach: 'Boost for reach', recut: 'Recut the opening',
   hold: 'Hold', wait: 'Wait', no_data: 'No data', no_grade: 'Cannot grade',
+  already_boosted: 'Already boosted',
 };
 
 function buildValidationHTML(v) {
@@ -729,8 +730,12 @@ function buildValidationHTML(v) {
     : `<span class="val-badge inv-bg">No benchmark</span>`;
 
   // A rate with its grade and, where there are enough peers, its standing.
-  const rateRow = (label, part, unit) => {
+  const rateRow = (label, part, unit, expected) => {
     if (!part) return '';
+    // Instagram and Facebook never return watch time on organic posts.
+    // A permanent "Not reported" row is a gap nobody can close, so it is
+    // left out entirely rather than shown as an absence on every post.
+    if (part.status === 'no_data' && !expected) return '';
     const val = part.rate === null || part.rate === undefined ? '—' : `${part.rate}${unit}`;
     const place = part.percentile === null || part.percentile === undefined
       ? '' : `<span class="orgval-pct">${part.percentile}th percentile</span>`;
@@ -755,6 +760,10 @@ function buildValidationHTML(v) {
       <div class="orgval-react-keys">${keys}</div>
       <div class="orgval-line ${r.negative_share >= 10 && r.enough ? '' : 'orgval-muted'}">${esc(r.verdict)}</div>`;
   };
+
+  const judgedRows = (p) =>
+    rateRow('Retention', p.retention, '%', (p.expect || {}).retention) +
+    rateRow('Engagement', p.engagement, '%', (p.expect || {}).engagement);
 
   // The raw counts, in each platform's own naming.
   const countsBlock = (p) => {
@@ -797,13 +806,12 @@ function buildValidationHTML(v) {
     return `<div class="orgval-plat">
       <div class="orgval-plat-head">
         <span class="organic-platform" style="margin:0">${esc(p.label)}</span>
-        ${p.cqr ? gradeChip(p.cqr) : `<span class="val-badge inv-bg">Unrated</span>`}
+        ${p.boosted ? `<span class="val-badge inv-bg">Boosted</span>`
+          : p.cqr ? gradeChip(p.cqr) : `<span class="val-badge inv-bg">Unrated</span>`}
       </div>
       ${countsBlock(p)}
       ${reactionsBlock(p)}
-      <div class="orgval-divider">How it is judged</div>
-      ${rateRow('Retention', p.retention, '%')}
-      ${rateRow('Engagement', p.engagement, '%')}
+      ${judgedRows(p) ? `<div class="orgval-divider">How it is judged</div>${judgedRows(p)}` : ''}
       <div class="orgval-line"><b>Why:</b> ${esc(p.reason)}</div>
       ${standing}
       ${velocity}
@@ -1017,7 +1025,7 @@ function renderDetail(d) {
     <div class="cm-body">
       <div class="detail-header">
         <div>
-          <div class="detail-title">${d.short}<span class="card-type ${d.type==='Brand Say'?'bs-tag':'os-tag'}" style="margin-left:6px">${d.type}</span>${d.source==='community'?'<span class="card-type community-tag" style="margin-left:4px">Community</span>':''}${d.creatorLed?'<span class="card-type creator-led-tag" style="margin-left:4px">Creator-led</span>':''}${valUI}</div>
+          <div class="detail-title">${d.short}<span class="card-type ${d.type==='Brand Say'?'bs-tag':'os-tag'}" style="margin-left:6px">${d.type}</span>${d.source==='community'?'<span class="card-type community-tag" style="margin-left:4px">Community page</span>':''}${d.creatorLed?'<span class="card-type creator-led-tag" style="margin-left:4px">Creator-led</span>':''}${valUI}</div>
           <div class="detail-meta">${metaParts.join(' · ')}</div>
           ${creatorHTML}${repText}${linkBtns}
         </div>
@@ -1503,7 +1511,7 @@ function acRenderReview(f) {
     ${f.description ? line('Description', f.description) : ''}
     ${line('Campaign', f.campaign)}
     ${line('Category', f.type)}
-    ${f.type === 'Others Say' ? line('Posted by', f.source === 'community' ? 'Community (posted by the public)' : 'Creator (briefed and paid)') : ''}
+    ${f.type === 'Others Say' ? line('Posted by', f.source === 'community' ? 'Community page' : 'Creator') : ''}
     ${f.type === 'Brand Say' ? line('Led by a creator', f.creatorLed ? 'Yes' : 'No') : ''}
     ${f.type === 'Brand Say' ? line('Repurposed', f.repurposed) : ''}
     ${f.repurposed === 'Yes' && f.originalId ? line('Original creative', f.originalId) : ''}

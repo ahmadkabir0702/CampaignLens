@@ -79,8 +79,8 @@ const VOCAB = {
   source: {
     title: 'Posted by',
     values: {
-      creator:   ['A briefed creator', 'Others Say content from a creator the brand paid'],
-      community: ['Someone in the community', 'Posted by a member of the public, not briefed'],
+      creator:   ['Creator', 'Others Say content from a creator the brand briefed and paid'],
+      community: ['Community page', 'Posted by a member of the public, not briefed'],
     },
   },
   platform: {

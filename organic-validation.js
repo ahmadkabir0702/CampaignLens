@@ -156,24 +156,45 @@ const WATCH_WORDS = { Good: 'people watch it', Average: 'people watch some of it
 const ENGAGE_WORDS = { Good: 'and they interact with it', Average: 'and interaction is middling', Poor: 'but almost nobody interacts' };
 const S_RANK = { Good: 0, Average: 1, Poor: 2 };
 
+// v_organic_scored returns 'Boosted' in the cqr column for a post that had
+// spend behind it. That is a state, not a grade: the numbers are organic
+// and paid mixed together, so there is no organic verdict to give.
+const isBoostedState = (cqr) => String(cqr || '').toLowerCase() === 'boosted';
+const gradeOnly = (cqr) => (S_RANK[cqr] === undefined ? null : cqr);
+
 // Why one half is missing, in the words that match the actual cause.
-function missingWhy(half, status) {
+//
+// retExpected says whether this platform reports retention for this brand
+// at all, judged from the brand's other posts rather than assumed. When it
+// never does, saying so on every post is noise about a gap nobody can
+// close. When it usually does and this post has none, that is worth a line.
+function missingWhy(half, status, expected) {
+  if (!expected) return '';
   const metric = half === 'retention' ? 'Retention' : 'Engagement';
   if (status === 'no_data') {
     return half === 'retention'
-      ? 'Retention is not available here: this platform does not return average watch time for organic posts.'
-      : 'Engagement is not available here: this platform returned no interaction counts for the post.';
+      ? 'Retention is usually available on this platform but did not come back for this post.'
+      : 'Engagement did not come back for this post.';
   }
   return `${metric} is not graded here: no benchmark is set for this platform${half === 'retention' ? ' and length' : ''}.`;
 }
 
-function reasonFor(cqr, retG, engG, retStatus, engStatus) {
-  if (!retG && !engG) {
-    return `${missingWhy('retention', retStatus)} ${missingWhy('engagement', engStatus)} There is nothing to grade this post against yet.`;
+function reasonFor(cqr, retG, engG, retStatus, engStatus, expect = {}) {
+  if (isBoostedState(cqr)) {
+    return 'This post had spend behind it, so its numbers are organic and paid together. There is no organic rating to give, and the figures here should not be read as how the content performed on its own.';
   }
-  if (retG && !engG) return `Rated ${cqr || 'unscored'} on retention alone: ${WATCH_WORDS[retG]}. ${missingWhy('engagement', engStatus)}`;
-  if (!retG && engG) return `Rated ${cqr || 'unscored'} on engagement alone: ${ENGAGE_WORDS[engG].replace(/^and |^but /, '')}. ${missingWhy('retention', retStatus)}`;
+  const retWhy = missingWhy('retention', retStatus, expect.retention);
+  const engWhy = missingWhy('engagement', engStatus, expect.engagement);
+
+  if (!retG && !engG) {
+    const why = [retWhy, engWhy].filter(Boolean).join(' ');
+    return why || 'Nothing came back that can be graded for this post yet.';
+  }
+  if (retG && !engG) return `Rated ${cqr || 'unscored'} on retention: ${WATCH_WORDS[retG]}.${engWhy ? ' ' + engWhy : ''}`;
+  if (!retG && engG) return `Rated ${cqr || 'unscored'} on engagement: ${ENGAGE_WORDS[engG].replace(/^and |^but /, '')}.${retWhy ? ' ' + retWhy : ''}`;
+
   if (retG === engG) return `Rated ${cqr || 'unscored'} on both halves: retention ${retG} and engagement ${engG}.`;
+
   // The interesting case: the two halves disagree, which the single grade hides.
   const lead = `Rated ${cqr || 'unscored'}, but the two halves disagree.`;
   const split = `Retention ${retG} and engagement ${engG}: ${WATCH_WORDS[retG]}, ${ENGAGE_WORDS[engG]}.`;
@@ -212,10 +233,10 @@ function placeAmong(value, peers) {
 // ---------------------------------------------------------------------
 //  3. Recommendation, per platform
 // ---------------------------------------------------------------------
-function recommendFor({ platLabel, cqr, retG, engG, retStatus, engStatus, standing, delivered, tooNew, missing }) {
+function recommendFor({ platLabel, cqr, retG, engG, retStatus, engStatus, standing, delivered, tooNew, missing, expect = {} }) {
   if (missing) {
     return { action: 'no_data', confidence: 'none',
-      text: `No ${platLabel} data came back for this post, so there is nothing to judge. That is not the same as a weak post — check the post is still live and, if it is a collaboration owned by the creator's account, that the numbers are being collected from their side.` };
+      text: `No ${platLabel} numbers have come back for this post, so there is nothing to judge yet. That is not the same as a weak post.` };
   }
   if (tooNew) {
     return { action: 'wait', confidence: 'none',
@@ -225,11 +246,15 @@ function recommendFor({ platLabel, cqr, retG, engG, retStatus, engStatus, standi
     return { action: 'wait', confidence: 'none',
       text: `Too little delivery on ${platLabel} to judge yet (under ${VIEW_FLOOR.toLocaleString()} views). Wait rather than act on this.` };
   }
+  if (isBoostedState(cqr)) {
+    return { action: 'already_boosted', confidence: 'none',
+      text: `Already running on ${platLabel}, so these numbers are organic and paid together. Judge it on its paid performance instead; there is no clean organic read left to make a boost decision from.` };
+  }
   if (!cqr && !retG && !engG) {
     const bothMissing = retStatus === 'no_data' && engStatus === 'no_data';
     return { action: 'no_grade', confidence: 'none',
       text: bothMissing
-        ? `${platLabel} returned no watch time and no interaction counts for this post, so there is nothing to grade. Check the post is still live and reachable from the brand token.`
+        ? `No numbers have come back for ${platLabel} on this post, so there is nothing to grade yet.`
         : `Nothing gradeable came back for ${platLabel} at this length. ${retStatus === 'no_threshold' || engStatus === 'no_threshold' ? 'Adding the missing benchmark for this platform will make the rating appear on its own.' : ''}`.trim() };
   }
   const strong = standing && standing.percentile !== null && standing.percentile >= 70;
@@ -259,12 +284,20 @@ function recommendFor({ platLabel, cqr, retG, engG, retStatus, engStatus, standi
   if (halves === 1) {
     const only = retG ? 'retention' : 'engagement';
     const g = retG || engG;
+    // Only explain the absent half when this platform normally reports it.
+    // Instagram and Facebook never give watch time on organic posts, so
+    // repeating that on every post is noise about a gap nobody can close.
+    const missingHalf = retG ? expect.engagement : expect.retention;
+    if (g === 'Good') {
+      return { action: 'boost', confidence: 'medium',
+        text: `Worth boosting on ${platLabel}. ${only === 'retention' ? 'People watch it' : 'People interact with it'}, which is what this platform reports.` };
+    }
     if (g === 'Poor') {
       return { action: 'hold', confidence: 'medium',
-        text: `Hold the spend on ${platLabel}. ${only === 'retention' ? 'People drop off early' : 'Almost nobody interacts'}, and it is the only half this platform reports, so there is nothing else to weigh against it.` };
+        text: `Hold the spend on ${platLabel}. ${only === 'retention' ? 'People drop off early' : 'Almost nobody interacts'}.${missingHalf ? ' The other half did not come back for this post, so there is nothing to weigh against it.' : ''}` };
     }
     return { action: 'hold', confidence: 'low',
-      text: `Middling on ${platLabel}, judged on ${only} alone because it is the only half this platform reports. Not weak, but not a case for spend ahead of a stronger post either.` };
+      text: `Middling on ${platLabel} on ${only}. Not weak, but not a case for spend ahead of a stronger post either.` };
   }
 
   // Still Average, but one half is actually Poor: name it rather than
@@ -510,6 +543,14 @@ async function buildValidation(brandId, creativeId) {
   const peersBy = {};
   for (const p of peerR.rows) (peersBy[p.platform] ||= []).push(p);
 
+  // Does this platform report each metric for this brand at all? Answered
+  // from the brand's own other posts rather than assumed, so the panel
+  // adjusts on its own if a platform starts or stops returning something.
+  // Instagram and Facebook never return watch time on organic posts, so
+  // there is nothing to apologise for; saying so on every post is noise.
+  const reports = (plat, field) =>
+    (peersBy[plat] || []).some((p) => p[field] !== null && p[field] !== undefined);
+
   // Which platforms this post is expected on: a link was captured, or a
   // row came back. A link with no row is the honest "no data" case.
   const expected = Object.keys(PLATFORM).filter((p) => c[PLATFORM[p].linkField] || orgBy[p]);
@@ -535,6 +576,10 @@ async function buildValidation(brandId, creativeId) {
     const delivered = num(o.views) !== null && num(o.views) >= VIEW_FLOOR;
     const tooNew = hoursSince !== null && hoursSince < MIN_HOURS;
     const peers = peersBy[plat] || [];
+    const expect = {
+      retention: reports(plat, 'retention_rate'),
+      engagement: reports(plat, 'engagement_rate'),
+    };
 
     const standing = {
       retention: placeAmong(o.retention_rate, peers.map((p) => p.retention_rate)),
@@ -580,20 +625,24 @@ async function buildValidation(brandId, creativeId) {
         band: engTh ? { poor_lt: num(engTh.poor_lt), good_gte: num(engTh.good_gte), source: engTh.brand_id ? 'brand' : 'global' } : null,
         percentile: standing.engagement.percentile,
       },
-      reason: reasonFor(o.cqr, retG, engG, retStatus, engStatus),
+      reason: reasonFor(o.cqr, retG, engG, retStatus, engStatus, expect),
+      // Whether this platform reports each half for this brand, so the
+      // panel can leave out a row for something that never arrives.
+      expect,
+      boosted: isBoostedState(o.cqr),
       standing,
       velocity: velocity[plat] || null,
       delivered, too_new: tooNew,
       recommendation: recommendFor({
         platLabel: meta.label, cqr: o.cqr, retG, engG, retStatus, engStatus,
-        standing, delivered, tooNew, missing: false,
+        standing, delivered, tooNew, missing: false, expect,
       }),
     };
   });
 
   // Where the platforms disagree, say so once, at the top. A single
   // verdict for the post would be the wrong unit of decision.
-  const judged = platforms.filter((p) => !p.missing && p.delivered && !p.too_new && p.cqr);
+  const judged = platforms.filter((p) => !p.missing && p.delivered && !p.too_new && gradeOnly(p.cqr));
   const grades = [...new Set(judged.map((p) => p.cqr))];
   let split = null;
   if (judged.length > 1 && grades.length > 1) {
@@ -609,8 +658,16 @@ async function buildValidation(brandId, creativeId) {
   const winners = winnerMatches(c, paidR.rows);
 
   const flags = [];
-  if (!organicR.rows.length) flags.push('No organic numbers have come back for this post on any platform yet.');
-  for (const p of platforms) if (p.missing) flags.push(`${p.label}: a link is on file but no numbers have come back. Collaboration posts owned by the creator's account never return to the brand token.`);
+  // The per-platform line below already names them, so this would repeat it.
+  if (!organicR.rows.length && !platforms.length) {
+    flags.push('No organic numbers have come back for this post yet.');
+  }
+  // Plain words. Why the numbers are missing is a pipeline matter, and a
+  // planner reading this card only needs to know not to read it as weak.
+  const missingPlats = platforms.filter((p) => p.missing).map((p) => p.label);
+  if (missingPlats.length) {
+    flags.push(`No numbers yet for ${missingPlats.join(' and ')}. Nothing here says the post did badly, only that it has not been measured.`);
+  }
   if (hoursSince !== null && hoursSince < MIN_HOURS) flags.push(`Posted ${Math.max(1, Math.round(hoursSince))} hours ago. Organic distribution is still running.`);
   for (const p of platforms) if (!p.missing && !p.delivered) flags.push(`${p.label}: ${(p.views || 0).toLocaleString()} views is below the ${VIEW_FLOOR.toLocaleString()}-view floor, so the rating is not yet a signal.`);
 
