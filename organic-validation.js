@@ -39,6 +39,23 @@ const STANDING_MIN = 8;
 // Fewest creatives on each side before a tag comparison is worth stating.
 const TAG_MIN = 2;
 
+/**
+ * How each organic rate is stored, so the panel can print a percentage
+ * without changing what gets graded.
+ *
+ * v_organic_scored.engagement_rate is a RATIO: a post with 555
+ * interactions on 31,000 views stores 0.0179, not 1.79. The threshold
+ * rows are compared against the stored value, so grading must keep
+ * using it untouched; only the displayed figure is scaled.
+ *
+ * retention_rate is assumed to be a percentage, in line with the paid
+ * hook and hold rates. No organic platform currently returns average
+ * watch time, so there is no live value to confirm it against. If
+ * retention starts arriving and reads 100 times too small, this is the
+ * line to change.
+ */
+const DISPLAY_SCALE = { engagement: 100, retention: 1 };
+
 const PLATFORM = {
   ig: { label: 'Instagram', linkField: 'ig_link' },
   fb: { label: 'Facebook',  linkField: 'fb_link' },
@@ -461,12 +478,17 @@ async function buildValidation(brandId, creativeId) {
       avg_watch_time: r1(o.avg_watch_time),
       time_posted: o.time_posted,
       retention: {
-        rate: r1(o.retention_rate), grade: retG, status: retStatus,
+        rate: r1(num(o.retention_rate) === null ? null : Number(o.retention_rate) * DISPLAY_SCALE.retention),
+        grade: retG, status: retStatus,
         band: retTh ? { poor_lt: num(retTh.poor_lt), good_gte: num(retTh.good_gte), source: retTh.brand_id ? 'brand' : 'global' } : null,
         percentile: standing.retention.percentile,
       },
       engagement: {
-        rate: o.engagement_rate === null ? null : Math.round(Number(o.engagement_rate) * 100) / 100,
+        // Stored as a ratio, shown as a percentage. The grade above was
+        // computed from the stored value, so the two stay in step.
+        rate: o.engagement_rate === null || o.engagement_rate === undefined
+          ? null
+          : Math.round(Number(o.engagement_rate) * DISPLAY_SCALE.engagement * 100) / 100,
         grade: engG, status: engStatus,
         band: engTh ? { poor_lt: num(engTh.poor_lt), good_gte: num(engTh.good_gte), source: engTh.brand_id ? 'brand' : 'global' } : null,
         percentile: standing.engagement.percentile,
