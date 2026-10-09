@@ -753,11 +753,11 @@ function buildFatigueHTML(f) {
         <td>${esc(w.label)}<div class="fat-dates">${day(w.from)} to ${day(w.to)}</div></td>
         <td class="fat-num">${w.hook_rate === null ? '—' : w.hook_rate + '%'}</td>
         <td class="fat-num">${w.hold_rate === null ? '—' : w.hold_rate + '%'}</td>
-        <td class="fat-num">${fmtN(w.impressions || 0)}</td>
+        <td class="fat-num">${fmt(Math.round(w.spend || 0))}</td>
         <td class="fat-grade">${chip(w.cqr)}${w.thin ? '<div class="fat-dates">thin</div>' : ''}</td>
       </tr>`).join('');
 
-    const dirClass = p.trend ? `fat-${p.trend.direction}` : 'fat-none';
+    const dirClass = p.too_short ? 'fat-none' : (p.trend ? `fat-${p.trend.direction}` : 'fat-none');
     return `<div class="orgval-plat">
       <div class="orgval-plat-head">
         <span class="organic-platform" style="margin:0">${esc(p.label)}</span>
@@ -766,7 +766,7 @@ function buildFatigueHTML(f) {
           : `<span class="val-badge inv-bg">Stopped${p.ended ? ' ' + day(p.ended) : ''}</span>`}</span>
       </div>
       <table class="fat-table">
-        <thead><tr><th>Window</th><th class="fat-num">Hook</th><th class="fat-num">Hold</th><th class="fat-num">Impr.</th><th class="fat-grade">Rating</th></tr></thead>
+        <thead><tr><th>Window</th><th class="fat-num">Hook</th><th class="fat-num">Hold</th><th class="fat-num">Spend</th><th class="fat-grade">CQR</th></tr></thead>
         <tbody>${rows}</tbody>
       </table>
       ${p.verdict ? `<div class="orgval-rec-wrap"><div class="orgval-rec ${dirClass}">${esc(p.verdict)}</div></div>` : ''}
@@ -775,11 +775,11 @@ function buildFatigueHTML(f) {
 
   const hist = (f.history || []).filter(h => h.channel === 'paid');
   const histBlock = hist.length > 1
-    ? `<div class="orgval-winners"><div class="orgval-winners-head">Rating changes recorded</div>
+    ? `<div class="orgval-winners"><div class="orgval-winners-head">CQR changes recorded</div>
         <ul class="orgval-list">${hist.map(h =>
-          `<li>${day(h.changed_at)}: ${esc(h.platform)} ${h.is_first ? 'first read as' : 'moved to'} ${esc(h.cqr || 'unrated')}</li>`
+          `<li>${day(h.changed_at)}: ${esc(h.platform)} CQR ${h.is_first ? 'first read as' : 'moved to'} ${esc(h.cqr || 'unrated')}</li>`
         ).join('')}</ul></div>`
-    : `<div class="orgval-winners"><div class="orgval-line orgval-muted">Rating changes are recorded from the night this was switched on, so the list fills up from here rather than reaching back.</div></div>`;
+    : `<div class="orgval-winners"><div class="orgval-line orgval-muted">CQR changes are recorded from the night this was switched on, so the list fills up from here rather than reaching back.</div></div>`;
 
   return `<div class="orgval-grid">${blocks}</div>${histBlock}
     <div class="orgval-line orgval-muted" style="margin-top:12px">${esc(f.note || '')}</div>`;
@@ -1133,7 +1133,7 @@ function renderDetail(d) {
       ${buildCreativeBriefHTML(d)}
 
       <details class="org-details" style="margin-top:12px;" ontoggle="loadFatigue(this, '${d.id}')">
-        <summary class="org-summary">How it is holding up <span style="color:var(--c-muted);font-size:10px;">The rating over time, not lifetime ▼</span></summary>
+        <summary class="org-summary">How it is holding up <span style="color:var(--c-muted);font-size:10px;">CQR over time, not lifetime ▼</span></summary>
         <div class="org-content"><div class="organic-empty">Loading…</div></div>
       </details>
 

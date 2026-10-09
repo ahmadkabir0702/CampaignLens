@@ -23,6 +23,12 @@ const { query } = require('./../db');
 // of it rather than the same bar, which no short window would clear.
 const WINDOW_FLOOR = 1000;
 
+// Below this, "first week" and "last week" are the same days, so there
+// are no two windows to compare and the panel says so instead of
+// comparing a stretch of time against itself.
+const MIN_RUN_DAYS = 14;
+
+const PLATFORM_LABEL = { meta: 'Meta', tiktok: 'TikTok' };
 const ORDER = ['first_7', 'prev_7', 'last_7', 'lifetime'];
 const WINDOW_LABEL = {
   first_7: 'First week',
@@ -144,14 +150,22 @@ async function fatigueFor(brandId, creativeId) {
   }
   if (!rows.length) return null;
 
-  const PLATFORM_LABEL = { meta: 'Meta', tiktok: 'TikTok' };
   const byPlatform = {};
   for (const r of rows) (byPlatform[r.platform] ||= {})[r.window_name] = r;
 
   const platforms = Object.entries(byPlatform).map(([platform, wins]) => {
-    const first = wins.first_7, last = wins.last_7;
+    const first = wins.first_7, last = wins.last_7, life = wins.lifetime;
+    const label = PLATFORM_LABEL[platform] || platform;
+
+    // How long it actually ran, which decides whether there is a trend
+    // to read at all.
+    const runDays = life
+      ? Math.round((new Date(life.to_date) - new Date(life.from_date)) / 86400000) + 1
+      : 0;
+    const tooShort = runDays < MIN_RUN_DAYS;
+
     const thin = last && Number(last.impressions) < WINDOW_FLOOR;
-    const trend = first && last
+    const trend = (!tooShort && first && last)
       ? trendOf(first.cqr, last.cqr, last.impressions === null ? null : Number(last.impressions))
       : null;
     const stillRunning = !!(last && last.is_active && last.is_current);
@@ -164,9 +178,13 @@ async function fatigueFor(brandId, creativeId) {
       // week of the calendar once a creative has stopped.
       ended: last && !last.is_current ? last.to_date : null,
       thin_recent: thin,
-      windows: ORDER.filter((w) => wins[w]).map((w) => ({
+      run_days: runDays,
+      too_short: tooShort,
+      // While the run is shorter than two weeks every window covers the
+      // same days, so three identical rows would just look like a fault.
+      windows: (tooShort ? ['lifetime'] : ORDER).filter((w) => wins[w]).map((w) => ({
         key: w,
-        label: WINDOW_LABEL[w],
+        label: tooShort ? 'So far' : WINDOW_LABEL[w],
         from: wins[w].from_date,
         to: wins[w].to_date,
         days: Number(wins[w].days),
@@ -180,9 +198,11 @@ async function fatigueFor(brandId, creativeId) {
         thin: wins[w].impressions !== null && Number(wins[w].impressions) < WINDOW_FLOOR,
       })),
       trend,
-      verdict: thin
-        ? `Too little delivery on ${PLATFORM_LABEL[platform] || platform} in its last week to read a trend from.`
-        : trendWords(trend, PLATFORM_LABEL[platform] || platform, stillRunning),
+      verdict: tooShort
+        ? `Only ${runDays} day${runDays === 1 ? '' : 's'} of delivery on ${label} so far. There is no earlier stretch to compare against yet, so nothing here says whether it is holding up. Come back once it has run a fortnight.`
+        : thin
+          ? `Too little delivery on ${label} in its last week to read a trend from.`
+          : trendWords(trend, label, stillRunning),
     };
   });
 
@@ -204,7 +224,7 @@ async function fatigueFor(brandId, creativeId) {
     history,
     // Said once, because it explains why this panel can disagree with
     // the rating shown everywhere else on the same screen.
-    note: 'The rating elsewhere in Campaign Lens is a lifetime figure, and it takes the best single day the creative ever had. These windows grade each stretch of time on its own, which is why a creative can read Good overall and Average now.',
+    note: 'The CQR elsewhere in Campaign Lens is a lifetime figure, and it takes the best single day the creative ever had. These windows grade each stretch of time on its own, which is why a creative can read Good overall and Average now.',
   };
 }
 
