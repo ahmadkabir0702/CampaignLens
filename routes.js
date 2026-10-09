@@ -18,6 +18,7 @@ const { query, brandsForUser, assertBrandAllowed } = require('./db');
 const { checkLinks } = require('./link-check');
 const { checkContent } = require('./content-check');
 const { buildValidation } = require('./organic-validation');
+const { fatigueFor } = require('./server/fatigue');
 
 // Review runs the content check; Confirm needs the same answer a moment later.
 // Caching by the normalised links means each link is scraped once per add,
@@ -860,6 +861,36 @@ app.get('/api/brands', async (req, res) => {
       res.json(out);
     } catch (err) {
       console.error('[organic-validation]', err.message);
+      res.status(500).json({ error: err.message });
+    }
+  });
+
+  // -------------------------------------------------------------------
+  //  CREATIVE FATIGUE — the same rating over windows of time.
+  //
+  //  The rating everywhere else is a lifetime figure that takes the best
+  //  single day a creative ever had, so a creative that has decayed
+  //  still reads Good. This grades each stretch on its own.
+  // -------------------------------------------------------------------
+  app.get('/api/creative-fatigue', async (req, res) => {
+    try {
+      const brand = resolveBrand(req);
+      const creativeId = req.query.creative_id;
+      if (!creativeId) return res.status(400).json({ error: 'creative_id is required' });
+
+      // Ownership: the creative has to be this brand's before anything
+      // about it is returned.
+      const { rows } = await query(
+        `select 1 from creatives where creative_id = $1 and brand_id = $2`,
+        [creativeId, brand]);
+      if (!rows.length) return res.status(404).json({ error: 'Creative not found for this brand' });
+
+      const out = await fatigueFor(brand, creativeId);
+      // Null means no paid history, which is not an error: plenty of
+      // creatives have never run.
+      res.json(out || { creative_id: creativeId, platforms: [], history: [] });
+    } catch (err) {
+      console.error('[creative-fatigue]', err.message);
       res.status(500).json({ error: err.message });
     }
   });

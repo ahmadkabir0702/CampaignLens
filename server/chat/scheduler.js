@@ -36,11 +36,17 @@ async function runNow(reason = 'scheduled') {
     const { warmAll } = require('./snapshot');
     const { generateAll } = require('./insights');
     const { prewarmAll } = require('./prewarm');
+    const { recordChanges } = require('../fatigue');
     const snaps = await warmAll({ quiet: true });
     const cards = await generateAll({ quiet: true });
     await prewarmAll({ quiet: true }); // off unless ASK_LENS_PREWARM=1
+    // Before the summary line, so a rating that moved overnight is on
+    // record even if nothing else about the creative changed.
+    const moved = await recordChanges({ quiet: true });
     const changed = cards.filter((c) => !c.unchanged && !c.error).map((c) => c.brand);
-    console.log(`[nightly] ${reason}: ${snaps.length} brands rebuilt, insight cards refreshed for ${changed.length ? changed.join(', ') : 'none (no creative changes)'} in ${Math.round((Date.now() - started) / 1000)}s`);
+    console.log(`[nightly] ${reason}: ${snaps.length} brands rebuilt, insight cards refreshed for ${changed.length ? changed.join(', ') : 'none (no creative changes)'}`
+      + `, ${moved.length} rating change${moved.length === 1 ? '' : 's'} recorded`
+      + ` in ${Math.round((Date.now() - started) / 1000)}s`);
     return { snaps, cards };
   } catch (err) {
     console.error('[nightly] failed:', err.message);
