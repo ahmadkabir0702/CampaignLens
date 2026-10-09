@@ -763,7 +763,7 @@ function buildValidationHTML(v) {
 
   const judgedRows = (p) =>
     rateRow('Retention', p.retention, '%', (p.expect || {}).retention) +
-    rateRow('Engagement', p.engagement, '%', (p.expect || {}).engagement);
+    rateRow((p.engagement && p.engagement.label) || 'Engagement', p.engagement, '%', (p.expect || {}).engagement);
 
   // The raw counts, in each platform's own naming.
   const countsBlock = (p) => {

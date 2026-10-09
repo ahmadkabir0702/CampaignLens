@@ -70,21 +70,32 @@ const STANDING_MIN = 8;
 const TAG_MIN = 2;
 
 /**
- * How each organic rate is stored, so the panel can print a percentage
- * without changing what gets graded.
+ * How v_organic_scored stores each rate, so the panel can print a
+ * figure per 100 views without changing what gets graded.
  *
- * v_organic_scored.engagement_rate is a RATIO: a post with 555
- * interactions on 31,000 views stores 0.0179, not 1.79. The threshold
- * rows are compared against the stored value, so grading must keep
- * using it untouched; only the displayed figure is scaled.
+ * The view splits on type, not platform:
  *
- * retention_rate is assumed to be a percentage, in line with the paid
- * hook and hold rates. No organic platform currently returns average
- * watch time, so there is no live value to confirm it against. If
- * retention starts arriving and reads 100 times too small, this is the
- * line to change.
+ *   Others Say  (likes + comments*2 + shares*4 + saves*3) / views
+ *               a WEIGHTED score on a 0 to 1 scale
+ *   Brand Say   total_interactions / views * 100
+ *               a plain percentage
+ *
+ * So the same column means different things on different rows, which is
+ * why a Brand Say TikTok post once rendered as 257%. The threshold rows
+ * follow the same split, since _organic is Brand Say and _os is Others
+ * Say, so grading stays on the stored value and only display is scaled.
+ *
+ * retention_rate is avg_watch_time / duration_s * 100 for every row, so
+ * it is always a percentage and never scaled here.
  */
-const DISPLAY_SCALE = { engagement: 100, retention: 1 };
+const isOthersSay = (type) => type === 'Others Say';
+const engagementScale = (type) => (isOthersSay(type) ? 100 : 1);
+
+// Others Say weights comments, shares and saves above likes, so the
+// figure is interactions per 100 views with the weights applied, not a
+// plain engagement rate. The panel says so rather than implying it is
+// comparable with the Brand Say number.
+const engagementLabel = (type) => (isOthersSay(type) ? 'Engagement (weighted)' : 'Engagement');
 
 const PLATFORM = {
   ig: { label: 'Instagram', linkField: 'ig_link' },
@@ -610,17 +621,20 @@ async function buildValidation(brandId, creativeId) {
       reactions: reactionRead(o),
       time_posted: o.time_posted,
       retention: {
-        rate: r1(num(o.retention_rate) === null ? null : Number(o.retention_rate) * DISPLAY_SCALE.retention),
+        // Already a percentage for every row: avg_watch_time / duration * 100.
+        rate: r1(o.retention_rate),
         grade: retG, status: retStatus,
         band: retTh ? { poor_lt: num(retTh.poor_lt), good_gte: num(retTh.good_gte), source: retTh.brand_id ? 'brand' : 'global' } : null,
         percentile: standing.retention.percentile,
       },
       engagement: {
-        // Stored as a ratio, shown as a percentage. The grade above was
-        // computed from the stored value, so the two stay in step.
+        // Scaled by type, because the view stores the two differently.
+        // The grade above came from the stored value, so they stay in step.
         rate: o.engagement_rate === null || o.engagement_rate === undefined
           ? null
-          : Math.round(Number(o.engagement_rate) * DISPLAY_SCALE.engagement * 100) / 100,
+          : Math.round(Number(o.engagement_rate) * engagementScale(c.type) * 100) / 100,
+        label: engagementLabel(c.type),
+        weighted: isOthersSay(c.type),
         grade: engG, status: engStatus,
         band: engTh ? { poor_lt: num(engTh.poor_lt), good_gte: num(engTh.good_gte), source: engTh.brand_id ? 'brand' : 'global' } : null,
         percentile: standing.engagement.percentile,
