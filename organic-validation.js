@@ -70,32 +70,68 @@ const STANDING_MIN = 8;
 const TAG_MIN = 2;
 
 /**
- * How v_organic_scored stores each rate, so the panel can print a
- * figure per 100 views without changing what gets graded.
+ * How the organic rating is actually decided.
  *
- * The view splits on type, not platform:
+ * Read from cqr_organic_label(), which is the only thing that produces a
+ * CQR. The panel mirrors it exactly rather than inventing a parallel
+ * judgement, because two different answers to "is this good" is worse
+ * than one imperfect one.
  *
- *   Others Say  (likes + comments*2 + shares*4 + saves*3) / views
- *               a WEIGHTED score on a 0 to 1 scale
- *   Brand Say   total_interactions / views * 100
- *               a plain percentage
+ * There are not two halves. Each type is rated on ONE signal:
  *
- * So the same column means different things on different rows, which is
- * why a Brand Say TikTok post once rendered as 257%. The threshold rows
- * follow the same split, since _organic is Brand Say and _os is Others
- * Say, so grading stays on the stored value and only display is scaled.
+ *   Brand Say    retention = avg_watch_time / duration * 100
+ *                graded against thr(brand, <plat>_organic, 'retention_rate', dur)
+ *                engagement plays no part at all
  *
- * retention_rate is avg_watch_time / duration_s * 100 for every row, so
- * it is always a percentage and never scaled here.
+ *   Others Say   interaction = (likes + 2 * comments) / views * 100
+ *                graded against cqr_os_benchmarks for that platform
+ *                retention plays no part, and is never reported anyway
+ *
+ * Two traps worth naming. The Others Say figure is NOT
+ * v_organic_scored.engagement_rate: that column weights shares and saves
+ * as well and is stored as a ratio, so it is a different number from the
+ * one the rating uses. And Others Say reads its thresholds from
+ * cqr_os_benchmarks, not from cqr_thresholds, so the _os rows in
+ * cqr_thresholds do not drive the CQR.
  */
 const isOthersSay = (type) => type === 'Others Say';
-const engagementScale = (type) => (isOthersSay(type) ? 100 : 1);
 
-// Others Say weights comments, shares and saves above likes, so the
-// figure is interactions per 100 views with the weights applied, not a
-// plain engagement rate. The panel says so rather than implying it is
-// comparable with the Brand Say number.
-const engagementLabel = (type) => (isOthersSay(type) ? 'Engagement (weighted)' : 'Engagement');
+// The signal the rating is based on, computed the way the function does.
+function ratingSignal(o, type, durationS) {
+  if (isOthersSay(type)) {
+    const views = num(o.views);
+    if (!views) return null;
+    if (o.likes === null || o.likes === undefined) return null;
+    return ((Number(o.likes) + 2 * (num(o.comments) || 0)) / views) * 100;
+  }
+  const dur = Number(durationS);
+  if (!isFinite(dur) || dur === 0) return null;
+  if (o.avg_watch_time === null || o.avg_watch_time === undefined) return null;
+  return (Number(o.avg_watch_time) / dur) * 100;
+}
+
+const signalName = (type) => (isOthersSay(type) ? 'Interaction' : 'Retention');
+const signalNote = (type) => (isOthersSay(type)
+  ? 'Likes plus twice comments, per 100 views. Shares and saves are not counted in the rating.'
+  : 'Average watch time as a share of the video length.');
+
+/**
+ * Every value cqr_organic_label can return that is not a grade, and what
+ * it means in words. These used to be rendered as if they were ratings,
+ * producing lines like "Rated No Watch Time on engagement".
+ */
+const CQR_STATES = {
+  'boosted':        'Spend went behind this post, so its numbers are organic and paid together.',
+  'too early':      `Posted less than ${MIN_HOURS} hours ago, so it is still being distributed.`,
+  'counts hidden':  'The account has hidden its like counts, so there is nothing to rate.',
+  'no views':       'No views have come back for this post.',
+  'no duration':    'The video length is missing, so retention cannot be worked out.',
+  'no watch time':  'No average watch time came back, which is what the rating is based on.',
+  'no threshold':   'No benchmark is set for this platform, so there is nothing to rate against.',
+};
+const stateOf = (cqr) => CQR_STATES[String(cqr || '').toLowerCase()] ? String(cqr) : null;
+const gradeOnly = (cqr) => (S_RANK[cqr] === undefined ? null : cqr);
+const isBoostedState = (cqr) => String(cqr || '').toLowerCase() === 'boosted';
 
 const PLATFORM = {
   ig: { label: 'Instagram', linkField: 'ig_link' },
@@ -137,19 +173,6 @@ function pickThreshold(rows, platKey, metricPrefix, durationS) {
   return candidates[0];
 }
 
-/**
- * Where one rate falls inside its own threshold band.
- *
- * Three outcomes, kept apart on purpose. A platform that never returns
- * average watch time has no retention to grade, which is not the same
- * as a benchmark nobody has set, and neither is a weak post.
- */
-function statusOf(rate, th) {
-  if (rate === null || rate === undefined) return 'no_data';
-  if (!th) return 'no_threshold';
-  return 'graded';
-}
-
 function grade(rate, th) {
   if (rate === null || rate === undefined || !th) return null;
   const v = Number(rate);
@@ -163,61 +186,31 @@ function grade(rate, th) {
 // ---------------------------------------------------------------------
 //  1. Why it got that rating
 // ---------------------------------------------------------------------
-const WATCH_WORDS = { Good: 'people watch it', Average: 'people watch some of it', Poor: 'people drop off early' };
-const ENGAGE_WORDS = { Good: 'and they interact with it', Average: 'and interaction is middling', Poor: 'but almost nobody interacts' };
 const S_RANK = { Good: 0, Average: 1, Poor: 2 };
 
 // v_organic_scored returns 'Boosted' in the cqr column for a post that had
 // spend behind it. That is a state, not a grade: the numbers are organic
 // and paid mixed together, so there is no organic verdict to give.
-const isBoostedState = (cqr) => String(cqr || '').toLowerCase() === 'boosted';
-const gradeOnly = (cqr) => (S_RANK[cqr] === undefined ? null : cqr);
 
-// Why one half is missing, in the words that match the actual cause.
-//
-// retExpected says whether this platform reports retention for this brand
-// at all, judged from the brand's other posts rather than assumed. When it
-// never does, saying so on every post is noise about a gap nobody can
-// close. When it usually does and this post has none, that is worth a line.
-function missingWhy(half, status, expected) {
-  if (!expected) return '';
-  const metric = half === 'retention' ? 'Retention' : 'Engagement';
-  if (status === 'no_data') {
-    return half === 'retention'
-      ? 'Retention is usually available on this platform but did not come back for this post.'
-      : 'Engagement did not come back for this post.';
+// How the rating reads, in words. One signal, not two halves.
+const SIGNAL_WORDS = {
+  Retention: { Good: 'people watch most of it', Average: 'people watch some of it', Poor: 'people drop off early' },
+  Interaction: { Good: 'people act on it', Average: 'interaction is middling', Poor: 'almost nobody interacts' },
+};
+
+function reasonFor({ rated, state, signal, band, signalName, type }) {
+  const basis = isOthersSay(type)
+    ? 'Others Say posts are rated on likes plus twice comments per 100 views. Shares, saves and watch time are not part of it.'
+    : 'Brand Say posts are rated on retention alone: average watch time as a share of the video length. Engagement is not part of it.';
+
+  if (!rated) {
+    const why = state ? CQR_STATES[state.toLowerCase()] : (band ? 'The figure this rating needs did not come back.' : 'No benchmark is set for this platform, so there is nothing to rate against.');
+    return `${why} ${basis}`;
   }
-  return `${metric} is not graded here: no benchmark is set for this platform${half === 'retention' ? ' and length' : ''}.`;
-}
 
-function reasonFor(cqr, retG, engG, retStatus, engStatus, expect = {}) {
-  if (isBoostedState(cqr)) {
-    return 'This post had spend behind it, so its numbers are organic and paid together. There is no organic rating to give, and the figures here should not be read as how the content performed on its own.';
-  }
-  const retWhy = missingWhy('retention', retStatus, expect.retention);
-  const engWhy = missingWhy('engagement', engStatus, expect.engagement);
-
-  if (!retG && !engG) {
-    const why = [retWhy, engWhy].filter(Boolean).join(' ');
-    return why || 'Nothing came back that can be graded for this post yet.';
-  }
-  if (retG && !engG) return `Rated ${cqr || 'unscored'} on retention: ${WATCH_WORDS[retG]}.${engWhy ? ' ' + engWhy : ''}`;
-  if (!retG && engG) return `Rated ${cqr || 'unscored'} on engagement: ${ENGAGE_WORDS[engG].replace(/^and |^but /, '')}.${retWhy ? ' ' + retWhy : ''}`;
-
-  if (retG === engG) return `Rated ${cqr || 'unscored'} on both halves: retention ${retG} and engagement ${engG}.`;
-
-  // The interesting case: the two halves disagree, which the single grade hides.
-  const lead = `Rated ${cqr || 'unscored'}, but the two halves disagree.`;
-  const split = `Retention ${retG} and engagement ${engG}: ${WATCH_WORDS[retG]}, ${ENGAGE_WORDS[engG]}.`;
-  const retBetter = (S_RANK[retG] ?? 9) < (S_RANK[engG] ?? 9);
-  if (retBetter) {
-    return `${lead} ${split} ${retG === 'Good'
-      ? 'The content holds attention; it is the reason to act on it that is missing.'
-      : 'Watching is the stronger half here, so the gap is in what the post asks people to do.'}`;
-  }
-  return `${lead} ${split} ${engG === 'Good'
-    ? 'The people who stay care; most never get that far, so the opening is what to fix.'
-    : 'Interaction is the stronger half here, so the gap is in the opening.'}`;
+  const words = (SIGNAL_WORDS[signalName] || {})[rated] || '';
+  const stateLine = state ? ` ${CQR_STATES[state.toLowerCase()]}` : '';
+  return `Rated ${rated} on ${signalName.toLowerCase()}: ${words}. ${basis}${stateLine}`;
 }
 
 // ---------------------------------------------------------------------
@@ -244,10 +237,17 @@ function placeAmong(value, peers) {
 // ---------------------------------------------------------------------
 //  3. Recommendation, per platform
 // ---------------------------------------------------------------------
-function recommendFor({ platLabel, cqr, retG, engG, retStatus, engStatus, standing, delivered, tooNew, missing, expect = {} }) {
+function recommendFor({ platLabel, rated, state, standing, delivered, tooNew, missing }) {
   if (missing) {
     return { action: 'no_data', confidence: 'none',
       text: `No ${platLabel} numbers have come back for this post, so there is nothing to judge yet. That is not the same as a weak post.` };
+  }
+  // Already running. The rating still shows, but the decision is made.
+  if (String(state || '').toLowerCase() === 'boosted') {
+    return { action: 'already_boosted', confidence: rated ? 'medium' : 'none',
+      text: rated
+        ? `Already running on ${platLabel}. The organic rating of ${rated} is what it earned before the spend; judge it from here on its paid performance.`
+        : `Already running on ${platLabel}, and there was not enough organic data to rate it before the spend started.` };
   }
   if (tooNew) {
     return { action: 'wait', confidence: 'none',
@@ -257,70 +257,26 @@ function recommendFor({ platLabel, cqr, retG, engG, retStatus, engStatus, standi
     return { action: 'wait', confidence: 'none',
       text: `Too little delivery on ${platLabel} to judge yet (under ${VIEW_FLOOR.toLocaleString()} views). Wait rather than act on this.` };
   }
-  if (isBoostedState(cqr)) {
-    return { action: 'already_boosted', confidence: 'none',
-      text: `Already running on ${platLabel}, so these numbers are organic and paid together. Judge it on its paid performance instead; there is no clean organic read left to make a boost decision from.` };
-  }
-  if (!cqr && !retG && !engG) {
-    const bothMissing = retStatus === 'no_data' && engStatus === 'no_data';
+  if (!rated) {
     return { action: 'no_grade', confidence: 'none',
-      text: bothMissing
-        ? `No numbers have come back for ${platLabel} on this post, so there is nothing to grade yet.`
-        : `Nothing gradeable came back for ${platLabel} at this length. ${retStatus === 'no_threshold' || engStatus === 'no_threshold' ? 'Adding the missing benchmark for this platform will make the rating appear on its own.' : ''}`.trim() };
+      text: state
+        ? `${CQR_STATES[state.toLowerCase()]} Nothing to act on for ${platLabel} yet.`
+        : `No benchmark is set for ${platLabel}, so this cannot be rated. Adding one will make the rating appear on its own.` };
   }
-  const strong = standing && standing.percentile !== null && standing.percentile >= 70;
-  const weakStanding = standing && standing.percentile !== null && standing.percentile < 30;
 
-  if (cqr === 'Good') {
+  const strong = standing && standing.percentile !== null && standing.percentile >= 70;
+  const weak = standing && standing.percentile !== null && standing.percentile < 30;
+
+  if (rated === 'Good') {
     return { action: 'boost', confidence: strong ? 'high' : 'medium',
-      text: `Boost on ${platLabel}.${strong ? ' It is one of your stronger organic posts this quarter, so it has earned the spend.' : ' It cleared both halves of the rating organically.'}` };
+      text: `Boost on ${platLabel}.${strong ? ' It is one of your stronger organic posts this quarter, so it has earned the spend.' : ' It cleared the bar organically.'}` };
   }
-  if (cqr === 'Poor') {
-    return { action: 'hold', confidence: weakStanding ? 'high' : 'medium',
+  if (rated === 'Poor') {
+    return { action: 'hold', confidence: weak ? 'high' : 'medium',
       text: `Do not put spend behind this on ${platLabel}. It did not earn attention organically, and paid reach will not fix that.` };
   }
-  // Average: the split decides what to do with it.
-  if (retG === 'Good' && engG && engG !== 'Good') {
-    return { action: 'boost_reach', confidence: 'medium',
-      text: `Worth boosting on ${platLabel}, but for reach rather than engagement. People watch it, so the spend buys views; do not judge it afterwards on comments and shares, because it was never earning those.` };
-  }
-  if (engG === 'Good' && retG && retG !== 'Good') {
-    return { action: 'recut', confidence: 'medium',
-      text: `Hold the spend on ${platLabel} and recut the opening. The people who stay engage with it, so the idea works; most never get far enough to see it.` };
-  }
-  // Only one half exists on this platform, so the rating rests on it
-  // alone. Saying "both halves" here would be a claim about data that
-  // was never collected.
-  const halves = [retG, engG].filter(Boolean).length;
-  if (halves === 1) {
-    const only = retG ? 'retention' : 'engagement';
-    const g = retG || engG;
-    // Only explain the absent half when this platform normally reports it.
-    // Instagram and Facebook never give watch time on organic posts, so
-    // repeating that on every post is noise about a gap nobody can close.
-    const missingHalf = retG ? expect.engagement : expect.retention;
-    if (g === 'Good') {
-      return { action: 'boost', confidence: 'medium',
-        text: `Worth boosting on ${platLabel}. ${only === 'retention' ? 'People watch it' : 'People interact with it'}, which is what this platform reports.` };
-    }
-    if (g === 'Poor') {
-      return { action: 'hold', confidence: 'medium',
-        text: `Hold the spend on ${platLabel}. ${only === 'retention' ? 'People drop off early' : 'Almost nobody interacts'}.${missingHalf ? ' The other half did not come back for this post, so there is nothing to weigh against it.' : ''}` };
-    }
-    return { action: 'hold', confidence: 'low',
-      text: `Middling on ${platLabel} on ${only}. Not weak, but not a case for spend ahead of a stronger post either.` };
-  }
-
-  // Still Average, but one half is actually Poor: name it rather than
-  // calling the whole thing middling.
-  if (retG === 'Poor' || engG === 'Poor') {
-    const weak = retG === 'Poor' ? 'retention' : 'engagement';
-    const other = retG === 'Poor' ? `engagement ${engG}` : `retention ${retG}`;
-    return { action: 'hold', confidence: 'medium',
-      text: `Hold the spend on ${platLabel}. ${weak === 'retention' ? 'People drop off early' : 'Almost nobody interacts'}, and ${other} is not enough on its own to carry a boost.` };
-  }
   return { action: 'hold', confidence: 'low',
-    text: `Middling on ${platLabel} on both halves. There is no case here for spend ahead of a stronger post.` };
+    text: `Middling on ${platLabel}.${strong ? ' It still sits in the stronger half of your organic this quarter, so it is a reasonable second choice.' : ' Not weak, but not a case for spend ahead of a stronger post either.'}` };
 }
 
 // ---------------------------------------------------------------------
@@ -488,7 +444,7 @@ async function buildValidation(brandId, creativeId) {
   if (!typeR.rows.length) return null;
   const creativeType = typeR.rows[0].type;
 
-  const [creativeR, organicR, thresholdR, peerR, paidR] = await Promise.all([
+  const [creativeR, organicR, thresholdR, osBenchR, peerR, paidR] = await Promise.all([
     queryTolerant(
       `select c.creative_id, c.brand_id, c.type, c.campaign, c.date, c.duration_s,
               c.ig_link, c.fb_link, c.tt_link,
@@ -516,18 +472,20 @@ async function buildValidation(brandId, creativeId) {
          from cqr_thresholds
         where brand_id = $1 or brand_id is null`, [brandId]),
 
-    // The brand's own organic, same window, for the standing. Scored rows
-    // only — an unscored post is not a yardstick.
-    // Peers for the standing, and for working out what this platform
-    // actually reports. Both have to be like for like on type as well as
-    // platform. Brand Say posts come through the platform APIs and carry
-    // watch time; Others Say posts are scraped and never do. And the two
-    // store engagement on different scales, so ranking one against the
-    // other compares 0.02 with 2.57 and produces a meaningless percentile.
+    // Others Say is rated against its own table, not cqr_thresholds.
+    // A missing table is survivable: the panel then says no benchmark.
+    query(`select platform, poor_below, good_from from cqr_os_benchmarks`)
+      .catch(() => ({ rows: [] })),
+
+    // The brand's own organic, same window, for the standing. Like for
+    // like on type as well as platform: the two types are rated on
+    // different signals, so a mixed pool produces a meaningless
+    // percentile. The raw counts come too, because the standing is
+    // computed from the same signal the rating uses, not from the view.
     query(
-      `select s.platform, s.retention_rate, s.engagement_rate, s.cqr
-         from v_organic_scored s
-         join creatives c on c.creative_id = s.creative_id
+      `select o.platform, o.views, o.likes, o.comments, o.avg_watch_time, c.duration_s
+         from organic_perf o
+         join creatives c on c.creative_id = o.creative_id
         where c.brand_id = $1
           and c.creative_id <> $2
           and c.type is not distinct from $4
@@ -581,50 +539,54 @@ async function buildValidation(brandId, creativeId) {
   // row came back. A link with no row is the honest "no data" case.
   const expected = Object.keys(PLATFORM).filter((p) => c[PLATFORM[p].linkField] || orgBy[p]);
 
+  const osBench = Object.fromEntries((osBenchR.rows || []).map((r) => [r.platform, r]));
+
   const platforms = expected.map((plat) => {
     const meta = PLATFORM[plat];
     const o = orgBy[plat];
-    const platKey = platformKey(plat, c.type);
-    const retTh = pickThreshold(thresholdR.rows, platKey, 'retention', c.duration_s);
-    const engTh = pickThreshold(thresholdR.rows, platKey, 'engagement', c.duration_s);
 
     if (!o) {
       return {
-        platform: plat, label: meta.label, missing: true, cqr: null,
+        platform: plat, label: meta.label, missing: true, cqr: null, rated: null,
         recommendation: recommendFor({ platLabel: meta.label, missing: true }),
       };
     }
 
-    const retG = grade(o.retention_rate, retTh);
-    const engG = grade(o.engagement_rate, engTh);
-    const retStatus = statusOf(o.retention_rate, retTh);
-    const engStatus = statusOf(o.engagement_rate, engTh);
+    // The one signal the rating is based on, and the band it is read
+    // against. Which of the two it is, and where the band comes from,
+    // depends on type, exactly as cqr_organic_label does it.
+    const signal = ratingSignal(o, c.type, c.duration_s);
+    const band = isOthersSay(c.type)
+      ? (osBench[plat]
+          ? { poor_lt: num(osBench[plat].poor_below), good_gte: num(osBench[plat].good_from), source: 'os' }
+          : null)
+      : (() => {
+          const th = pickThreshold(thresholdR.rows, platformKey(plat, c.type), 'retention', c.duration_s);
+          return th ? { poor_lt: num(th.poor_lt), good_gte: num(th.good_gte), source: th.brand_id ? 'brand' : 'global' } : null;
+        })();
+
+    // Always a rating, even when the stored label is a state like
+    // Boosted. The rule is the same one, so the answer agrees with
+    // every other CQR in the app rather than being a second opinion.
+    const rated = grade(signal, band);
+    const state = stateOf(o.cqr);
     const delivered = num(o.views) !== null && num(o.views) >= VIEW_FLOOR;
     const tooNew = hoursSince !== null && hoursSince < MIN_HOURS;
     const peers = peersBy[plat] || [];
-    const expect = {
-      retention: reports(plat, 'retention_rate'),
-      engagement: reports(plat, 'engagement_rate'),
-    };
 
-    const standing = {
-      retention: placeAmong(o.retention_rate, peers.map((p) => p.retention_rate)),
-      engagement: placeAmong(o.engagement_rate, peers.map((p) => p.engagement_rate)),
-    };
-    // One headline standing: retention leads, the way organic is read.
-    const lead = standing.retention.percentile !== null ? standing.retention : standing.engagement;
-    standing.words = standingWords(lead.percentile);
-    standing.peers = lead.peers;
-    standing.percentile = lead.percentile;
-    standing.basis = standing.retention.percentile !== null ? 'retention' : 'engagement';
+    const standing = placeAmong(signal, peers.map((p) => ratingSignal(p, c.type, p.duration_s)));
+    standing.words = standingWords(standing.percentile);
 
     return {
       platform: plat,
       label: meta.label,
       missing: false,
-      cqr: o.cqr || null,
-      // Raw counts, so the panel shows the numbers and what they mean in
-      // one place rather than in two sections the reader has to join up.
+      // The rating, always present when it can be worked out at all.
+      cqr: rated,
+      // And the state alongside it, never instead of it.
+      state,
+      state_note: state ? CQR_STATES[state.toLowerCase()] : null,
+      boosted: isBoostedState(o.cqr),
       views: num(o.views),
       reach: num(o.reach),
       likes: num(o.likes),
@@ -635,36 +597,20 @@ async function buildValidation(brandId, creativeId) {
       avg_watch_time: r1(o.avg_watch_time),
       reactions: reactionRead(o),
       time_posted: o.time_posted,
-      retention: {
-        // Already a percentage for every row: avg_watch_time / duration * 100.
-        rate: r1(o.retention_rate),
-        grade: retG, status: retStatus,
-        band: retTh ? { poor_lt: num(retTh.poor_lt), good_gte: num(retTh.good_gte), source: retTh.brand_id ? 'brand' : 'global' } : null,
-        percentile: standing.retention.percentile,
+      signal: {
+        name: signalName(c.type),
+        note: signalNote(c.type),
+        value: signal === null ? null : Math.round(signal * 100) / 100,
+        grade: rated,
+        band,
+        percentile: standing.percentile,
       },
-      engagement: {
-        // Scaled by type, because the view stores the two differently.
-        // The grade above came from the stored value, so they stay in step.
-        rate: o.engagement_rate === null || o.engagement_rate === undefined
-          ? null
-          : Math.round(Number(o.engagement_rate) * engagementScale(c.type) * 100) / 100,
-        label: engagementLabel(c.type),
-        weighted: isOthersSay(c.type),
-        grade: engG, status: engStatus,
-        band: engTh ? { poor_lt: num(engTh.poor_lt), good_gte: num(engTh.good_gte), source: engTh.brand_id ? 'brand' : 'global' } : null,
-        percentile: standing.engagement.percentile,
-      },
-      reason: reasonFor(o.cqr, retG, engG, retStatus, engStatus, expect),
-      // Whether this platform reports each half for this brand, so the
-      // panel can leave out a row for something that never arrives.
-      expect,
-      boosted: isBoostedState(o.cqr),
+      reason: reasonFor({ rated, state, signal, band, signalName: signalName(c.type), type: c.type }),
       standing,
       velocity: velocity[plat] || null,
       delivered, too_new: tooNew,
       recommendation: recommendFor({
-        platLabel: meta.label, cqr: o.cqr, retG, engG, retStatus, engStatus,
-        standing, delivered, tooNew, missing: false, expect,
+        platLabel: meta.label, rated, state, standing, delivered, tooNew, missing: false,
       }),
     };
   });
