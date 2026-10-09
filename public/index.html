@@ -285,41 +285,60 @@
        <h3 class="modal-title">Add New Creative</h3>
        <form id="addCreativeForm" onsubmit="submitCreative(event)">
            
-           <input type="text" id="ac-description" class="modal-input" style="margin-bottom:4px;"
-                  maxlength="20" placeholder="Short description (optional) — e.g. Shanudrie 6sec"
-                  oninput="previewCreativeId()">
-           <div id="ac-id-preview" class="ac-id-preview"></div>
+           <!-- Every field sits in its own .ac-field wrapper. dropdowns.js
+                replaces each <select> with a styled control and moves the
+                select inside a new div, so toggling the select's own display
+                is both order-dependent and invisible. The wrapper is always
+                here, so showing and hiding works whether or not the styled
+                controls have been built yet. It also carries the spacing,
+                which the inline margins no longer can. -->
+           <div class="ac-field">
+             <input type="text" id="ac-description" class="modal-input"
+                    maxlength="20" placeholder="Short description (optional) — e.g. Shanudrie 6sec"
+                    oninput="previewCreativeId()">
+             <div id="ac-id-preview" class="ac-id-preview"></div>
+           </div>
 
-           <select id="ac-campaign" class="modal-input" style="margin-bottom:10px;" required>
-             <option value="" disabled selected>Select Campaign</option>
+           <div class="ac-field">
+             <select id="ac-campaign" class="modal-input" required>
+               <option value="" disabled selected>Select Campaign</option>
              </select>
-           
-           <select id="ac-type" class="modal-input" style="margin-bottom:10px;" onchange="toggleCreativeFields()" required>
-             <option value="" disabled selected>Select Category</option>
-             <option value="Brand Say">Brand Say</option>
-             <option value="Others Say">Others Say</option>
-           </select>
+           </div>
 
-           <select id="ac-source" class="modal-input" style="margin-bottom:10px; display:none;" onchange="previewCreativeId()">
-             <option value="" disabled selected>Who posted it?</option>
-             <option value="creator">Creator (briefed and paid)</option>
-             <option value="community">Community (posted by the public)</option>
-           </select>
+           <div class="ac-field">
+             <select id="ac-type" class="modal-input" onchange="toggleCreativeFields()" required>
+               <option value="" disabled selected>Select Category</option>
+               <option value="Brand Say">Brand Say</option>
+               <option value="Others Say">Others Say</option>
+             </select>
+           </div>
 
-           <div class="ac-field plat-row" id="ac-creator-led-row" style="display:none; margin-bottom:10px;">
+           <div class="ac-field" id="ac-source-row" style="display:none">
+             <select id="ac-source" class="modal-input" onchange="previewCreativeId()">
+               <option value="" disabled selected>Who posted it?</option>
+               <option value="creator">Creator (briefed and paid)</option>
+               <option value="community">Community (posted by the public)</option>
+             </select>
+           </div>
+
+           <div class="ac-field ac-toggle-row" id="ac-creator-led-row" style="display:none">
              <label class="tgl"><input type="checkbox" id="ac-creator-led"><span class="tgl-track"></span></label>
              <span class="ac-toggle-label">Led by a creator</span>
            </div>
 
-           <select id="ac-repurposed" class="modal-input" style="margin-bottom:10px; display:none;" onchange="toggleOriginalIdField()">
-             <option value="" disabled selected>Is Repurposed?</option>
-             <option value="No">No</option>
-             <option value="Yes">Yes</option>
-           </select>
-
-           <select id="ac-original-id" class="modal-input" style="margin-bottom:10px; display:none;">
-             <option value="" disabled selected>Select Original Creative ID</option>
+           <div class="ac-field" id="ac-repurposed-row" style="display:none">
+             <select id="ac-repurposed" class="modal-input" onchange="toggleOriginalIdField()">
+               <option value="" disabled selected>Is Repurposed?</option>
+               <option value="No">No</option>
+               <option value="Yes">Yes</option>
              </select>
+           </div>
+
+           <div class="ac-field" id="ac-original-id-row" style="display:none">
+             <select id="ac-original-id" class="modal-input">
+               <option value="" disabled selected>Select Original Creative ID</option>
+             </select>
+           </div>
            
            <div class="plat-rows">
              <div class="plat-row">
