@@ -32,10 +32,11 @@ async function followRedirect(url) {
 
 /**
  * Validate one field, following a short or share link once if needed.
- * Returns { ok, url, id } or { ok:false, error }.
+ * opts carries { source }, which widens the Facebook rules for a community
+ * page's own posts. Returns { ok, url, id, kind } or { ok:false, error }.
  */
-async function checkField(field, raw) {
-  const first = L.validate(field, raw);
+async function checkField(field, raw, opts) {
+  const first = L.validate(field, raw, opts);
   if (first.ok || !first.needsResolve) return first;
 
   let landed;
@@ -46,7 +47,7 @@ async function checkField(field, raw) {
       + 'Open the post in a browser and copy the link from the address bar.' };
   }
 
-  const second = L.validate(field, landed);
+  const second = L.validate(field, landed, opts);
   if (second.ok) return second;
 
   // Meta does not redirect share links for anonymous requests: Facebook
@@ -86,8 +87,13 @@ async function findDuplicate(query, field, id, { excludeId, pendingJobs }) {
              and creative_id is distinct from $2
            limit 1`;
   } else {
+    // Two places a Facebook id can sit. A video or community post carries it
+    // in the path, after a slash. A photo carries it in the query string as
+    // fbid=, and a permalink as story_fbid=, which the unanchored match
+    // covers because story_fbid= ends in fbid=.
     sql = `select creative_id, brand_id from creatives
-           where fb_link ~ ('/' || $1 || '([/?]|$)')
+           where (fb_link ~ ('/' || $1 || '([/?#]|$)')
+                  or fb_link ~ ('fbid=' || $1 || '([&?#]|$)'))
              and creative_id is distinct from $2
            limit 1`;
   }
@@ -99,7 +105,9 @@ async function findDuplicate(query, field, id, { excludeId, pendingJobs }) {
   for (const j of pendingJobs || []) {
     const d = j && j.data;
     if (!d || !d[field]) continue;
-    const r = L.validate(field, d[field]);
+    // The queued job carries its own source, so a community post in flight
+    // is re-validated under the same rules it was accepted under.
+    const r = L.validate(field, d[field], { source: d.source });
     if (r.ok && r.id === id) return { creativeId: d.creativeId, brand: d.brand, pending: true };
   }
   return null;
@@ -120,10 +128,11 @@ async function readPendingJobs(app) {
 /**
  * Check every supplied field.
  * input: { ig, fb, tt }  (empty or missing = platform not used)
+ * source: 'creator' | 'community' | 'brand' | undefined — widens Facebook
  * returns { ok, fields: { ig: {ok,url,id} | {ok:false,error}, ... }, links: {ig,fb,tt} }
  * links holds the normalised URLs to store, only when ok is true.
  */
-async function checkLinks(app, query, input, { excludeId } = {}) {
+async function checkLinks(app, query, input, { excludeId, source } = {}) {
   const pendingJobs = await readPendingJobs(app);
   const fields = {};
   const links = {};
@@ -132,7 +141,7 @@ async function checkLinks(app, query, input, { excludeId } = {}) {
   await Promise.all(FIELDS.map(async (f) => {
     const raw = input[f];
     if (!raw || !String(raw).trim()) return;
-    fields[f] = await checkField(f, raw);
+    fields[f] = await checkField(f, raw, { source });
   }));
 
   for (const f of FIELDS) {

@@ -1965,12 +1965,26 @@ function acValidate(f) {
     const v = f.plats[p.k];
     if (!v.on) { acSetErr(p.k, ''); continue; }
     if (!v.link) { acSetErr(p.k, 'Add the link or turn this platform off.'); bad = true; continue; }
-    const r = window.CLLinks.validate(p.k, v.link);
+    const r = window.CLLinks.validate(p.k, v.link, { source: f.source });
     // needsResolve is not an error: the server follows the redirect.
     if (!r.ok && !r.needsResolve) { acSetErr(p.k, r.error); bad = true; }
     else acSetErr(p.k, '');
   }
   return bad ? 'Fix the highlighted links.' : null;
+}
+
+/**
+ * What "Posted by" currently says.
+ *
+ * Only Others Say has a source, and only 'community' changes anything: a
+ * community page's Facebook post may be a photo or a plain post, where a
+ * brand's or a creator's has to be a video. Read live from the form rather
+ * than passed in, because the blur handler has no form object.
+ */
+function acSource() {
+  const type = (document.getElementById('ac-type') || {}).value || '';
+  if (type !== 'Others Say') return '';
+  return (document.getElementById('ac-source') || {}).value || '';
 }
 
 // ---- inline link errors -------------------------------------------------
@@ -1988,14 +2002,30 @@ function acCheckOne(k) {
   const box = document.getElementById(`ac-${k}-on`);
   const input = document.getElementById(`ac-${k}`);
   if (!box || !box.checked || !input || !input.value.trim()) return;
-  const r = window.CLLinks.validate(k, input.value);
+  const r = window.CLLinks.validate(k, input.value, { source: acSource() });
   acSetErr(k, (!r.ok && !r.needsResolve) ? r.error : '');
+}
+
+/**
+ * Re-check the Facebook box when "Posted by" changes.
+ *
+ * The same link is valid under one setting and not the other, so an error
+ * left over from the previous setting would be wrong, and worse, a link
+ * accepted as a community post would stay accepted after switching to
+ * creator. Only Facebook is affected.
+ */
+function acRecheckFb() {
+  const input = document.getElementById('ac-fb');
+  const box = document.getElementById('ac-fb-on');
+  if (!input || !box) return;
+  if (!box.checked || !input.value.trim()) { acSetErr('fb', ''); return; }
+  acCheckOne('fb');
 }
 
 // Server check: resolves short links, catches duplicates. Returns true when
 // every link passes, having written each field's error under it.
 async function acServerCheck(f) {
-  const body = {};
+  const body = { source: f.source || '' };
   AC_PLATS.forEach(p => { if (f.plats[p.k].on) body[p.k] = f.plats[p.k].link; });
   let data;
   try {

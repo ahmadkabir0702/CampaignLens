@@ -306,7 +306,7 @@
            </div>
 
            <div class="ac-field">
-             <select id="ac-type" class="modal-input" onchange="toggleCreativeFields()" required>
+             <select id="ac-type" class="modal-input" onchange="toggleCreativeFields();acRecheckFb()" required>
                <option value="" disabled selected>Select Category</option>
                <option value="Brand Say">Brand Say</option>
                <option value="Others Say">Others Say</option>
@@ -314,7 +314,7 @@
            </div>
 
            <div class="ac-field" id="ac-source-row" style="display:none">
-             <select id="ac-source" class="modal-input" onchange="previewCreativeId()">
+             <select id="ac-source" class="modal-input" onchange="previewCreativeId();acRecheckFb()">
                <option value="" disabled selected>Who posted it?</option>
                <option value="creator">Creator</option>
                <option value="community">Community page</option>
