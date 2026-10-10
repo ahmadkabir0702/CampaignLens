@@ -16,6 +16,12 @@
  *   Brand Say Facebook  needs the URL to end in a numeric id
  *   Brand Say TikTok    needs /video/{numeric id}
  *   Instagram collab    needs the real shortcode, which share links do not carry
+ *
+ * One exception, and it is a deliberate one. Community pages post photos far
+ * more often than video, so for Others Say content marked as coming from a
+ * community page the Facebook field also accepts post and photo links. See
+ * checkFbCommunity. Nothing else is relaxed: a brand's own Facebook post
+ * still has to be a video, because that is what its metrics are built on.
  */
 (function (root, factory) {
   if (typeof module === 'object' && module.exports) module.exports = factory();
@@ -46,7 +52,10 @@
 
   function fail(msg) { return { ok: false, error: msg }; }
   function resolveMe() { return { ok: false, needsResolve: true }; }
-  function pass(url, id) { return { ok: true, url: url, id: id }; }
+  // kind tells the caller what it got: a video, or for a community page a
+  // photo or a text post. Nothing downstream requires it yet, but a photo
+  // has no view count and so cannot be rated the way a video is.
+  function pass(url, id, kind) { return { ok: true, url: url, id: id, kind: kind || 'video' }; }
 
   // ---------------------------------------------------------------- Instagram
   function checkIg(u) {
@@ -87,13 +96,74 @@
     return fail('Not a TikTok video link. It should look like tiktok.com/@…/video/…');
   }
 
+  // ------------------------------------------------- Facebook, community
+  /**
+   * A community page's own post, which is usually a photo.
+   *
+   * Three shapes turn up in practice, and all three carry query junk and a
+   * trailing hash that has to come off before the link is stored:
+   *
+   *   facebook.com/{page}/posts/{pfbid…|numeric}?rdid=…#
+   *   facebook.com/photo/?fbid={numeric}&set=a.{numeric}
+   *   facebook.com/photo.php?fbid={numeric}
+   *   facebook.com/permalink.php?story_fbid={id}&id={pageid}
+   *
+   * The id this returns is what the duplicate check matches on, so it has to
+   * be the part of the URL that identifies the post and nothing else.
+   */
+  function checkFbCommunity(u) {
+    var p = u.pathname;
+    var m;
+
+    // /{page}/posts/{token} — token is a pfbid or an old numeric id.
+    m = p.match(/^\/([^/]+)\/posts\/([A-Za-z0-9]+)\/?$/);
+    if (m) {
+      return pass('https://www.facebook.com/' + m[1] + '/posts/' + m[2], m[2], 'post');
+    }
+
+    // /photo/ and /photo.php both put the id in fbid.
+    if (/^\/photo(\.php)?\/?$/.test(p)) {
+      var fbid = u.searchParams.get('fbid') || '';
+      if (/^\d+$/.test(fbid)) {
+        return pass('https://www.facebook.com/photo/?fbid=' + fbid, fbid, 'photo');
+      }
+      return fail('This photo link has no fbid in it. Open the photo itself and '
+        + 'copy the link from the address bar.');
+    }
+
+    // /{page}/photos/{set}/{numeric} — the older album form.
+    m = p.match(/^\/([^/]+)\/photos\/(?:[^/]+\/)?(\d+)\/?$/);
+    if (m) {
+      return pass('https://www.facebook.com/photo/?fbid=' + m[2], m[2], 'photo');
+    }
+
+    // permalink.php?story_fbid=…&id=…
+    if (/^\/permalink\.php\/?$/.test(p)) {
+      var sid = u.searchParams.get('story_fbid') || '';
+      var pid = u.searchParams.get('id') || '';
+      if (/^[A-Za-z0-9]+$/.test(sid) && /^\d+$/.test(pid)) {
+        return pass('https://www.facebook.com/permalink.php?story_fbid=' + sid
+          + '&id=' + pid, sid, 'post');
+      }
+    }
+    return null;   // not a community shape; fall through to the video rules
+  }
+
   // ---------------------------------------------------------------- Facebook
-  function checkFb(u) {
+  function checkFb(u, opts) {
     var h = hostOf(u);
     var p = u.pathname;
 
     if (h === 'fb.watch') return resolveMe();
     if (/^\/share\//.test(p)) return resolveMe();
+
+    // Community pages post photos more often than video, so their posts are
+    // allowed here. Checked before the video rules because a post link would
+    // otherwise be rejected by the pfbid branch below.
+    if (opts && opts.source === 'community') {
+      var c = checkFbCommunity(u);
+      if (c) return c;
+    }
 
     var m = p.match(/^\/reel\/(\d+)\/?$/);
     if (m) return pass('https://www.facebook.com/reel/' + m[1] + '/', m[1]);
@@ -108,16 +178,21 @@
     m = p.match(/^\/([^/]+)\/videos\/(?:[^/]+\/)?(\d+)\/?$/);
     if (m) return pass('https://www.facebook.com/' + m[1] + '/videos/' + m[2] + '/', m[2]);
 
-    if (/pfbid/i.test(p)) {
-      return fail('This post link has no numeric id and cannot be tracked. '
-        + 'Open the video itself and copy that link instead.');
-    }
-    if (/^\/[^/]+\/posts\//.test(p)) {
-      return fail('This is a post link. Click into the video and copy the video link instead.');
+    // Past this point the link is not a video. Say which setting would make
+    // it acceptable, rather than only that it is not.
+    var asCommunity = ' Post and photo links are accepted for Others Say'
+      + ' content posted by a community page; set "Posted by" to "Community page"'
+      + ' if that is what this is.';
+
+    if (/pfbid/i.test(p) || /^\/[^/]+\/posts\//.test(p)) {
+      return fail('This is a post link, not a video link. Click into the video and '
+        + 'copy the video link instead.' + asCommunity);
     }
     if (/profile\.php/.test(p)) return fail('This is a profile link. Paste the link to the video itself.');
     if (/^\/groups\//.test(p)) return fail('Group posts cannot be tracked.');
-    if (/^\/photo/.test(p) || /\/photos\//.test(p)) return fail('This is a photo. Only videos are tracked.');
+    if (/^\/photo/.test(p) || /\/photos\//.test(p)) {
+      return fail('This is a photo, and only videos are tracked here.' + asCommunity);
+    }
     return fail('Not a Facebook video link. It should look like facebook.com/reel/… or …/videos/…');
   }
 
@@ -125,12 +200,13 @@
 
   /**
    * field: 'ig' | 'fb' | 'tt'
+   * opts:  { source }  'community' widens the Facebook rules; see checkFb
    * returns one of:
-   *   { ok: true, url, id }          normalised URL and the id matchers use
+   *   { ok: true, url, id, kind }    normalised URL and the id matchers use
    *   { ok: false, error }           show this under the field
    *   { ok: false, needsResolve }    server must follow the redirect first
    */
-  function validate(field, raw) {
+  function validate(field, raw, opts) {
     if (!CHECK[field]) return fail('Unknown field.');
     var u = parse(raw);
     if (!u) return fail('That is not a valid link.');
@@ -141,7 +217,7 @@
       return fail('This is a ' + LABEL[actual] + ' link. Put it in the '
         + LABEL[actual] + ' field instead.');
     }
-    return CHECK[field](u);
+    return CHECK[field](u, opts || {});
   }
 
   return { validate: validate, platformOf: function (raw) {

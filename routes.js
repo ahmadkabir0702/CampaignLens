@@ -418,8 +418,10 @@ app.get('/api/brands', async (req, res) => {
   // what the form shows as valid is exactly what the server will accept.
   app.post('/api/check-links', async (req, res) => {
     try {
-      const { ig, fb, tt } = req.body || {};
-      const result = await checkLinks(app, query, { ig, fb, tt });
+      const { ig, fb, tt, source } = req.body || {};
+      // The form sends what it currently has selected, because a community
+      // page's Facebook post is valid where a brand's or a creator's is not.
+      const result = await checkLinks(app, query, { ig, fb, tt }, { source });
       // Only worth comparing videos once every link is individually valid.
       if (result.ok) result.content = await contentFor(result.links);
       return res.json(result);
@@ -465,7 +467,8 @@ app.get('/api/brands', async (req, res) => {
     // matchers, and short TikTok links are resolved to carry the video id.
     let normalised;
     try {
-      const lc = await checkLinks(app, query, { ig: req.body.ig, fb: req.body.fb, tt: req.body.tt });
+      const lc = await checkLinks(app, query, { ig: req.body.ig, fb: req.body.fb, tt: req.body.tt },
+        { source: sourceValue });
       if (!lc.ok) {
         const fieldErrors = {};
         for (const [k, v] of Object.entries(lc.fields)) if (!v.ok) fieldErrors[k] = v.error;
