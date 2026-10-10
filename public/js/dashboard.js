@@ -545,11 +545,11 @@ function paintDrawer(p) {
   el.style.height = Math.max(0, drawerH * p) + 'px';
   if (inner) {
     // Comes down from behind the tile rather than appearing in place.
-    inner.style.setProperty('--dz', (-12 * (1 - p)).toFixed(2) + 'px');
+    inner.style.setProperty('--dz', (-6 * (1 - p)).toFixed(2) + 'px');
     // Fades in ahead of the move so it is legible before it arrives.
-    inner.style.setProperty('--df', Math.max(0, Math.min(1, p * 1.7)).toFixed(3));
+    inner.style.setProperty('--df', Math.max(0, Math.min(1, p * 2)).toFixed(3));
   }
-  if (card) card.style.setProperty('--ds', (0.965 + 0.035 * p).toFixed(4));
+  if (card) card.style.setProperty('--ds', '1');
 }
 
 function getDrawerSpring() {
@@ -653,20 +653,37 @@ const PLATFORM_LINKS = [
   { key: 'ttLink', name: 'TikTok' },
   { key: 'fbLink', name: 'Facebook' },
 ];
-// The card's still frame. Full bleed to the card edge so it reads as the
-// creative itself rather than an illustration dropped into a box. The play
-// button opens the post; clicking anywhere else still selects the card.
+/**
+ * The card's still frame.
+ *
+ * It used to run full bleed across the top of the card at a fixed 200px
+ * height. Nearly everything here is shot vertical, so that was a
+ * landscape slice through a portrait frame: it cost 200px of height,
+ * showed a band of the video, and made the card tall enough that only a
+ * handful fitted on screen. It is now a portrait tile at the creative's
+ * own 4:5, beside the name, which is the same shape the detail panel
+ * already uses for the same picture.
+ *
+ * It ALWAYS returns an element. Returning nothing when a creative had no
+ * still left that card a different shape from its neighbours and said
+ * nothing about why, so a gap in the pipeline looked like a design
+ * choice. The platform mark sits underneath the image and shows through
+ * whenever there is no still or the stored one fails to load.
+ */
 function cardMediaHTML(d) {
-  if (!d.thumbnail) return '';
   const links = platformLinks(d);
   const open = links.length ? links[0].url : '';
-  return `<div class="card-thumb">
-    <img src="${escapeHtml(d.thumbnail)}" alt="" loading="lazy"
-         onerror="this.closest('.card-thumb').remove()">
-    ${open ? `<button class="card-play" data-press title="Open on ${escapeHtml(links[0].name)}"
+  const mark = d.platform === 'tiktok' ? 'TT' : 'META';
+  const play = open ? `<button class="card-play" data-press title="Open on ${escapeHtml(links[0].name)}"
        aria-label="Open on ${escapeHtml(links[0].name)}"
        onclick="event.stopPropagation();window.open('${escapeHtml(open)}','_blank','noopener')"
-      >${playMark(20)}</button>` : ''}
+      >${playMark(13)}</button>` : '';
+  const img = d.thumbnail
+    ? `<img src="${escapeHtml(d.thumbnail)}" alt="" loading="lazy" onerror="this.remove()">`
+    : '';
+  return `<div class="card-thumb${d.thumbnail ? '' : ' card-thumb-none'}"
+       ${d.thumbnail ? '' : 'title="No still frame on file for this creative"'}>
+    <span class="card-thumb-mark">${mark}</span>${img}${play}
   </div>`;
 }
 
@@ -718,11 +735,15 @@ function renderCards(data) {
           <span class="card-type ${d.type==='Brand Say'?'bs-tag':'os-tag'}">${d.type==='Brand Say'?'BS':'OS'}</span>${d.source==='community'?'<span class="card-type community-tag">Community page</span>':''}${d.creatorLed?'<span class="card-type creator-led-tag">Creator-led</span>':''}${repTag}
         </div>
       </div>
-      ${cardMediaHTML(d)}
-      <div class="card-name">${d.id}</div>
-      <div style="font-size:9px;color:var(--c-muted);margin-top:-6px;margin-bottom:4px;">${d.short !== d.id ? d.short : ''}</div>
-      <div class="card-campaign">${d.campaign} · ${d.month}</div>
-      <div class="card-tags">${durTag}${ctTag}${valTag}</div>
+      <div class="card-head">
+        ${cardMediaHTML(d)}
+        <div class="card-ident">
+          <div class="card-name">${d.short || d.id}</div>
+          <div class="card-id" title="${escapeHtml(d.id)}">${d.short && d.short !== d.id ? d.id : ''}</div>
+          <div class="card-campaign">${d.campaign} · ${d.month}</div>
+          <div class="card-tags">${durTag}${ctTag}${valTag}</div>
+        </div>
+      </div>
       <div class="mini-bars">
         <div class="mini-bar-row"><div class="mini-bar-label">Reach</div><div class="mini-bar-track"><div class="mini-bar-fill" style="width:${rchPct}%;background:#000050"></div></div><div class="mini-bar-val">${fmtN(d.reach)}</div></div>
         <div class="mini-bar-row"><div class="mini-bar-label">Hook</div><div class="mini-bar-track"><div class="mini-bar-fill" style="width:${hkPct}%;background:${hookColor(d.hookRate)}"></div></div><div class="mini-bar-val" style="color:${hookColor(d.hookRate)}">${(d.hookRate||0).toFixed(1)}%</div></div>
@@ -776,12 +797,11 @@ function paintModal() {
   if (!overlay || !panel) return;
   const p = modalP;
   overlay.style.setProperty('--scrim', Math.max(0, Math.min(1, p)).toFixed(3));
-  // The enter path and the drag share one axis: 18px of travel on the
-  // way in, plus whatever the hand has added.
-  panel.style.setProperty('--sheet-y', (18 * (1 - p) + modalY).toFixed(2) + 'px');
-  panel.style.setProperty('--sheet-s', (0.94 + 0.06 * p).toFixed(4));
-  // Blur and scale move together so it reads as a surface arriving.
-  panel.style.setProperty('--sheet-blur', (6 * (1 - p)).toFixed(2) + 'px');
+  // The enter path and the drag share one axis: 8px on the way in, plus
+  // whatever the hand has added.
+  panel.style.setProperty('--sheet-y', (8 * (1 - p) + modalY).toFixed(2) + 'px');
+  // Barely a scale. Enough to read as arriving, not enough to watch.
+  panel.style.setProperty('--sheet-s', (0.988 + 0.012 * p).toFixed(4));
 }
 
 function modalSprings() {
@@ -932,7 +952,7 @@ function installModalDrag() {
     if (dismiss) {
       // Hand the release velocity straight to the spring so there is no
       // seam between the drag and the animation that finishes it.
-      sp.y.to(h + 120, { velocity: v, bounce: 0, duration: 0.35 });
+      sp.y.to(h + 120, { velocity: v, bounce: 0, duration: 0.25 });
       closeCreativeModal(null, { keepY: true });
     } else {
       sp.y.to(0, { velocity: v });

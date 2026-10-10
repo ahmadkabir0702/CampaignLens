@@ -33,14 +33,20 @@
   //  bounce 0   -> damping ratio 1.0, critically damped, no overshoot
   //  bounce 0.2 -> damping ratio 0.8, the value Apple ships for sheets
   // ---------------------------------------------------------------
+  //  These are deliberately short. The guidance's 0.3-0.4s response is
+  //  for a phone sheet that fills the screen; a panel and a drawer on a
+  //  dense desktop dashboard are looked at dozens of times an hour, and
+  //  at that frequency anything you can sit and watch is in the way.
   const PRESETS = {
     // Move or reposition something. The default for everything that did
     // not arrive on the end of a gesture.
-    move:   { bounce: 0,    duration: 0.4 },
-    // A drawer or sheet. Bounce only because it is dragged or thrown.
-    sheet:  { bounce: 0.2,  duration: 0.3 },
-    // Snapping back after a gesture the user abandoned.
-    snap:   { bounce: 0.15, duration: 0.35 },
+    move:   { bounce: 0,    duration: 0.22 },
+    // A drawer or sheet.
+    sheet:  { bounce: 0,    duration: 0.19 },
+    // Settling back after a gesture the user abandoned. The only preset
+    // with any overshoot at all, because it is the only one that always
+    // follows a gesture that carried momentum.
+    snap:   { bounce: 0.12, duration: 0.22 },
   };
 
   const reduced = () =>
