@@ -1,3 +1,48 @@
+// =====================================================================
+//  Expired session
+//
+//  The dashboard loads its data once and then lives in the page, so when
+//  a session ends nothing looks wrong until something asks the server
+//  again. The two panels that open on demand are the only things that
+//  do, which is why an expired session used to surface as a bare "Not
+//  authenticated" inside one creative's panel and nowhere else.
+//
+//  Wrapping fetch catches every call, including ones added later, and
+//  says once, at the top of the page, what actually happened.
+// =====================================================================
+(function () {
+  const realFetch = window.fetch.bind(window);
+  let announced = false;
+
+  function announce() {
+    if (announced) return;
+    announced = true;
+    const bar = document.createElement('div');
+    bar.className = 'session-gone';
+    bar.innerHTML = `<span>Your session has ended. Anything on screen is from before it
+      expired, and nothing new will load until you sign in again.</span>
+      <button class="modal-btn modal-confirm" data-press>Sign in again</button>`;
+    bar.querySelector('button').onclick = () => { window.location = '/login'; };
+    (document.body || document.documentElement).appendChild(bar);
+  }
+
+  window.fetch = async function (input, init) {
+    const res = await realFetch(input, init);
+    try {
+      const url = typeof input === 'string' ? input
+        : (input && typeof input.url === 'string' ? input.url : '');
+      if (res.status === 401 && url.indexOf('/api/') !== -1) announce();
+    } catch (e) { /* never let this break the call it is wrapping */ }
+    return res;
+  };
+})();
+
+/** The message to show in place when a panel could not load. */
+function panelError(res, data) {
+  if (res && res.status === 401) return 'Your session has ended. Sign in again to load this.';
+  return (data && data.error) || 'Could not load';
+}
+
 const parseNum = (val) => {
     if (typeof val === 'number') return val;
     if (!val || val === 'Not Found' || val === '-') return 0;
@@ -1125,8 +1170,8 @@ async function loadOrganicValidation(detailsEl, creativeId) {
   box.innerHTML = `<div class="organic-empty">Loading…</div>`;
   try {
     const res = await fetch(`/api/organic-validation?creative_id=${encodeURIComponent(creativeId)}`);
-    const data = await res.json();
-    if (!res.ok) throw new Error(data.error || 'Could not load validation');
+    const data = await res.json().catch(() => ({}));
+    if (!res.ok) throw new Error(panelError(res, data));
     orgValCache.set(creativeId, data);
     box.innerHTML = buildValidationHTML(data);
     box.dataset.loadedFor = creativeId;
@@ -1158,8 +1203,8 @@ async function loadFatigue(detailsEl, creativeId) {
   box.innerHTML = `<div class="organic-empty">Loading…</div>`;
   try {
     const res = await fetch(`/api/creative-fatigue?creative_id=${encodeURIComponent(creativeId)}`);
-    const data = await res.json();
-    if (!res.ok) throw new Error(data.error || 'Could not load');
+    const data = await res.json().catch(() => ({}));
+    if (!res.ok) throw new Error(panelError(res, data));
     fatigueCache.set(creativeId, data);
     box.innerHTML = buildFatigueHTML(data);
     box.dataset.loadedFor = creativeId;

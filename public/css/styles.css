@@ -1370,3 +1370,21 @@ select:focus,.search-input:focus,.modal-input:focus{outline:none;border-color:va
   }
   .kpi-list td{border-bottom-color:var(--ink-300)}
 }
+
+/* An ended session, said once at the top of the page rather than as a
+   bare "Not authenticated" inside whichever panel happened to ask the
+   server first. */
+.session-gone{
+  position:fixed;left:0;right:0;bottom:0;z-index:300;
+  display:flex;align-items:center;justify-content:center;gap:16px;flex-wrap:wrap;
+  padding:14px 24px;
+  background:var(--ink-900);color:#fff;
+  font:400 14px/20px var(--font);
+  box-shadow:0 -6px 24px rgba(0,0,80,.22);
+}
+.session-gone button{
+  background:#fff;color:var(--ink-900);border:0;
+  padding:8px 16px;border-radius:var(--r-btn);
+  font:500 14px var(--font);cursor:pointer;flex-shrink:0;
+}
+.session-gone button:hover{background:var(--canvas-2)}

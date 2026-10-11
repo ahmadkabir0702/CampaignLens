@@ -42,6 +42,20 @@ app.use(session({
   secret: process.env.SESSION_SECRET || 'changeme-set-in-env',
   resave: false,
   saveUninitialized: false,
+  // Eight hours from the last request, not from signing in.
+  //
+  // Without this the cookie is only sent back when the session is created
+  // or changed, and with resave:false an ordinary GET changes nothing. So
+  // the eight hours ran from login and expired mid-afternoon no matter how
+  // much the dashboard was being used. Nothing looked broken, because the
+  // page already had its data; the only things that call the server after
+  // load are the two panels that open on demand, so the whole thing showed
+  // up as "Not authenticated" on some creatives and not others.
+  //
+  // rolling re-sends the cookie on every response, and express-session
+  // calls store.touch() for unmodified sessions, which connect-redis
+  // implements, so the Redis TTL moves with it.
+  rolling: true,
   cookie: {
     maxAge: 8 * 60 * 60 * 1000,
     httpOnly: true,
