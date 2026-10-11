@@ -466,6 +466,7 @@ app.get('/api/brands', async (req, res) => {
     // Every link is normalised, so what gets stored is always parseable by the
     // matchers, and short TikTok links are resolved to carry the video id.
     let normalised;
+    let contentType = 'Video';
     try {
       const lc = await checkLinks(app, query, { ig: req.body.ig, fb: req.body.fb, tt: req.body.tt },
         { source: sourceValue });
@@ -476,6 +477,10 @@ app.get('/api/brands', async (req, res) => {
       }
       normalised = lc.links;
       ig = normalised.ig || null; fb = normalised.fb || null; tt = normalised.tt || null;
+      // A community page's Facebook post can be a photo. The validator
+      // already worked that out, so the row is typed from it rather than
+      // assuming every creative is a video.
+      if (lc.fields.fb && lc.fields.fb.kind && lc.fields.fb.kind !== 'video') contentType = 'Photo';
     } catch (err) {
       console.error('[add-creative] link check failed:', err.message);
       return res.status(500).json({ error: 'Could not verify the links. Try again.' });
@@ -602,6 +607,7 @@ app.get('/api/brands', async (req, res) => {
             creatorLed: creatorLedValue,
             creator: creator || null,
             creatorId: creator_id || null,
+            contentType,
             mediaUrl: videoLink,
             platform: videoLink.includes('instagram.com') ? 'instagram'
                     : videoLink.includes('tiktok.com') ? 'tiktok' : 'facebook',
@@ -640,10 +646,10 @@ app.get('/api/brands', async (req, res) => {
            (creative_id, brand_id, date, campaign, type, is_repurposed,
             original_creative_id, content_type, ig_link, fb_link, tt_link,
             creator_profile, creator_id, source, creator_led)
-         values ($1,$2,coalesce($3::date, current_date),$4,$5,$6,$7,'Video',$8,$9,$10,$11,$12,$13,$14)`,
+         values ($1,$2,coalesce($3::date, current_date),$4,$5,$6,$7,$15,$8,$9,$10,$11,$12,$13,$14)`,
         [creativeId, brand, date || null, campaign, type, repurposed === 'Yes',
          originalId || null, ig || null, fb || null, tt || null,
-         creator || null, creator_id || null, sourceValue, creatorLedValue]
+         creator || null, creator_id || null, sourceValue, creatorLedValue, contentType]
       );
       return res.json({
         success: true, creativeId, queued: false,

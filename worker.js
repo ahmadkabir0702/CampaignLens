@@ -339,12 +339,11 @@ function fromScrapeCreators(platform, body) {
     if (!body || (!body.post_id && !body.url)) return null;
     const v = body.video || {};
     const url = v.hd_url || v.sd_url;
-    if (!url) throw new Error('Facebook post is not a video.');
-    return {
-      download_url: url,
-      duration: num(v.length_in_second),
-      caption: body.description || '',
-      thumbnail_url: [v.thumbnail, body.image_url].filter(Boolean),
+
+    // Everything except the file itself is the same whether this post is a
+    // video or a photo.
+    const base = {
+      caption: body.description || body.message || '',
       handle: body.author && body.author.handle ? String(body.author.handle).toLowerCase() : null,
       posted_at: body.creation_time || null,
       post_id: body.post_id ? String(body.post_id) : null,
@@ -356,6 +355,55 @@ function fromScrapeCreators(platform, body) {
         saves: null,  // Facebook does not expose this publicly
       },
     };
+
+    if (!url) {
+      // No video file. For a community page that is the normal case rather
+      // than a failure: they post photos far more often than video. Return
+      // it as a photo and let the processor decide whether this particular
+      // creative was allowed to be one.
+      const image = firstImage(body);
+      if (!image) {
+        // Neither a video nor a picture we recognise. List what the response
+        // did contain, so the failure email says what to map next time
+        // instead of only that it did not work.
+        const keys = Object.keys(body).slice(0, 25).join(', ');
+        throw new Error('Facebook post has no video and no image we could find. '
+          + `Fields returned: ${keys || 'none'}.`);
+      }
+      return { ...base, kind: 'photo', download_url: null, duration: null,
+               thumbnail_url: [image] };
+    }
+
+    return { ...base, kind: 'video',
+      download_url: url,
+      duration: num(v.length_in_second),
+      thumbnail_url: [v.thumbnail, body.image_url].filter(Boolean),
+    };
+  }
+  return null;
+}
+
+/**
+ * The picture on a Facebook photo post.
+ *
+ * The scraper names this field differently depending on the post shape, and
+ * the shapes are not documented, so every plausible spelling is tried before
+ * giving up. An album post puts the images in a list.
+ */
+function firstImage(body) {
+  const direct = body.image_url || body.image || body.full_picture
+    || body.picture || body.thumbnail_url || body.photo_image;
+  if (typeof direct === 'string' && /^https?:/i.test(direct)) return direct;
+  if (direct && typeof direct === 'object' && typeof direct.uri === 'string') return direct.uri;
+
+  for (const key of ['images', 'photos', 'attachments', 'media']) {
+    const list = body[key];
+    if (!Array.isArray(list)) continue;
+    for (const it of list) {
+      if (typeof it === 'string' && /^https?:/i.test(it)) return it;
+      const u = it && (it.url || it.uri || it.src || it.image_url || it.image);
+      if (typeof u === 'string' && /^https?:/i.test(u)) return u;
+    }
   }
   return null;
 }
@@ -754,12 +802,27 @@ function makeProcessor(ai) {
       await job.updateProgress({ step: 'resolving', pct: 10 });
       const meta = await resolveMediaUrl(mediaUrl);
 
-      await job.updateProgress({ step: 'downloading', pct: 30 });
-      videoPath = path.join(os.tmpdir(), `creative_${job.id}.mp4`);
-      await streamToFile(meta.download_url, videoPath);
+      // A community page's post is usually a photo, and there is no file to
+      // download and nothing for the model to watch. The creative is still
+      // worth having: it carries the engagement numbers, which is the whole
+      // reason for tracking community content.
+      const isPhoto = meta.kind === 'photo';
+      if (isPhoto && !(d.type === 'Others Say' && d.source === 'community')) {
+        throw new Error('This Facebook post is a photo, not a video. '
+          + 'Only Others Say content posted by a community page can be a photo.');
+      }
 
-      await job.updateProgress({ step: 'analysing', pct: 60 });
-      const a = await analyseVideo(ai, videoPath, typeof meta.duration === 'number' ? meta.duration : null);
+      let a = {};
+      let timeline = [];
+      let safeDur = null;
+
+      if (!isPhoto) {
+        await job.updateProgress({ step: 'downloading', pct: 30 });
+        videoPath = path.join(os.tmpdir(), `creative_${job.id}.mp4`);
+        await streamToFile(meta.download_url, videoPath);
+
+        await job.updateProgress({ step: 'analysing', pct: 60 });
+        a = await analyseVideo(ai, videoPath, typeof meta.duration === 'number' ? meta.duration : null);
 
       // A partial analysis is not worth storing — the dashboard labels
       // segments by position, so a missing one mislabels the rest.
@@ -767,7 +830,7 @@ function makeProcessor(ai) {
         throw new Error('Analysis incomplete — no hook returned.');
       }
 
-      const timeline = normaliseTimeline(a.timeline);
+      timeline = normaliseTimeline(a.timeline);
       if (!timeline.length) {
         throw new Error('Analysis incomplete — no timeline returned.');
       }
@@ -806,7 +869,8 @@ function makeProcessor(ai) {
       const apiDur = typeof meta.duration === 'number' ? meta.duration : null;
       const aiDur = parseFloat(a.duration);
       const guess = apiDur !== null ? apiDur : (Number.isFinite(aiDur) ? aiDur : null);
-      const safeDur = guess !== null && guess >= 1 && guess <= 600 ? guess : null;
+      safeDur = guess !== null && guess >= 1 && guess <= 600 ? guess : null;
+      }   // end of the video path
 
       // Insert the complete row only now. Nothing reaches the database
       // without descriptions, so a failed job leaves no half-creative behind.
@@ -841,7 +905,7 @@ function makeProcessor(ai) {
             content_intent, narrative_structure, hook_device, hook_subject, hook_pace,
             opens_with_product, opens_with_face, has_text_overlay,
             timeline_attrs, time_to_product_s, product_screen_pct, cuts_per_10s, attrs_version)
-         values ($1,$2,coalesce($3::date, current_date),$4,$5,$6,$7,'Video',
+         values ($1,$2,coalesce($3::date, current_date),$4,$5,$6,$7,$33,
                  $8,$9,$10,$11,$12,$13,$14,$15,
                  $16,$17,$18,$19,$20,
                  $21,$22,$23,$24,$25,$26,$27,$28,$29,$30,$31,$32,1)
@@ -871,12 +935,13 @@ function makeProcessor(ai) {
          d.originalId, d.ig, d.fb, d.tt,
          d.source || null,
          d.creatorLed === undefined ? null : d.creatorLed,
-         a.hook, safeDur, JSON.stringify(timeline),
+         a.hook || null, safeDur, JSON.stringify(timeline),
          a.format || null, a.product_role || null, a.format_note || null,
          d.creator || null, d.creatorId || null,
          at.content_intent, at.narrative_structure, at.hook_device, at.hook_subject, at.hook_pace,
          at.opens_with_product, at.opens_with_face, at.has_text_overlay,
-         at.timeline_attrs, at.time_to_product_s, at.product_screen_pct, at.cuts_per_10s]
+         at.timeline_attrs, at.time_to_product_s, at.product_screen_pct, at.cuts_per_10s,
+         isPhoto ? 'Photo' : 'Video']
       );
 
       await saveTags(creativeId, at);
@@ -901,11 +966,13 @@ function makeProcessor(ai) {
           .catch(e => console.error(`[worker] ${creativeId}: thumbnail url not saved: ${e.message}`));
       }
 
-      console.log(`[worker] ${creativeId}: analysed ${platform} (${safeDur === null ? '?' : safeDur}s, ${timeline.length} segments) and added`);
+      console.log(isPhoto
+        ? `[worker] ${creativeId}: added ${platform} photo post (no video to analyse)`
+        : `[worker] ${creativeId}: analysed ${platform} (${safeDur === null ? '?' : safeDur}s, ${timeline.length} segments) and added`);
 
       notifySuccess({
         creativeId, brand: d.brand, campaign: d.campaign, platform,
-        duration: safeDur, hook: a.hook,
+        duration: safeDur, hook: a.hook || (isPhoto ? 'Photo post' : null),
         addedBy: d.addedBy, addedByName: d.addedByName, addedByEmail: d.addedByEmail,
       }).catch(e => console.error('[worker] notify:', e.message));
       return {
@@ -1043,6 +1110,8 @@ async function classifyExisting(ai, row) {
 module.exports = {
   startWorker, buildPrompt, normaliseTimeline, RESPONSE_SCHEMA, analyseVideo,
   classifyExisting, attributeColumns, deriveTimelineMetrics, saveTags,
+  // Exported so the photo path can be tested without calling the scraper.
+  fromScrapeCreators, firstImage,
 };
 
 // Standalone mode: node worker.js
