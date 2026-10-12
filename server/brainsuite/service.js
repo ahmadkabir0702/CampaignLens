@@ -7,8 +7,8 @@
  *
  * Settings (env, changeable without a deploy):
  *   PRETEST_TTL_HOURS            how long a pre-test report lasts (default 72)
- *   BS_DAILY_CAP                 tests started per day, both kinds (default 40)
- *   BS_PRETEST_MONTHLY_PER_USER  pre-tests per person per month (default 20)
+ *   BS_DAILY_CAP                 pre-tests started per day across Campaign Lens (default 40).
+ *                                Added creatives are never capped or delayed.
  */
 const fs = require('fs');
 const os = require('os');
@@ -24,7 +24,6 @@ const { query } = require('../../db');
 
 const TTL_HOURS = Number(process.env.PRETEST_TTL_HOURS || 72);
 const DAILY_CAP = Number(process.env.BS_DAILY_CAP || 40);
-const MONTHLY_PER_USER = Number(process.env.BS_PRETEST_MONTHLY_PER_USER || 20);
 
 // Lux: Scheduled for ~1 minute, Created for ~3.5, done at 5. First look at
 // 90 seconds, then every 45 seconds for an hour, then every 5 minutes, and
@@ -57,16 +56,11 @@ function queuePoll(rowId, delay) {
 }
 
 // ── Quota ────────────────────────────────────────────────────────────────────
-async function checkQuota({ kind, username }) {
-  const today = await store.startedToday();
+// Pre-tests only. Added creatives are scored whatever the count.
+async function checkPretestCap() {
+  const today = await store.pretestsStartedToday();
   if (today >= DAILY_CAP) {
-    throw new HttpError(429, `Today's Brainsuite limit of ${DAILY_CAP} tests has been reached. Try again tomorrow.`);
-  }
-  if (kind === 'pretest' && username) {
-    const mine = await store.pretestsThisMonth(username);
-    if (mine >= MONTHLY_PER_USER) {
-      throw new HttpError(429, `You have used your ${MONTHLY_PER_USER} pre-tests for this month.`);
-    }
+    throw new HttpError(429, `Today's limit of ${DAILY_CAP} pre-tests has been reached. Try again tomorrow.`);
   }
 }
 
@@ -117,7 +111,7 @@ async function createPretest({ brandId, username, fields }) {
     });
   } catch (e) { throw new HttpError(400, e.message); }
 
-  await checkQuota({ kind: 'pretest', username });
+  await checkPretestCap();
 
   const fileName = safeFileName(fields.file_name);
   const bsJob = await client.announceJob();
@@ -140,7 +134,7 @@ async function freshUpload(row) {
 // Step 3 of 3, after the browser's upload succeeded. Uses one test of quota.
 async function startPretest(row) {
   if (row.status !== 'uploading') throw new HttpError(409, 'This pre-test has already been started.');
-  await checkQuota({ kind: 'pretest', username: row.requested_by });
+  await checkPretestCap();
   // Claim it first, so a double click or a retried request cannot start it twice.
   const claimed = await store.claimForStart(row.id);
   if (!claimed) throw new HttpError(409, 'This pre-test has already been started.');
@@ -259,14 +253,6 @@ function sha256(filePath) {
   });
 }
 
-function tomorrowAt1am() {
-  // 01:00 Asia/Colombo (UTC+5:30) tomorrow.
-  const now = new Date();
-  const colombo = new Date(now.getTime() + 5.5 * 3600 * 1000);
-  const next = Date.UTC(colombo.getUTCFullYear(), colombo.getUTCMonth(), colombo.getUTCDate() + 1, 1, 0) - 5.5 * 3600 * 1000;
-  return Math.max(60 * 1000, next - now.getTime());
-}
-
 /**
  * Score a creative from a video already on disk. Called by the creative
  * worker with the file it downloaded for Gemini, so nothing is downloaded
@@ -310,12 +296,6 @@ async function scoreCreative({ creativeId, brandId, type, platform, campaign, fi
       });
       await store.saveResult(row.id, same.summary, same.weblink);
       return { reused: same.id, id: row.id };
-    }
-
-    try { await checkQuota({ kind: 'creative' }); } catch (e) {
-      await store.insertJob({ ...base, briefing, status: 'skipped', error: 'Daily Brainsuite limit reached. Will try again tomorrow.' });
-      await enqueue('retry-upload', { creativeId, attempt: 0 }, { delay: tomorrowAt1am(), jobId: `bs-retry-${creativeId}-${Date.now()}` });
-      return { skipped: 'daily cap' };
     }
 
     let row = null;
@@ -398,7 +378,7 @@ function settings() {
   return {
     configured: client.configured(),
     queue: !!getConnection(),
-    ttlHours: TTL_HOURS, dailyCap: DAILY_CAP, monthlyPerUser: MONTHLY_PER_USER,
+    ttlHours: TTL_HOURS, dailyCap: DAILY_CAP,
     channels: CHANNELS,
   };
 }

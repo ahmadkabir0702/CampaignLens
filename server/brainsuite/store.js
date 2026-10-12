@@ -108,19 +108,11 @@ async function getResult(jobId) {
 }
 
 // ── Quota ────────────────────────────────────────────────────────────────────
-async function startedToday() {
+async function pretestsStartedToday() {
   const { rows } = await query(
     `select count(*)::int as n from brainsuite_jobs
-      where started_at >= (date_trunc('day', now() at time zone '${TZ}') at time zone '${TZ}')`);
-  return rows[0].n;
-}
-
-async function pretestsThisMonth(username) {
-  const { rows } = await query(
-    `select count(*)::int as n from brainsuite_jobs
-      where kind = 'pretest' and requested_by = $1 and started_at is not null
-        and started_at >= (date_trunc('month', now() at time zone '${TZ}') at time zone '${TZ}')`,
-    [username]);
+      where kind = 'pretest'
+        and started_at >= (date_trunc('day', now() at time zone '${TZ}') at time zone '${TZ}')`);
   return rows[0].n;
 }
 
@@ -217,6 +209,6 @@ async function usage() {
 module.exports = {
   brandInfo, insertJob, getJob, updateJob, bumpPoll, saveResult, getResult,
   claimForStart, completeWithResult, updateIfRunning, stalledPolls,
-  startedToday, pretestsThisMonth, findByHash, activeForCreative, latestForCreative,
+  pretestsStartedToday, findByHash, activeForCreative, latestForCreative,
   listPretests, expirePretests, failAbandonedUploads, deleteResult, usage,
 };
