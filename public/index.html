@@ -7,8 +7,7 @@
   <link rel="stylesheet" href="/css/styles.css">
   <script src="https://cdnjs.cloudflare.com/ajax/libs/Chart.js/4.4.1/chart.umd.js"></script>
   <link rel="stylesheet" href="/css/chat-panel.css">
-  <link rel="stylesheet" href="/css/pretest.css">
-  <link rel="stylesheet" href="/css/pretest-light.css">
+  <link rel="stylesheet" href="/css/brainsuite.css">
 <style id="ac-plat-style">
   .plat-rows { margin-bottom: 10px; }
   .plat-row { display: flex; align-items: center; gap: 10px; margin-bottom: 8px; }
@@ -94,190 +93,78 @@
   </div>
 
   <!-- ═══════════════════════════════════════════════════════════════════
-     PRE-TEST ASSET MODAL
+     PRE-TEST (Brainsuite) — new test form and report view.
+     Logic in /js/brainsuite.js. The video goes from the browser straight
+     to Brainsuite; this server never receives the file.
 ════════════════════════════════════════════════════════════════════════ -->
-<div id="pretestModal" class="pretest-overlay" onclick="closePretestOnBackdrop(event)">
-  <div class="pretest-modal" id="pretestModalBox">
-
-    <!-- Header -->
-    <div class="pretest-header">
+<div id="bsPretestModal" class="modal-overlay" onclick="if(event.target===this)BS.closeForm()">
+  <div class="modal-box bs-form-box" role="dialog" aria-labelledby="bs-form-title">
+    <div class="bs-form-head">
       <div>
-        <div class="pretest-title">
-          <span class="pretest-title-icon">⬡</span>
-          Pre-test Asset
-        </div>
-        <div class="pretest-subtitle">Predictive Analysis · Neuro-informed model</div>
+        <h3 class="modal-title" id="bs-form-title">New pre-test</h3>
+        <p class="modal-desc" id="bs-form-desc">Brainsuite scores the video for attention, branding and recall. Usually ready in about 5 minutes.</p>
       </div>
-      <button class="pretest-close" onclick="closePretestModal()">×</button>
+      <button class="close-btn" data-press onclick="BS.closeForm()" aria-label="Close">×</button>
     </div>
 
-    <!-- Step track -->
-    <div class="pretest-steps">
-      <div class="pretest-step active" id="pstep-1">
-        <div class="pstep-dot">1</div>
-        <div class="pstep-label">Select Asset</div>
-      </div>
-      <div class="pstep-connector"></div>
-      <div class="pretest-step" id="pstep-2">
-        <div class="pstep-dot">2</div>
-        <div class="pstep-label">Upload</div>
-      </div>
-      <div class="pstep-connector"></div>
-      <div class="pretest-step" id="pstep-3">
-        <div class="pstep-dot">3</div>
-        <div class="pstep-label">Analyse</div>
-      </div>
-    </div>
-
-    <!-- ── Step 1: Pick file ── -->
-    <div id="pretest-step1" class="pretest-body">
-      <div class="pretest-drop-zone" id="pretestDropZone" onclick="document.getElementById('pretestFileInput').click()" ondragover="pretestDragOver(event)" ondragleave="pretestDragLeave(event)" ondrop="pretestDrop(event)">
-        <input type="file" id="pretestFileInput" accept="video/*" style="display:none" onchange="pretestFileSelected(event)">
-        <div class="pretest-drop-icon">
-          <svg width="40" height="40" viewBox="0 0 40 40" fill="none">
-            <rect x="4" y="4" width="32" height="32" rx="8" fill="var(--pretest-surface2)" stroke="var(--pretest-border)" stroke-width="1.5"/>
-            <path d="M16 22l4-4 4 4M20 18v10" stroke="var(--pretest-accent)" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/>
-            <rect x="13" y="13" width="14" height="9" rx="2" fill="var(--pretest-accent)" opacity="0.15"/>
-            <path d="M13 17l3-3 4 4 2-2 5 5" stroke="var(--pretest-accent)" stroke-width="1.4" stroke-linecap="round" opacity="0.6"/>
-          </svg>
-        </div>
-        <div class="pretest-drop-title">Drop your video here</div>
-        <div class="pretest-drop-hint">or click to browse · MP4, MOV, AVI · max 2GB</div>
+    <form id="bs-form" onsubmit="BS.submit(event)" novalidate>
+      <div class="bs-drop" id="bs-drop" tabindex="0" role="button"
+           onclick="document.getElementById('bs-file').click()"
+           onkeydown="if(event.key==='Enter'||event.key===' '){event.preventDefault();this.click()}"
+           ondragover="BS.dragOver(event)" ondragleave="BS.dragLeave(event)" ondrop="BS.drop(event)">
+        <input type="file" id="bs-file" accept="video/mp4,video/quicktime,video/*" hidden onchange="BS.pickFile(this.files[0])">
+        <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 16V4M7 9l5-5 5 5M4 16v3a1 1 0 0 0 1 1h14a1 1 0 0 0 1-1v-3"/></svg>
+        <div class="bs-drop-title" id="bs-drop-title">Drop a video here, or click to choose</div>
+        <div class="bs-drop-hint" id="bs-drop-hint">MP4 or MOV, up to 500 MB</div>
       </div>
 
-      <div id="pretest-file-preview" class="pretest-file-preview" style="display:none">
-        <div class="pfp-icon">
-          <svg width="20" height="20" viewBox="0 0 20 20" fill="none"><rect width="20" height="20" rx="5" fill="var(--pretest-accent)" opacity="0.15"/><path d="M7 6l8 4-8 4V6z" fill="var(--pretest-accent)"/></svg>
-        </div>
-        <div class="pfp-info">
-          <div class="pfp-name" id="pretest-filename">—</div>
-          <div class="pfp-size" id="pretest-filesize">—</div>
-        </div>
-        <button class="pfp-remove" onclick="pretestClearFile()">×</button>
+      <div class="bs-grid">
+        <div class="bs-field bs-span2"><span class="field-label">Asset name</span>
+          <input type="text" id="bs-asset-name" class="modal-input" maxlength="120" placeholder="e.g. Glow hero 15s" required></div>
+        <div class="bs-field"><span class="field-label">Campaign (optional)</span>
+          <input type="text" id="bs-campaign" class="modal-input" maxlength="80" list="bs-campaigns" placeholder="e.g. Lux Glow 2026">
+          <datalist id="bs-campaigns"></datalist></div>
+        <div class="bs-field"><span class="field-label">Placement</span>
+          <select id="bs-channel" class="modal-input"></select></div>
+        <div class="bs-field"><span class="field-label">Content type</span>
+          <select id="bs-content-type" class="modal-input">
+            <option value="Brand Say">Brand Say</option>
+            <option value="Others Say">Others Say (creator)</option>
+          </select></div>
+        <div class="bs-field"><span class="field-label">Language</span>
+          <select id="bs-language" class="modal-input"></select></div>
+        <div class="bs-field"><span class="field-label">Business group</span>
+          <select id="bs-business-group" class="modal-input"></select></div>
+        <div class="bs-field"><span class="field-label">Category</span>
+          <select id="bs-category" class="modal-input"></select></div>
+        <div class="bs-field bs-span2"><span class="field-label">Key message (optional, up to 50 words)</span>
+          <textarea id="bs-key-message" class="modal-input bs-textarea" rows="2" maxlength="600"
+                    placeholder="e.g. Lux makes every woman feel like a star"></textarea>
+          <span class="bs-hint">Adds the Strategic Fit scores: whether the visuals and words carry this message.</span></div>
       </div>
 
-      <div class="pretest-meta-row">
-        <div class="pretest-field">
-          <label class="pretest-label">Asset Name / ID</label>
-          <input type="text" class="pretest-input" id="pretest-asset-name" placeholder="e.g. Campaign_BS_30s">
-        </div>
-        <div class="pretest-field">
-          <label class="pretest-label">Campaign</label>
-          <input type="text" class="pretest-input" id="pretest-campaign" placeholder="e.g. Avurudu Campaign">
-        </div>
-      </div>
-      <div class="pretest-meta-row" style="margin-top:10px">
-        <div class="pretest-field">
-          <label class="pretest-label">Duration (seconds)</label>
-          <input type="number" class="pretest-input" id="pretest-duration" placeholder="e.g. 30" min="1">
-        </div>
-        <div class="pretest-field">
-          <label class="pretest-label">Content Type</label>
-          <select class="pretest-input" id="pretest-content-type">
-            <option value="" disabled selected>Select type</option>
-            <option>Brand Say</option>
-            <option>Others Say</option>
-          </select>
-        </div>
-      </div>
+      <div class="bs-note" id="bs-lang-note">Brainsuite has no Sinhala yet. Choose English for Sinhala videos; the visual scores are unaffected.</div>
 
-      <div class="pretest-notice">
-        <span class="pretest-notice-icon">ℹ</span>
-        This asset will be queued for our predictive analysis model. Results are typically ready within 24 hours.
+      <div class="bs-progress" id="bs-progress" hidden>
+        <div class="bs-progress-label"><span id="bs-progress-text">Uploading</span><span id="bs-progress-pct">0%</span></div>
+        <div class="bs-progress-track"><div class="bs-progress-fill" id="bs-progress-fill"></div></div>
       </div>
+      <div class="bs-error" id="bs-error" role="alert" hidden></div>
 
-      <div class="pretest-footer">
-        <button class="pretest-btn secondary" onclick="closePretestModal()">Cancel</button>
-        <button class="pretest-btn primary" id="pretest-upload-btn" onclick="pretestStartUpload()" disabled>
-          <span>Add to System</span>
-          <svg width="14" height="14" viewBox="0 0 14 14" fill="none"><path d="M2 7h10M8 3l4 4-4 4" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"/></svg>
-        </button>
+      <div class="modal-actions">
+        <button type="button" class="modal-btn modal-cancel" onclick="BS.closeForm()">Cancel</button>
+        <button type="submit" class="modal-btn modal-confirm" id="bs-submit">Run pre-test</button>
       </div>
-    </div>
-
-    <!-- ── Step 2: Uploading ── -->
-    <div id="pretest-step2" class="pretest-body" style="display:none">
-      <div class="pretest-upload-anim">
-        <div class="upload-rings">
-          <div class="upload-ring r1"></div>
-          <div class="upload-ring r2"></div>
-          <div class="upload-ring r3"></div>
-          <div class="upload-ring-core">
-            <svg width="24" height="24" viewBox="0 0 24 24" fill="none"><path d="M12 4v8M8 8l4-4 4 4" stroke="var(--pretest-accent)" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/><path d="M4 17v1a2 2 0 002 2h12a2 2 0 002-2v-1" stroke="var(--pretest-accent)" stroke-width="1.6" stroke-linecap="round"/></svg>
-          </div>
-        </div>
-        <div class="upload-status-title" id="upload-status-title">Uploading asset…</div>
-        <div class="upload-status-sub" id="upload-status-sub">Securing file transfer</div>
-      </div>
-
-      <div class="pretest-prog-track">
-        <div class="pretest-prog-fill" id="pretest-prog-fill"></div>
-      </div>
-      <div class="pretest-prog-pct" id="pretest-prog-pct">0%</div>
-
-      <div class="upload-steps-list" id="upload-steps-list">
-        <div class="usl-item pending" id="usl-1"><span class="usl-dot"></span>Validating file integrity</div>
-        <div class="usl-item pending" id="usl-2"><span class="usl-dot"></span>Encrypting transfer</div>
-        <div class="usl-item pending" id="usl-3"><span class="usl-dot"></span>Uploading to analysis queue</div>
-        <div class="usl-item pending" id="usl-4"><span class="usl-dot"></span>Registering asset metadata</div>
-        <div class="usl-item pending" id="usl-5"><span class="usl-dot"></span>Confirming receipt</div>
-      </div>
-    </div>
-
-    <!-- ── Step 3: Done / Generate findings ── -->
-    <div id="pretest-step3" class="pretest-body" style="display:none">
-      <div class="pretest-success-banner">
-        <div class="psb-icon">
-          <svg width="28" height="28" viewBox="0 0 28 28" fill="none"><circle cx="14" cy="14" r="13" stroke="var(--pretest-good)" stroke-width="1.5" opacity="0.3"/><circle cx="14" cy="14" r="9" fill="var(--pretest-good)" opacity="0.12"/><path d="M9.5 14l3 3 6-6" stroke="var(--pretest-good)" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg>
-        </div>
-        <div>
-          <div class="psb-title">Asset uploaded successfully</div>
-          <div class="psb-sub" id="psb-asset-name">—</div>
-        </div>
-      </div>
-
-      <div class="pretest-queue-card">
-        <div class="pqc-row">
-          <div class="pqc-item">
-            <div class="pqc-label">Queue position</div>
-            <div class="pqc-val">#<span id="pqc-position">—</span></div>
-          </div>
-          <div class="pqc-item">
-            <div class="pqc-label">Model</div>
-            <div class="pqc-val">Mindshare Neuro Predict v1</div>
-          </div>
-          <div class="pqc-item">
-            <div class="pqc-label">Est. turnaround</div>
-            <div class="pqc-val" style="color:var(--pretest-accent)">≤ 24 hrs</div>
-          </div>
-        </div>
-        <div class="pqc-divider"></div>
-        <div class="pqc-what">
-          <div class="pqc-what-title">What happens next</div>
-          <div class="pqc-step"><span class="pqc-step-num">①</span> Asset is reviewed and prepped for model ingestion</div>
-          <div class="pqc-step"><span class="pqc-step-num">②</span> Predictive scoring runs across attention, emotion, and brand recall signals</div>
-          <div class="pqc-step"><span class="pqc-step-num">③</span> Analytics team validates and annotates findings</div>
-          <div class="pqc-step"><span class="pqc-step-num">④</span> Report is uploaded to this dashboard and you'll be notified</div>
-        </div>
-      </div>
-
-      <div id="pretest-report-requested" style="display:none" class="pretest-report-confirm">
-        <svg width="16" height="16" viewBox="0 0 16 16" fill="none"><circle cx="8" cy="8" r="7" stroke="var(--pretest-accent)" stroke-width="1.2"/><path d="M8 5v3.5l2 1" stroke="var(--pretest-accent)" stroke-width="1.2" stroke-linecap="round"/></svg>
-        Your report request has been logged. Results will be ready within 24 hours — check back on the Pre-test Assets page.
-      </div>
-
-      <div class="pretest-footer" id="pretest-step3-footer">
-        <button class="pretest-btn secondary" onclick="closePretestModal()">Close</button>
-        <button class="pretest-btn primary" id="pretest-generate-btn" onclick="pretestRequestReport()">
-          <svg width="14" height="14" viewBox="0 0 14 14" fill="none" style="margin-right:4px"><path d="M7 1v2M7 11v2M1 7h2M11 7h2M3 3l1.4 1.4M9.6 9.6L11 11M3 11l1.4-1.4M9.6 4.4L11 3" stroke="currentColor" stroke-width="1.4" stroke-linecap="round"/></svg>
-          Request findings
-        </button>
-      </div>
-    </div>
-
+    </form>
   </div>
 </div>
-<!-- END PRE-TEST MODAL -->
+
+<div id="bsReportModal" class="modal-overlay" onclick="if(event.target===this)BS.closeReport()">
+  <div class="modal-box bs-report-box" role="dialog" aria-label="Pre-test report">
+    <div id="bs-report-content"></div>
+  </div>
+</div>
+<!-- END PRE-TEST -->
 
   <!-- Add Creative Modal -->
  <div id="addCreativeModal" class="modal-overlay">
@@ -398,6 +285,7 @@
       <div class="nav-item active" data-press onclick="setNav('creatives',this)">Creative Hub</div>
       <div class="nav-item" data-press onclick="setNav('kpi',this)">Campaign KPIs</div>
       <div class="nav-item" data-press onclick="setNav('creators',this)">Creators</div>
+      <div class="nav-item" data-press onclick="setNav('pretests',this)">Pre-tests</div>
       <!-- Temporarily hidden, uncomment to restore:
       <div class="nav-item" data-press onclick="setNav('signoff',this)">Campaign Sign-Off</div>
       -->
@@ -409,9 +297,6 @@
       <button class="btn-outline" data-press onclick="openAddCreativeModal()">
         <svg viewBox="0 0 24 24"><path d="M12 5v14M5 12h14"/></svg>Add creative
       </button>
-      <!-- Temporarily hidden, uncomment to restore:
-      <button class="btn-outline primary" onclick="openPretestModal()">Pre-test asset</button>
-      -->
       <button class="masthead-signout" onclick="window.location='/logout'">Sign out</button>
     </div>
   </div>
@@ -546,6 +431,7 @@
 <div id="page-kpi" class="hidden"></div>
 <div id="page-signoff" class="hidden"></div>
 <div id="page-creators" class="hidden"></div>
+<div id="page-pretests" class="hidden"></div>
         
         </div>
       </div>
@@ -679,7 +565,7 @@ window.addEventListener('load', () => setTimeout(syncFilterPills, 400));
   <script src="/js/kpi-dashboard.js"></script>
   <script src="/js/signoff.js"></script>
   <script src="/js/dropdowns.js"></script>
-  <script src="/js/pretest.js"></script>
+  <script src="/js/brainsuite.js"></script>
   <script src="/js/markers.js"></script>
   <script src="/js/chat-cards.js"></script>
   <script src="/js/chat-panel.js"></script>

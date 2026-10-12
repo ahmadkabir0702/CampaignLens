@@ -200,6 +200,9 @@ if (String(process.env.RUN_WORKER_IN_PROCESS || 'true') !== 'false') {
 
 // All Postgres-backed API routes live in routes.js
 require('./routes')(app, { ai, youtubedl });
+// Brainsuite pre-tests and creative scores. Its queue worker starts with the
+// creative worker (worker.js), wherever that runs.
+require('./server/brainsuite/routes')(app);
 // Ask Lens chat routes
 require('./server/chat/routes')(app);
 
