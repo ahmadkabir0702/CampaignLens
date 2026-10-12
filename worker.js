@@ -748,9 +748,24 @@ function attributeColumns(a) {
 // First organic_perf row for an influencer creative, straight from the post
 // fetch. Same rules as the sync: coalesce so a null never overwrites a real
 // value, and the platform-specific handle columns feed creator matching.
-async function writeFirstStats(creativeId, platform, meta) {
+/**
+ * @param {string} plat  'ig' | 'tt' | 'fb' — the SHORT code, which is what
+ *   organic_perf.platform stores and what every column prefix here is
+ *   named after. It used to take whatever the job carried and fall back to
+ *   'fb' for anything it did not recognise, and the job carries
+ *   'instagram' | 'tiktok' | 'facebook'. So neither branch ever matched and
+ *   every Others Say creative, on any platform, had its first stats written
+ *   as a Facebook row, its scrape time stamped on fb_last_scraped_at and
+ *   its Instagram or TikTok handle saved as fb_handle. A silent default is
+ *   what let two vocabularies drift past each other, so there is no default
+ *   now: an unknown value throws.
+ */
+async function writeFirstStats(creativeId, plat, meta) {
   const s = meta.stats;
-  const plat = platform === 'ig' ? 'ig' : platform === 'tt' ? 'tt' : 'fb';
+  if (!['ig', 'tt', 'fb'].includes(plat)) {
+    throw new Error(`writeFirstStats: unknown platform ${JSON.stringify(plat)}. `
+      + "Expected the short code 'ig', 'tt' or 'fb'.");
+  }
 
   await query(
     `insert into organic_perf (creative_id, platform, views, likes, comments, shares, saves, time_posted, total_interactions)
@@ -955,7 +970,10 @@ function makeProcessor(ai) {
       // its numbers come from the Meta and TikTok business APIs, which also
       // supply reach and watch time that a public post does not.
       if (d.type === 'Others Say' && meta.stats) {
-        try { await writeFirstStats(creativeId, platform, meta); }
+        // platformOf reads the link itself and returns the short code, so
+        // there is one source of truth rather than a second spelling
+        // assembled in routes.js and mapped back here.
+        try { await writeFirstStats(creativeId, platformOf(mediaUrl), meta); }
         catch (e) { console.error(`[worker] ${creativeId}: first stats not written: ${e.message}`); }
       }
 
@@ -1132,8 +1150,9 @@ async function classifyExisting(ai, row) {
 module.exports = {
   startWorker, buildPrompt, normaliseTimeline, RESPONSE_SCHEMA, analyseVideo,
   classifyExisting, attributeColumns, deriveTimelineMetrics, saveTags,
-  // Exported so the photo path can be tested without calling the scraper.
-  fromScrapeCreators, firstImage,
+  // Exported so the photo path and the platform routing can be tested
+  // without calling the scraper or touching a database.
+  fromScrapeCreators, firstImage, writeFirstStats, platformOf,
   // Brainsuite's retry path downloads a creative again the same way.
   resolveMediaUrl, streamToFile,
 };
