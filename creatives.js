@@ -134,8 +134,26 @@ async function paidExtras(brandId) {
   return out;
 }
 
+// Each creative's Brainsuite score, for the badge on its card: the latest
+// finished test, else the latest attempt (so "Scoring" shows while it runs).
+// About 20 bytes a creative; the full summary loads only when the Brainsuite
+// section is opened. Optional: without migration 012 there is simply nothing.
+async function brainsuiteScores(brandId) {
+  try {
+    const { rows } = await query(
+      `select distinct on (j.creative_id) j.creative_id, j.status, r.total_score, r.total_rating
+         from brainsuite_jobs j left join brainsuite_results r on r.job_id = j.id
+        where j.brand_id = $1 and j.kind = 'creative' and j.creative_id is not null
+        order by j.creative_id, (j.status = 'succeeded') desc, j.created_at desc`, [brandId]);
+    return Object.fromEntries(rows.map(r => [r.creative_id, r]));
+  } catch (err) {
+    if (err.code === '42P01') return {};
+    throw err;
+  }
+}
+
 async function buildPayload(brandId) {
-  const extras = await paidExtras(brandId);
+  const [extras, bsBy] = await Promise.all([paidExtras(brandId), brainsuiteScores(brandId)]);
   const [brandR, contentR, metaR, ttR, organicR, bestR, boostR, accountR, campR] =
     await Promise.all([
       query(`select brand_id, name from brands where brand_id = $1`, [brandId]),
@@ -306,6 +324,11 @@ async function buildPayload(brandId) {
       thumbnail: c.thumbnail_url || null,
       isRepurposed: !!c.is_repurposed,
       ...parseOriginal(c.original_creative_id),
+
+      // Brainsuite: null when the creative has never been sent.
+      bsStatus: bsBy[id] ? bsBy[id].status : null,
+      bsScore: bsBy[id] && bsBy[id].total_score !== null ? Number(bsBy[id].total_score) : null,
+      bsRating: bsBy[id] ? bsBy[id].total_rating || null : null,
 
       // organic
       igOrganic: org.ig || null,

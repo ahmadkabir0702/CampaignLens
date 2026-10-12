@@ -95,6 +95,7 @@ async function switchBrand(brandId) {
     if (currentPage === 'kpi' && typeof renderKPIDashboard === 'function') {
       renderKPIDashboard();
     }
+    if (typeof BS !== 'undefined') BS.onBrandChange(currentPage);
   } catch (e) {
     alert('Could not switch brand: ' + e.message);
   }
@@ -248,13 +249,13 @@ function populateFilters() {
 }
 
 function setNav(page, element) {
-    ['page-creatives', 'page-kpi', 'page-creators'].forEach(id => {
+    ['page-creatives', 'page-kpi', 'page-creators', 'page-pretests'].forEach(id => {
         const el = document.getElementById(id);
         if (el) el.classList.add('hidden');
     });
     const selectedPage = document.getElementById(`page-${page}`);
     if (selectedPage) selectedPage.classList.remove('hidden');
-    const titles = { 'creatives': 'Creative Hub', 'kpi': 'Campaign KPIs', 'creators': 'Creators' };
+    const titles = { 'creatives': 'Creative Hub', 'kpi': 'Campaign KPIs', 'creators': 'Creators', 'pretests': 'Pre-tests' };
     const titleEl = document.getElementById('topbar-title');
     if (titleEl) titleEl.innerText = titles[page] || '';
     document.querySelectorAll('.nav-item').forEach(el => el.classList.remove('active'));
@@ -277,6 +278,7 @@ function setNav(page, element) {
     if (page === 'creators' && typeof renderCreatorTab === 'function') {
         renderCreatorTab();
     }
+    if (typeof BS !== 'undefined') BS.onPage(page);
 }
 
 function setPlatform(p, el) {
@@ -798,6 +800,7 @@ function renderCards(data) {
       <span class="cqr-badge ${isNotBoosted?'inv-bg':cqrClass(displayCqr)}">${isNotBoosted?'Never boosted':displayCqr}</span>
       ${d.boostState === 'ended' ? `<span class="card-type inv-bg" style="margin-left:4px">Boost ended${d.boostEnded ? ' ' + new Date(d.boostEnded).toLocaleDateString('en-GB',{day:'numeric',month:'short'}) : ''}</span>` : ''}
       ${d.fatiguing && d.boostState === 'running' ? `<span class="card-type creator-led-tag" style="margin-left:4px" title="Rated ${d.fatigueFrom} in its first week, ${d.fatigueTo} last week">Fatiguing</span>` : ''}
+      ${typeof BS !== 'undefined' ? BS.cardBadge(d) : ''}
     </div>
     </div>`;
   }).join('');
@@ -1607,6 +1610,7 @@ function renderDetail(d) {
       ${buildLineageHTML(d)}
       ${statsHTML}
       ${buildCreativeBriefHTML(d)}
+      ${typeof BS !== 'undefined' ? BS.detailSection(d) : ''}
 
       <details class="org-details" style="margin-top:12px;" ontoggle="loadFatigue(this, '${d.id}')">
         <summary class="org-summary">How it is holding up <span style="color:var(--c-muted);font-size:10px;">CQR over time, not lifetime ▼</span></summary>

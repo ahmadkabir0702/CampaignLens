@@ -26,6 +26,8 @@ const { Worker } = require('bullmq');
 const IORedis = require('ioredis');
 const { query } = require('./db');
 const { notifySuccess, notifyFailure } = require('./notify');
+const { scoreCreative } = require('./server/brainsuite/service');
+const { startBrainsuiteWorker, closeBrainsuiteWorker } = require('./server/brainsuite/queue');
 
 // Gemini model. Google retires these on their own schedule — 2.5-flash was
 // pulled for new users — so it is an env var, changeable without a deploy.
@@ -966,6 +968,18 @@ function makeProcessor(ai) {
           .catch(e => console.error(`[worker] ${creativeId}: thumbnail url not saved: ${e.message}`));
       }
 
+      // Brainsuite score, from the file already on disk so nothing is
+      // downloaded twice. Only for brands switched on (brands.bs_auto_score).
+      // Never fatal, like the thumbnail: scoreCreative catches its own errors.
+      if (!isPhoto && videoPath) {
+        try { await job.updateProgress({ step: 'scoring', pct: 95 }); } catch (e) { /* progress is cosmetic */ }
+        const bs = await scoreCreative({
+          creativeId, brandId: d.brand, type: d.type, platform,
+          campaign: d.campaign, filePath: videoPath,
+        });
+        if (bs && (bs.started || bs.reused)) console.log(`[worker] ${creativeId}: Brainsuite ${bs.started ? 'test started' : 'score reused'}`);
+      }
+
       console.log(isPhoto
         ? `[worker] ${creativeId}: added ${platform} photo post (no video to analyse)`
         : `[worker] ${creativeId}: analysed ${platform} (${safeDur === null ? '?' : safeDur}s, ${timeline.length} segments) and added`);
@@ -1042,6 +1056,9 @@ function startWorker(ai) {
 
   attachShutdown(worker, connection);
 
+  // Brainsuite polling runs wherever the creative worker runs.
+  startBrainsuiteWorker();
+
   console.log('[worker] active and listening for background download tasks');
   return worker;
 }
@@ -1059,7 +1076,8 @@ function attachShutdown(worker, connection) {
     closing = true;
     console.log(`[worker] ${signal} received — finishing in-flight jobs, no new ones accepted`);
     try {
-      await worker.close();            // waits for active jobs
+      // Both workers drain at once: active jobs finish, no new ones start.
+      await Promise.all([worker.close(), closeBrainsuiteWorker()]);
       console.log('[worker] all in-flight jobs finished');
     } catch (e) {
       console.error('[worker] shutdown error:', e.message);
@@ -1112,6 +1130,8 @@ module.exports = {
   classifyExisting, attributeColumns, deriveTimelineMetrics, saveTags,
   // Exported so the photo path can be tested without calling the scraper.
   fromScrapeCreators, firstImage,
+  // Brainsuite's retry path downloads a creative again the same way.
+  resolveMediaUrl, streamToFile,
 };
 
 // Standalone mode: node worker.js
