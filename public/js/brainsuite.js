@@ -292,7 +292,7 @@
         <thead><tr><th>Asset</th><th>Placement</th><th>Type</th><th>Run by</th><th>Status</th><th class="bs-num">Score</th></tr></thead>
         <tbody>${rows}</tbody></table></div>`
       : `<div class="bs-card bs-empty">No pre-tests for ${esc(d.brand ? d.brand.name : 'this brand')} yet. Use New pre-test to score a video before it goes live.</div>`}
-      <div class="bs-fine">Uses one Brainsuite test each. Limits: ${esc(s.monthlyPerUser)} pre-tests per person a month, ${esc(s.dailyCap)} tests a day across Campaign Lens.</div>
+      <div class="bs-fine">Each pre-test uses one Brainsuite test. Up to ${esc(s.dailyCap)} pre-tests a day across Campaign Lens.</div>
     </div>`;
   }
 

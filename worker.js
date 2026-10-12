@@ -968,18 +968,6 @@ function makeProcessor(ai) {
           .catch(e => console.error(`[worker] ${creativeId}: thumbnail url not saved: ${e.message}`));
       }
 
-      // Brainsuite score, from the file already on disk so nothing is
-      // downloaded twice. Only for brands switched on (brands.bs_auto_score).
-      // Never fatal, like the thumbnail: scoreCreative catches its own errors.
-      if (!isPhoto && videoPath) {
-        try { await job.updateProgress({ step: 'scoring', pct: 95 }); } catch (e) { /* progress is cosmetic */ }
-        const bs = await scoreCreative({
-          creativeId, brandId: d.brand, type: d.type, platform,
-          campaign: d.campaign, filePath: videoPath,
-        });
-        if (bs && (bs.started || bs.reused)) console.log(`[worker] ${creativeId}: Brainsuite ${bs.started ? 'test started' : 'score reused'}`);
-      }
-
       console.log(isPhoto
         ? `[worker] ${creativeId}: added ${platform} photo post (no video to analyse)`
         : `[worker] ${creativeId}: analysed ${platform} (${safeDur === null ? '?' : safeDur}s, ${timeline.length} segments) and added`);
@@ -989,6 +977,22 @@ function makeProcessor(ai) {
         duration: safeDur, hook: a.hook || (isPhoto ? 'Photo post' : null),
         addedBy: d.addedBy, addedByName: d.addedByName, addedByEmail: d.addedByEmail,
       }).catch(e => console.error('[worker] notify:', e.message));
+
+      // Brainsuite score, after the creative is saved and the "added" email
+      // has gone, so adding a creative never waits on Brainsuite. Uses the
+      // file already on disk, so nothing is downloaded twice; the report
+      // itself arrives about 5 minutes later through the brainsuite queue.
+      // Only for brands switched on (brands.bs_auto_score). Never fatal:
+      // scoreCreative catches its own errors.
+      if (!isPhoto && videoPath) {
+        try { await job.updateProgress({ step: 'scoring', pct: 95 }); } catch (e) { /* progress is cosmetic */ }
+        const bs = await scoreCreative({
+          creativeId, brandId: d.brand, type: d.type, platform,
+          campaign: d.campaign, filePath: videoPath,
+        });
+        if (bs && (bs.started || bs.reused)) console.log(`[worker] ${creativeId}: Brainsuite ${bs.started ? 'test started' : 'score reused'}`);
+      }
+
       return {
         status: 'completed', creativeId, platform,
         hook: a.hook || null,
