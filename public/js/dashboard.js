@@ -307,7 +307,7 @@ function setNav(page, element) {
     });
     const selectedPage = document.getElementById(`page-${page}`);
     if (selectedPage) selectedPage.classList.remove('hidden');
-    const titles = { 'creatives': 'Creative Hub', 'kpi': 'Campaign KPIs', 'creators': 'Creators', 'pretests': 'Pre-tests' };
+    const titles = { 'creatives': 'Creative Hub', 'kpi': 'Media Summary', 'creators': 'Creators', 'pretests': 'Pre-tests' };
     const titleEl = document.getElementById('topbar-title');
     if (titleEl) titleEl.innerText = titles[page] || '';
     document.querySelectorAll('.nav-item').forEach(el => el.classList.remove('active'));
