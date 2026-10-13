@@ -449,6 +449,40 @@ function ts(v) {
 
 function hookColor(v) { return v>=40?'#04785C':v>=20?'#8A5A12':'#A32040'; }
 function cqrClass(c)  { return {Good:'good-bg',Average:'avg-bg',Poor:'poor-bg',Invalid:'inv-bg'}[c]||'inv-bg'; }
+
+/**
+ * Seconds, for reading rather than for arithmetic.
+ *
+ * The database keeps the real figure, which is what the retention
+ * denominator needs, and that is measured off the file: 11.447, 119.929.
+ * Nobody needs three decimal places on a card.
+ */
+function fmtDur(sec) {
+  const n = Number(sec);
+  if (!isFinite(n) || n <= 0) return '';
+  return (n < 1 ? n.toFixed(1) : String(Math.round(n))) + 's';
+}
+
+// The platforms a creative can carry organic numbers on, in the order the
+// panels list them.
+const ORG_PLATFORMS = [
+  { key: 'igOrganic', label: 'Instagram', link: 'igLink' },
+  { key: 'fbOrganic', label: 'Facebook',  link: 'fbLink' },
+  { key: 'ttOrganic', label: 'TikTok',    link: 'ttLink' },
+];
+const PAID_PLATFORM_NAME = { meta: 'Meta', tiktok: 'TikTok' };
+
+/** Where this creative is live, where it has stopped, where it is fading. */
+function paidState(d) {
+  const by = d.paidBy || {};
+  const running = [], stopped = [];
+  for (const [k, v] of Object.entries(by)) {
+    if (!v || !v.adStatus) continue;
+    (v.adStatus === 'ACTIVE' ? running : stopped).push(PAID_PLATFORM_NAME[k] || k);
+  }
+  const fading = (d.fatigueOn || []).map(k => PAID_PLATFORM_NAME[k] || k);
+  return { running, stopped, fading };
+}
 function fmt(n)  { return n>=1000000?'Rs. '+(n/1000000).toFixed(1)+'M':n>=1000?'Rs. '+(n/1000).toFixed(0)+'K':'Rs. '+n; }
 function fmtN(n) { return n>=1000000?(n/1000000).toFixed(1)+'M':n>=1000?(n/1000).toFixed(0)+'K':String(n); }
 
@@ -800,38 +834,97 @@ function playMark(size) {
   </svg>`;
 }
 
-function renderCards(data) {
-  const maxHook  = Math.max(...data.map(d=>d.hookRate||0),1);
-  const maxHold  = Math.max(...data.map(d=>d.holdRate||0),1);
-  const maxReach = Math.max(...data.map(d=>d.reach||0),1);
+/**
+ * The answers, before anything is expanded.
+ *
+ * Every rating on this panel used to live inside a collapsed section, so
+ * opening a creative told you its name and nothing about how it did until
+ * you went looking. These are the four things people open a creative to
+ * find out.
+ */
+function detailSummaryHTML(d) {
+  const ps = paidState(d);
+  const cell = (label, value, cls, sub) => `
+    <div class="dsum-cell">
+      <div class="dsum-label">${label}</div>
+      <div class="dsum-val ${cls || ''}">${value}</div>
+      ${sub ? `<div class="dsum-sub">${sub}</div>` : ''}
+    </div>`;
 
+  const org = d.bestOrgCqr || null;
+  const paid = (d.cqr && d.cqr !== 'Invalid') ? d.cqr : null;
+
+  let status, statusCls, statusSub = '';
+  if (ps.running.length) {
+    status = 'Running'; statusCls = 'dsum-pos';
+    statusSub = 'on ' + ps.running.join(' and ');
+  } else if (d.boostState === 'ended') {
+    status = 'Boost ended'; statusCls = '';
+    statusSub = d.boostEnded
+      ? new Date(d.boostEnded).toLocaleDateString('en-GB', { day: 'numeric', month: 'short' }) : '';
+  } else {
+    status = 'Never boosted'; statusCls = 'dsum-quiet';
+  }
+  if (ps.fading.length) {
+    statusCls = 'dsum-warn';
+    statusSub = (statusSub ? statusSub + ' · ' : '') + 'fatiguing on ' + ps.fading.join(' and ');
+  }
+
+  return `<div class="dsum">
+    ${cell('Organic CQR', org || 'Not rated', org ? 'dsum-' + cqrClass(org) : 'dsum-quiet')}
+    ${cell('Paid CQR', paid || (d.boostState === 'never' ? 'No spend yet' : 'Not rated'),
+           paid ? 'dsum-' + cqrClass(paid) : 'dsum-quiet')}
+    ${cell('Brainsuite', d.bsScore === null || d.bsScore === undefined ? 'Not scored' : d.bsScore,
+           d.bsScore === null || d.bsScore === undefined ? 'dsum-quiet' : '',
+           d.bsRating || (d.bsScore === null || d.bsScore === undefined ? '' : 'of 100'))}
+    ${cell('Paid status', status, statusCls, statusSub)}
+  </div>`;
+}
+
+function renderCards(data) {
   document.getElementById('grid-count').textContent = `${data.length} creatives`;
   document.getElementById('card-grid').innerHTML = data.map(d => {
-    const hkPct  = Math.round((d.hookRate/maxHook)*100);
-    const hdPct  = Math.round((d.holdRate/maxHold)*100);
-    const rchPct = Math.round((d.reach/maxReach)*100);
-    const isAct  = d.boostState === 'running';
-    const isNotBoosted = d.boostState === 'never';
-    const displayCqr = (d.cqr && d.cqr !== 'Invalid') ? d.cqr : d.bestOrgCqr || 'Invalid';
 
-    const platHTML = d.platform === 'both'
-      ? `<span style="color:var(--c-meta);font-weight:700;font-size:10px">META</span> <span style="color:var(--c-muted)">&amp;</span> <span style="color:var(--c-tt);font-weight:700;font-size:10px">TT</span>`
-      : `<span style="color:${d.platform==='tiktok'?'var(--c-tt)':'var(--c-meta)'};font-weight:700;font-size:10px">${d.platform==='tiktok'?'TT':'META'}</span>`;
 
-    const hlValFormatted = d.holdRate >= 1000 ? (d.holdRate/1000).toFixed(1)+'K' : (d.holdRate||0).toFixed(1);
     const kidCount = repurposesOf(d.id).length;
     const repTag  = d.isRepurposed
       ? `<span class="tag-repurposed">Repurposed</span>`
       : (kidCount ? `<span class="tag-lineage">${kidCount} repurposed</span>` : '');
     const valTag  = d.isValidated  ? `<span class="tag-validated">✓ Validated</span>` : '';
-    const durTag  = d.duration     ? `<span class="tag-duration">${d.duration}s</span>` : '';
+    const durTag  = d.duration     ? `<span class="tag-duration">${fmtDur(d.duration)}</span>` : '';
     const ctTag   = d.contentType  ? `<span class="tag-content-type">${d.contentType}</span>` : '';
+
+    // Type and sub-type in one chip. BS, Creator-led and Community page
+    // used to sit as three separate chips saying one thing between them.
+    const isBS = d.type === 'Brand Say';
+    const typeText = isBS
+      ? (d.creatorLed ? 'BS · Creator-led' : 'BS')
+      : (d.source === 'community' ? 'OS · Community' : 'OS');
+
+    // CQR per platform, which is what you came to the card to see. This
+    // used to be Reach, Hook and Hold, all three of them paid metrics, so
+    // on a creative that was never boosted it was three rows of zeros.
+    const cqrRows = ORG_PLATFORMS.filter(pl => d[pl.link] || d[pl.key]).map(pl => {
+      const v = (d[pl.key] || {}).cqr || null;
+      return `<div class="card-cqr-row">
+        <span class="card-cqr-plat">${pl.label}</span>
+        <span class="cqr-badge ${v ? cqrClass(v) : 'inv-bg'}">${v || 'Not rated'}</span>
+      </div>`;
+    }).join('');
+
+    const ps = paidState(d);
+    const paidBits = [];
+    if (ps.running.length) paidBits.push(`<span class="card-paid-live">Running on ${ps.running.join(' and ')}</span>`);
+    else if (d.boostState === 'ended') paidBits.push(`<span>Boost ended${d.boostEnded
+      ? ' ' + new Date(d.boostEnded).toLocaleDateString('en-GB',{day:'numeric',month:'short'}) : ''}</span>`);
+    else paidBits.push('<span>Never boosted</span>');
+    if (ps.fading.length) paidBits.push(
+      `<span class="card-paid-fade" title="Rated ${d.fatigueFrom} in its first week, ${d.fatigueTo} last week">Fatiguing on ${ps.fading.join(' and ')}</span>`);
 
     return `<div class="card ${d.id===selectedId?'selected':''}" data-press onclick="selectCard('${d.id}', this)">
       <div class="card-top">
-        <div class="card-plat"><div class="status-dot ${isAct?'status-active-dot':isNotBoosted?'':'status-stopped-dot'}"></div>${platHTML}</div>
-        <div style="display:flex;align-items:center;gap:3px;flex-wrap:wrap;justify-content:flex-end">
-          <span class="card-type ${d.type==='Brand Say'?'bs-tag':'os-tag'}">${d.type==='Brand Say'?'BS':'OS'}</span>${d.source==='community'?'<span class="card-type community-tag">Community page</span>':''}${d.creatorLed?'<span class="card-type creator-led-tag">Creator-led</span>':''}${repTag}
+        <div style="display:flex;align-items:center;gap:6px;flex-wrap:wrap">
+          <span class="card-type ${isBS?'bs-tag':'os-tag'}">${typeText}</span>${repTag}
         </div>
       </div>
       <div class="card-head">
@@ -843,15 +936,12 @@ function renderCards(data) {
           <div class="card-tags">${durTag}${ctTag}${valTag}</div>
         </div>
       </div>
-      <div class="mini-bars">
-        <div class="mini-bar-row"><div class="mini-bar-label">Reach</div><div class="mini-bar-track"><div class="mini-bar-fill" style="width:${rchPct}%;background:#000050"></div></div><div class="mini-bar-val">${fmtN(d.reach)}</div></div>
-        <div class="mini-bar-row"><div class="mini-bar-label">Hook</div><div class="mini-bar-track"><div class="mini-bar-fill" style="width:${hkPct}%;background:${hookColor(d.hookRate)}"></div></div><div class="mini-bar-val" style="color:${hookColor(d.hookRate)}">${(d.hookRate||0).toFixed(1)}%</div></div>
-        <div class="mini-bar-row"><div class="mini-bar-label">Hold</div><div class="mini-bar-track"><div class="mini-bar-fill" style="width:${hdPct}%;background:#000050"></div></div><div class="mini-bar-val">${hlValFormatted}</div></div>
-      </div>
+      ${cqrRows ? `<div class="card-cqr">
+        <div class="card-cqr-head">CQR</div>
+        ${cqrRows}
+      </div>` : ''}
     <div class="card-footer">
-      <span class="cqr-badge ${isNotBoosted?'inv-bg':cqrClass(displayCqr)}">${isNotBoosted?'Never boosted':displayCqr}</span>
-      ${d.boostState === 'ended' ? `<span class="card-type inv-bg" style="margin-left:4px">Boost ended${d.boostEnded ? ' ' + new Date(d.boostEnded).toLocaleDateString('en-GB',{day:'numeric',month:'short'}) : ''}</span>` : ''}
-      ${d.fatiguing && d.boostState === 'running' ? `<span class="card-type creator-led-tag" style="margin-left:4px" title="Rated ${d.fatigueFrom} in its first week, ${d.fatigueTo} last week">Fatiguing</span>` : ''}
+      <div class="card-paid">${paidBits.join('<span class="card-paid-sep">·</span>')}</div>
       ${typeof BS !== 'undefined' ? BS.cardBadge(d) : ''}
     </div>
     </div>`;
@@ -1068,12 +1158,12 @@ function getMetricsHTML(item, titleLabel) {
   if (!item) return '';
   const cqrColorClass = item.cqr === 'Good' ? 'cqr-good' : (item.cqr === 'Average' ? 'cqr-avg' : 'cqr-poor');
   const hlValFormatted = item.holdRate >= 1000 ? (item.holdRate/1000).toFixed(1)+'K' : (item.holdRate||0).toFixed(1);
-  const durLabel = item.duration ? `<div style="font-size:10px;color:var(--c-muted);margin-top:3px;">Duration: ${item.duration}s</div>` : '';
+  const durLabel = item.duration ? `<div style="font-size:10px;color:var(--c-muted);margin-top:3px;">Duration: ${fmtDur(item.duration)}</div>` : '';
   return `
     <div style="margin-bottom:12px;">
       <div style="font-size:11px;font-weight:700;color:var(--c-muted);margin-bottom:6px;text-transform:uppercase;">${titleLabel} Paid Stats</div>
       <div class="detail-metrics" style="margin-bottom:6px;">
-        <div class="dm"><div class="dm-label">CQR Rating</div><div class="dm-val big-cqr ${cqrColorClass}">${item.cqr||'—'}</div>${durLabel}</div>
+        <div class="dm"><div class="dm-label">CQR</div><div class="dm-val big-cqr ${cqrColorClass}">${item.cqr||'—'}</div>${durLabel}</div>
         <div class="dm"><div class="dm-label">Spend &amp; Reach</div><div class="dm-val">${fmt(item.spend)}</div><div style="font-size:10px;color:var(--c-muted);margin-top:2px;">Reach: ${fmtN(item.reach)} | Impr: ${fmtN(item.impressions)}</div></div>
         <div class="dm"><div class="dm-label">Hook Rate</div><div class="dm-val" style="color:${hookColor(item.hookRate)}">${(item.hookRate||0).toFixed(1)}%</div><div><span class="kpi-pill ${cqrClass(item.hookQual)}">${item.hookQual||'—'}</span></div></div>
         <div class="dm"><div class="dm-label">Hold Rate</div><div class="dm-val" style="color:#000050">${hlValFormatted}</div><div><span class="kpi-pill ${cqrClass(item.holdQual)}">${item.holdQual||'—'}</span></div></div>
@@ -1370,8 +1460,10 @@ function buildValidationHTML(v) {
       <div class="orgval-line ${r.negative_share >= 10 && r.enough ? '' : 'orgval-muted'}">${esc(r.verdict)}</div>`;
   };
 
-  // One row, because the rating is based on one signal. Which one it is
-  // depends on type: retention for Brand Say, interaction for Others Say.
+  // The rating leads. It is what people came for, and it used to be a
+  // small chip at the end of a row headed with the metric name, so the
+  // first thing read was "Retention" rather than the verdict. The metric
+  // is still here, underneath, as the working.
   const judgedRows = (p) => {
     const sg = p.signal;
     if (!sg) return '';
@@ -1380,10 +1472,14 @@ function buildValidationHTML(v) {
       ? '' : `<span class="orgval-pct">${sg.percentile}th percentile</span>`;
     const band = sg.band
       ? `<div class="orgval-band">Good from ${sg.band.good_gte}%, poor below ${sg.band.poor_lt}%</div>` : '';
-    return `<div class="orgval-rate">
+    const grade = sg.grade || null;
+    return `<div class="orgval-cqr">
+        <span class="orgval-cqr-label">CQR</span>
+        <span class="orgval-cqr-val ${grade ? cqrClass(grade) : 'inv-bg'}">${esc(grade || 'Not rated')}</span>
+      </div>
+      <div class="orgval-rate">
         <span class="organic-stat-label">${esc(sg.name)}</span>
-        <span class="orgval-rate-right">${place}<span class="organic-stat-val">${val}</span>${
-          sg.grade ? gradeChip(sg.grade) : `<span class="val-badge inv-bg">Not rated</span>`}</span>
+        <span class="orgval-rate-right">${place}<span class="organic-stat-val">${val}</span></span>
       </div>
       ${band}
       <div class="orgval-note">${esc(sg.note || '')}</div>`;
@@ -1401,7 +1497,7 @@ function buildValidationHTML(v) {
       ['Shares', p.shares],
     ].filter(([, v]) => v !== null && v !== undefined);
     const watch = p.avg_watch_time
-      ? `<div class="organic-stat-row"><span class="organic-stat-label">Avg watch</span><span class="organic-stat-val">${p.avg_watch_time}s</span></div>` : '';
+      ? `<div class="organic-stat-row"><span class="organic-stat-label">Avg watch</span><span class="organic-stat-val">${fmtDur(p.avg_watch_time)}</span></div>` : '';
     return `<div class="orgval-counts">${rows.map(([l, v]) =>
       `<div class="organic-stat-row"><span class="organic-stat-label">${l}</span><span class="organic-stat-val">${fmtN(v)}</span></div>`
     ).join('')}${watch}</div>`;
@@ -1485,7 +1581,7 @@ function buildCreativeBriefHTML(d) {
   const metaBits = [
     FORMAT_LABEL[d.format] ? `<span class="brief-tag">${FORMAT_LABEL[d.format]}</span>` : '',
     ROLE_LABEL[d.productRole] ? `<span class="brief-tag brief-tag-quiet">${ROLE_LABEL[d.productRole]}</span>` : '',
-    d.duration ? `<span class="brief-tag brief-tag-quiet">${d.duration}s</span>` : '',
+    d.duration ? `<span class="brief-tag brief-tag-quiet">${fmtDur(d.duration)}</span>` : '',
   ].filter(Boolean).join('');
 
   // The scene timeline, grouped into quarters so a 76-window video is
@@ -1644,7 +1740,7 @@ function renderDetail(d) {
   }
 
   const metaParts = [platLabel, d.campaign, d.month];
-  if (d.duration) metaParts.push(`${d.duration}s`);
+  if (d.duration) metaParts.push(fmtDur(d.duration));
   if (d.contentType) metaParts.push(d.contentType);
 
   document.getElementById('creativeModalContent').innerHTML = `
@@ -1659,20 +1755,25 @@ function renderDetail(d) {
         <button class="close-btn" data-press onclick="closeCreativeModal({target:{id:'creativeModalOverlay'}})">×</button>
       </div>
 
+      ${detailSummaryHTML(d)}
+
       ${buildLineageHTML(d)}
-      ${statsHTML}
-      ${buildCreativeBriefHTML(d)}
+
+      <details class="org-details" style="margin-top:12px;" open ontoggle="loadOrganicValidation(this, '${d.id}')">
+        <summary class="org-summary">Organic Performance <span style="color:var(--c-muted);font-size:10px;">Numbers, why this rating, and whether to boost ▼</span></summary>
+        <div class="org-content"
+             data-fallback="${encodeURIComponent(buildOrganicHTML(d))}"><div class="organic-empty">Loading…</div></div>
+      </details>
+
       ${typeof BS !== 'undefined' ? BS.detailSection(d) : ''}
+
+      ${statsHTML}
+
+      ${buildCreativeBriefHTML(d)}
 
       <details class="org-details" style="margin-top:12px;" ontoggle="loadFatigue(this, '${d.id}')">
         <summary class="org-summary">How it is holding up <span style="color:var(--c-muted);font-size:10px;">CQR over time, not lifetime ▼</span></summary>
         <div class="org-content"><div class="organic-empty">Loading…</div></div>
-      </details>
-
-      <details class="org-details" style="margin-top:12px;" ontoggle="loadOrganicValidation(this, '${d.id}')">
-        <summary class="org-summary">Organic Performance <span style="color:var(--c-muted);font-size:10px;">Numbers, why this rating, and whether to boost ▼</span></summary>
-        <div class="org-content"
-             data-fallback="${encodeURIComponent(buildOrganicHTML(d))}"><div class="organic-empty">Loading…</div></div>
       </details>
 
       <div style="margin-top:14px">${recsHTML}</div>
@@ -1682,6 +1783,11 @@ function renderDetail(d) {
         <div class="chart-box"><div class="chart-box-title">Performance radar</div><div class="chart-container" style="height:160px"><canvas id="radarChart"></canvas></div></div>
       </div>
     </div>`;
+
+  // Organic opens by default now, and ontoggle only fires when the open
+  // state changes, so an initially-open details never calls its loader.
+  const openOrg = document.querySelector('#creativeModalContent details.org-details[open]');
+  if (openOrg) loadOrganicValidation(openOrg, d.id);
 
   if (retChart)   retChart.destroy();
   if (radarChart) radarChart.destroy();
@@ -1919,7 +2025,7 @@ function showCreativeSummary(result) {
         Add this after the pipe in the ad name when the asset is boosted.
       </div>
     </div>
-    ${a.duration ? `<div class="organic-stat-row"><span class="organic-stat-label">Duration</span><span class="organic-stat-val">${a.duration}s</span></div>` : ''}
+    ${a.duration ? `<div class="organic-stat-row"><span class="organic-stat-label">Duration</span><span class="organic-stat-val">${fmtDur(a.duration)}</span></div>` : ''}
     ${failed ? `
       <div class="warning-badge" style="display:block;margin-top:12px">
         Analysis did not complete
@@ -2382,7 +2488,7 @@ function showQueuedConfirmation(result) {
         Add this after the pipe in the ad name when the asset is boosted.
       </div>
     </div>
-    ${a.duration ? `<div class="organic-stat-row"><span class="organic-stat-label">Duration</span><span class="organic-stat-val">${a.duration}s</span></div>` : ''}
+    ${a.duration ? `<div class="organic-stat-row"><span class="organic-stat-label">Duration</span><span class="organic-stat-val">${fmtDur(a.duration)}</span></div>` : ''}
     ${failed ? `
       <div class="warning-badge" style="display:block;margin-top:12px">
         Analysis did not complete

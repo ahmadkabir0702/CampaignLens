@@ -1411,3 +1411,67 @@ select:focus,.search-input:focus,.modal-input:focus{outline:none;border-color:va
   .session-lock{background:rgba(10,10,46,.75)}
   .session-lock-card{border:1px solid var(--ink-900)}
 }
+
+/* ---------- Card: CQR per platform --------------------------------
+   This replaced Reach, Hook and Hold. All three were paid metrics, so a
+   creative that had never been boosted showed three rows of zeros where
+   its ratings should have been. */
+.card-cqr{
+  padding-top:13px;border-top:1px solid var(--line-soft);
+  display:flex;flex-direction:column;gap:7px;
+}
+.card-cqr-head{
+  font:400 11px/1 var(--font);color:var(--ink-400);
+  letter-spacing:.07em;text-transform:uppercase;margin-bottom:1px;
+}
+.card-cqr-row{display:flex;align-items:center;justify-content:space-between;gap:10px}
+.card-cqr-plat{font:400 13px/1 var(--font);color:var(--ink-600)}
+
+/* Paid state, named per platform. "Running" on a creative that is live on
+   Meta and stopped on TikTok was telling half the story. */
+.card-paid{
+  display:flex;align-items:center;gap:7px;flex-wrap:wrap;
+  font:400 12.5px/18px var(--font);color:var(--ink-500);
+}
+.card-paid-sep{color:var(--ink-300)}
+.card-paid-live{color:var(--pos);font-weight:500}
+.card-paid-fade{color:var(--warn);font-weight:500}
+
+/* ---------- Organic panel: the rating leads ------------------------
+   It used to be a small chip at the end of a row headed "Retention", so
+   the first thing read was the metric rather than the verdict. */
+.orgval-cqr{
+  display:flex;align-items:baseline;gap:12px;
+  margin:2px 0 12px;
+}
+.orgval-cqr-label{
+  font:400 11px/1 var(--font);color:var(--ink-400);
+  letter-spacing:.07em;text-transform:uppercase;
+}
+.orgval-cqr-val{
+  font:500 26px/32px var(--font);letter-spacing:-.02em;
+  padding:2px 14px;border-radius:var(--r-pill);
+}
+
+/* ---------- Creative panel: the answers, before anything is expanded
+   Every rating used to live inside a collapsed section, so opening a
+   creative told you its name and nothing about how it did. */
+.dsum{
+  display:grid;grid-template-columns:repeat(auto-fit,minmax(150px,1fr));
+  gap:12px;margin:4px 0 18px;
+}
+.dsum-cell{
+  background:var(--canvas-2);border-radius:var(--r-card);padding:14px 16px;
+}
+.dsum-label{
+  font:400 11px/1 var(--font);color:var(--ink-400);
+  letter-spacing:.07em;text-transform:uppercase;margin-bottom:8px;
+}
+.dsum-val{font:400 22px/28px var(--font);letter-spacing:-.018em;color:var(--ink-900)}
+.dsum-sub{font:400 12px/17px var(--font);color:var(--ink-500);margin-top:4px}
+.dsum-good-bg{color:var(--pos)}
+.dsum-avg-bg{color:var(--warn)}
+.dsum-poor-bg{color:var(--neg)}
+.dsum-inv-bg,.dsum-quiet{color:var(--ink-400);font-size:17px;line-height:28px}
+.dsum-pos{color:var(--pos)}
+.dsum-warn{color:var(--warn)}
