@@ -507,9 +507,9 @@ function ordinal(n) {
 // The platforms a creative can carry organic numbers on, in the order the
 // panels list them.
 const ORG_PLATFORMS = [
-  { key: 'igOrganic', label: 'Instagram', link: 'igLink' },
-  { key: 'fbOrganic', label: 'Facebook',  link: 'fbLink' },
-  { key: 'ttOrganic', label: 'TikTok',    link: 'ttLink' },
+  { key: 'igOrganic', label: 'Instagram', link: 'igLink', short: 'IG', code: 'ig' },
+  { key: 'fbOrganic', label: 'Facebook',  link: 'fbLink', short: 'FB', code: 'fb' },
+  { key: 'ttOrganic', label: 'TikTok',    link: 'ttLink', short: 'TT', code: 'tt' },
 ];
 const PAID_PLATFORM_NAME = { meta: 'Meta', tiktok: 'TikTok' };
 
@@ -625,8 +625,50 @@ function render() {
  */
 const KPI_RANK = { Good: 0, Average: 1, Poor: 2 };
 // The ranked five behind each named tile, filled by renderKPIs and read
-// by the drawer.
+// by the drawer. Each entry is { d, grade, src } rather than a bare
+// creative, because the rating a tile ranked on is not always the one
+// stored on the creative — see ratedBy.
 const KPI_LISTS = { top: [], weak: [] };
+// What the drawer calls each list. Set by renderKPIs, because the weak
+// list's heading depends on whether anything was running to rank.
+const KPI_HEADS = { top: '', weak: '' };
+
+/**
+ * The best organic grade this creative earned, across its platforms.
+ *
+ * Grades and states share one column, so a platform can come back
+ * 'Boosted' or 'Too Early' where a rating would go. isGrade filters those
+ * out: a state is a reason there is no rating, not a bad one.
+ */
+function bestOrganicGrade(d) {
+  let best = null;
+  for (const pl of ORG_PLATFORMS) {
+    const g = (d[pl.key] || {}).cqr;
+    if (isGrade(g) && (best === null || KPI_RANK[g] < KPI_RANK[best])) best = g;
+  }
+  if (best) return best;
+  return isGrade(d.bestOrgCqr) ? d.bestOrgCqr : null;
+}
+
+/**
+ * The rating to judge a creative on, and where it came from.
+ *
+ * Paid first: once there is spend behind a post its organic numbers
+ * include paid delivery, so the paid rating is the only honest one. With
+ * no spend there is no paid rating, and the organic one is all there is.
+ *
+ * Both named tiles used to rank on d.cqr, which is the paid rating alone.
+ * On a brand that has not boosted anything yet that is undefined on every
+ * creative, so both tiles read "Nothing to show" against a dashboard full
+ * of rated creatives.
+ */
+function ratedBy(d) {
+  if (isGrade(d.cqr)) return { d, grade: d.cqr, src: 'paid' };
+  const o = bestOrganicGrade(d);
+  return o ? { d, grade: o, src: 'organic' } : null;
+}
+
+const srcWord = (src) => src === 'paid' ? 'paid rating' : 'organic rating';
 
 function renderKPIs(data) {
   const totalAssets = data.length;
@@ -655,22 +697,45 @@ function renderKPIs(data) {
   const fatiguing = data.filter(d => d.fatiguing && d.boostState === 'running').length;
 
   const thisMonth = new Date().toISOString().slice(0, 7);
-  const rank = d => (KPI_RANK[d.cqr] ?? 9);
+  // Every creative that has a rating at all, paid or organic.
+  const rated = data.map(ratedBy).filter(Boolean);
+  const rk = r => KPI_RANK[r.grade];
+  const newest = (a, b) => String(b.d.date || '').localeCompare(String(a.d.date || ''));
+
   // Five of each, kept for the drawer. The tile names the leader; the
   // rest are one click away rather than another page.
-  KPI_LISTS.top = data
-    .filter(d => (d.date || '').startsWith(thisMonth) && KPI_RANK[d.cqr] !== undefined)
-    .sort((a, b) => rank(a) - rank(b) || (b.reach || 0) - (a.reach || 0))
+  //
+  // "This month" is the current calendar month by publish date, so early
+  // in a month this is a short list and in a quiet month an empty one.
+  KPI_LISTS.top = rated
+    .filter(r => (r.d.date || '').startsWith(thisMonth))
+    .sort((a, b) => rk(a) - rk(b) || (b.d.reach || 0) - (a.d.reach || 0))
     .slice(0, 5);
+
   // Worst first, then most recent. Deliberately NOT by spend: the figure
   // on a creative is its lifetime spend, and most of that was spent while
   // it was still performing. Showing it against a creative that has only
   // just turned weak reads as money already wasted, which is not what
   // happened.
-  KPI_LISTS.weak = data
-    .filter(d => d.boostState === 'running' && KPI_RANK[d.cqr] !== undefined)
-    .sort((a, b) => rank(b) - rank(a) || String(b.date || '').localeCompare(String(a.date || '')))
-    .slice(0, 5);
+  //
+  // What is running on paid money comes first, because that is the one
+  // worth acting on today. With nothing boosted there is nothing live to
+  // rank, so the tile falls back to the weakest organically rated creative
+  // and renames itself instead of going blank.
+  const live = rated
+    .filter(r => r.src === 'paid' && r.d.boostState === 'running')
+    .sort((a, b) => rk(b) - rk(a) || newest(a, b));
+  const weakIsLive = live.length > 0;
+  KPI_LISTS.weak = weakIsLive ? live.slice(0, 5)
+    : rated.filter(r => r.src === 'organic')
+           .sort((a, b) => rk(b) - rk(a) || newest(a, b))
+           .slice(0, 5);
+
+  KPI_HEADS.top = 'Best rated this month';
+  KPI_HEADS.weak = weakIsLive
+    ? 'Weakest creatives currently running'
+    : 'Weakest on their organic numbers — nothing is boosted';
+
   const top = KPI_LISTS.top[0];
   const worst = KPI_LISTS.weak[0];
 
@@ -687,13 +752,18 @@ function renderKPIs(data) {
 
   // A named creative rather than a number, so it is wider and opens the
   // creative instead of filtering to it.
-  const namedTile = (label, d, sub, emptySub, key) => d ? `
+  //
+  // The sub-line always says which rating the ranking used. Without it the
+  // same tile silently means two different things depending on whether
+  // anything happens to be boosted.
+  const namedTile = (label, e, sub, emptySub, key) => e ? `
     <div class="kpi kpi-wide kpi-click" data-press
          onclick="toggleKpiList('${key}', this)" title="Show the top five">
       <div class="kpi-label">${label}<span class="kpi-more" id="kpi-more-${key}">${
         KPI_LISTS[key].length > 1 ? `+${KPI_LISTS[key].length - 1} more` : ''}</span></div>
-      <div class="kpi-named">${d.short || d.id}</div>
-      <div class="kpi-sub"><span class="cqr-badge ${cqrClass(d.cqr)}" style="margin-right:6px">${d.cqr}</span>${sub}</div>
+      <div class="kpi-named">${e.d.short || e.d.id}</div>
+      <div class="kpi-sub"><span class="cqr-badge ${cqrClass(e.grade)}" style="margin-right:6px">${e.grade}</span>${
+        srcWord(e.src)}${sub ? ' · ' + sub : ''}</div>
     </div>` : `
     <div class="kpi kpi-wide">
       <div class="kpi-label">${label}</div>
@@ -715,11 +785,12 @@ function renderKPIs(data) {
     tile('Fatiguing', fatiguing,
          fatiguing ? 'Running, and rated worse now than at launch' : 'Nothing running has slipped',
          { filter: 'FATIGUING', color: fatiguing ? 'var(--neg)' : undefined }) +
-    namedTile('Top creative this month', top, 'Best rated this month',
-              'No rated creative published this month yet', 'top') +
-    namedTile('Weakest live creative', worst,
-              worst ? (worst.campaign || 'Currently running') : '',
-              'Nothing rated is currently running', 'weak');
+    namedTile('Top creative this month', top,
+              top ? (top.d.campaign || '') : '',
+              'Nothing published this month has a rating yet', 'top') +
+    namedTile(weakIsLive ? 'Weakest live creative' : 'Weakest creative', worst,
+              worst ? (worst.d.campaign || '') : '',
+              'Nothing has a rating yet', 'weak');
 
   // A list left open while the data reloads would show stale rows.
   closeKpiList();
@@ -793,7 +864,11 @@ function toggleKpiList(key, trigger) {
 
   const rows = KPI_LISTS[key] || [];
   if (!rows.length) return closeKpiList();
-  const heading = key === 'top' ? 'Best rated this month' : 'Weakest creatives currently running';
+  const heading = KPI_HEADS[key] || '';
+  // Only worth saying per row when the list actually mixes the two. When
+  // every row came from the same place the tile above already says so, and
+  // repeating it five times is noise.
+  const mixedSrc = new Set(rows.map(r => r.src)).size > 1;
 
   // Visible before it is measured: scrollHeight on a display:none box is
   // zero, and this element ships hidden.
@@ -804,12 +879,14 @@ function toggleKpiList(key, trigger) {
       <button class="kpi-drawer-close" data-press onclick="closeKpiList()" title="Close">×</button>
     </div>
     <table class="kpi-list">
-      <tbody>${rows.map((d, i) => `
-        <tr data-press onclick="selectCard('${d.id}', this)" title="Open this creative">
+      <tbody>${rows.map((r, i) => `
+        <tr data-press onclick="selectCard('${r.d.id}', this)" title="Open this creative">
           <td class="kpi-list-n">${i + 1}</td>
-          <td>${d.short || d.id}<div class="fat-dates">${d.campaign || ''}${d.month ? ' · ' + d.month : ''}</div></td>
-          <td class="kpi-list-num">${key === 'weak' ? '' : fmtN(d.reach || 0) + ' reach'}</td>
-          <td class="kpi-list-grade"><span class="cqr-badge ${cqrClass(d.cqr)}">${d.cqr}</span></td>
+          <td>${r.d.short || r.d.id}<div class="fat-dates">${r.d.campaign || ''}${
+            r.d.month ? ' · ' + r.d.month : ''}</div></td>
+          <td class="kpi-list-num">${key === 'weak' ? '' : fmtN(r.d.reach || 0) + ' reach'}</td>
+          <td class="kpi-list-grade"><span class="cqr-badge ${cqrClass(r.grade)}">${r.grade}</span>
+            ${mixedSrc ? `<div class="kpi-list-src">${srcWord(r.src)}</div>` : ''}</td>
         </tr>`).join('')}
       </tbody>
     </table>
@@ -916,6 +993,33 @@ function playMark(size) {
  * you went looking. These are the four things people open a creative to
  * find out.
  */
+/**
+ * Replace the summary's organic cell with what the panel actually worked
+ * out.
+ *
+ * The dashboard payload carries the stored rating column, and for a post
+ * with spend behind it that column holds the STATE "Boosted" rather than
+ * a grade. The validation endpoint recomputes the grade from the same
+ * numbers, which is why the panel could show Average on two platforms
+ * while the strip above it said Not rated. Same data, one of them stale.
+ */
+function updateSummaryOrganic(v) {
+  const box = document.getElementById('dsum-organic');
+  if (!box || !v || !Array.isArray(v.platforms)) return;
+  const byCode = {};
+  for (const p of v.platforms) if (p && p.platform) byCode[p.platform] = p;
+  const cells = ORG_PLATFORMS.filter(pl => byCode[pl.code]).map(pl => {
+    const p = byCode[pl.code];
+    const g = p.cqr || null;
+    return `<span class="dsum-plat"><span class="dsum-plat-k">${pl.label}</span>${
+      isGrade(g) ? `<span class="dsum-plat-v ${cqrClass(g)}">${g}</span>`
+                 : `<span class="dsum-plat-v dsum-plat-none">${p.state ? stateShort(p.state) : '—'}</span>`}</span>`;
+  });
+  if (!cells.length) return;
+  const target = box.querySelector('.dsum-plats') || box.querySelector('.dsum-val');
+  if (target) target.outerHTML = `<div class="dsum-plats">${cells.join('')}</div>`;
+}
+
 function detailSummaryHTML(d) {
   const ps = paidState(d);
   const cell = (label, value, cls, sub) => `
@@ -925,7 +1029,18 @@ function detailSummaryHTML(d) {
       ${sub ? `<div class="dsum-sub">${sub}</div>` : ''}
     </div>`;
 
-  const org = d.bestOrgCqr || null;
+  // Deliberately per platform rather than one rolled-up value. A creative
+  // can be Average on Instagram and Poor on Facebook, and a single figure
+  // hides exactly the thing you would act on.
+  //
+  // It starts from the stored column, which returns the STATE for a
+  // boosted post rather than a grade, so it can read "Not rated" while
+  // the panel underneath shows Average. The panel recomputes the real
+  // grade server side, so when that response lands this cell is rewritten
+  // from it. See updateSummaryOrganic.
+  const orgCells = ORG_PLATFORMS
+    .filter(pl => d[pl.link] || d[pl.key])
+    .map(pl => ({ label: pl.label, v: (d[pl.key] || {}).cqr || null }));
   const paid = (d.cqr && d.cqr !== 'Invalid') ? d.cqr : null;
 
   let status, statusCls, statusSub = '';
@@ -945,7 +1060,14 @@ function detailSummaryHTML(d) {
   }
 
   return `<div class="dsum">
-    ${cell('Organic CQR', org || 'Not rated', org ? 'dsum-' + cqrClass(org) : 'dsum-quiet')}
+    <div class="dsum-cell" id="dsum-organic">
+      <div class="dsum-label">Organic CQR</div>
+      ${orgCells.length ? `<div class="dsum-plats">${orgCells.map(o =>
+        `<span class="dsum-plat"><span class="dsum-plat-k">${o.label}</span>${
+          isGrade(o.v) ? `<span class="dsum-plat-v ${cqrClass(o.v)}">${o.v}</span>`
+                       : `<span class="dsum-plat-v dsum-plat-none">${o.v ? stateShort(o.v) : '—'}</span>`}</span>`
+        ).join('')}</div>` : `<div class="dsum-val dsum-quiet">Not rated</div>`}
+    </div>
     ${cell('Paid CQR', paid || (d.boostState === 'never' ? 'No spend yet' : 'Not rated'),
            paid ? 'dsum-' + cqrClass(paid) : 'dsum-quiet')}
     ${cell('Brainsuite', d.bsScore === null || d.bsScore === undefined ? 'Not scored' : d.bsScore,
@@ -1397,7 +1519,12 @@ async function loadOrganicValidation(detailsEl, creativeId) {
   if (!box || box.dataset.loadedFor === creativeId) return;
 
   if (orgValCache.has(creativeId)) {
-    box.innerHTML = buildValidationHTML(orgValCache.get(creativeId));
+    const cached = orgValCache.get(creativeId);
+    box.innerHTML = buildValidationHTML(cached);
+    // The summary strip is rebuilt with the panel every time it opens, so
+    // it starts from the stored column again and needs the recomputed
+    // grades put back on reopen as much as on first load.
+    updateSummaryOrganic(cached);
     box.dataset.loadedFor = creativeId;
     return;
   }
@@ -1408,6 +1535,7 @@ async function loadOrganicValidation(detailsEl, creativeId) {
     if (!res.ok) throw new Error(panelError(res, data));
     orgValCache.set(creativeId, data);
     box.innerHTML = buildValidationHTML(data);
+    updateSummaryOrganic(data);
     box.dataset.loadedFor = creativeId;
   } catch (err) {
     // The numbers themselves came with the dashboard payload, so a failed
@@ -1560,29 +1688,34 @@ function buildValidationHTML(v) {
     const place = sg.percentile === null || sg.percentile === undefined
       ? '' : `<span class="orgval-pct">${ordinal(sg.percentile)} percentile</span>`;
     const band = sg.band
-      ? `<div class="orgval-band">Good from ${sg.band.good_gte}%, poor below ${sg.band.poor_lt}%</div>` : '';
-    const grade = sg.grade || null;
-    // A state is not a rating. Putting "Not rated" in the slot where the
-    // verdict goes, at verdict size, makes the absence of a rating look
-    // like one. The state and its reason take the space instead.
+      ? `Good from ${sg.band.good_gte}%, poor below ${sg.band.poor_lt}%` : '';
+    // No rating block here. The platform header four rows up already
+    // carries this creative's CQR for this platform, so printing it again
+    // in a large pill said "Average" twice in the same card and was the
+    // ugliest thing on the panel. What belongs here is the working.
     const st = (plat || {}).state || null;
-    const head = grade
-      ? `<span class="orgval-cqr-val ${cqrClass(grade)}">${esc(grade)}</span>`
-      : `<span class="orgval-cqr-none">${esc(st ? stateShort(st) : 'No rating yet')}</span>`;
-    const why = !grade
+    const why = !sg.grade
       ? `<div class="orgval-note">${esc((plat || {}).state_note || STATE_WHY[st] || 'Not enough has come back to rate this yet.')}</div>`
       : '';
-    return `<div class="orgval-cqr">
-        <span class="orgval-cqr-label">CQR</span>
-        ${head}
+    // The metric is the one number the rating is actually made of, so it
+    // is the only thing in the card set large. Everything else here is
+    // the working, and reads as such.
+    return `${why}
+      <div class="orgval-metric">
+        <span class="orgval-metric-k">${esc(sg.name)}${place}</span>
+        <span class="orgval-metric-v">${val}</span>
       </div>
-      ${why}
-      <div class="orgval-rate">
-        <span class="organic-stat-label">${esc(sg.name)}</span>
-        <span class="orgval-rate-right">${place}<span class="organic-stat-val">${val}</span></span>
-      </div>
-      ${band}
-      <div class="orgval-note">${esc(sg.note || '')}</div>`;
+      ${band ? `<div class="orgval-band">${band}</div>` : ''}
+      ${sg.note ? `<div class="orgval-note">${esc(sg.note)}</div>` : ''}`;
+  };
+
+  // "Boost — " with nothing after the dash is what an empty recommendation
+  // used to render as. The dash is punctuation between two things, so it
+  // only belongs here when there are two.
+  const recLine = (rec) => {
+    const r = rec || {};
+    const head = ACTION_LABEL[r.action] || 'Recommendation';
+    return `<b>${head}</b>${r.text ? ' — ' + esc(r.text) : ''}`;
   };
 
   // The raw counts, in each platform's own naming.
@@ -1607,7 +1740,7 @@ function buildValidationHTML(v) {
     if (p.missing) {
       return `<div class="orgval-plat">
         <div class="orgval-plat-head"><span class="organic-platform" style="margin:0">${esc(p.label)}</span><span class="val-badge inv-bg">No data</span></div>
-        <div class="orgval-rec-wrap"><div class="orgval-rec orgval-rec-none"><b>${ACTION_LABEL[p.recommendation.action]}</b> — ${esc(p.recommendation.text)}</div></div>
+        <div class="orgval-rec-wrap"><div class="orgval-rec orgval-rec-none">${recLine(p.recommendation)}</div></div>
       </div>`;
     }
     const velocity = p.velocity && p.velocity.text
@@ -1618,6 +1751,7 @@ function buildValidationHTML(v) {
     const standing = p.standing && p.standing.words
       ? `<div class="orgval-line"><b>Where it sits:</b> ${esc(p.standing.words)}, against ${p.standing.peers} other posts of the same kind.</div>`
       : `<div class="orgval-line orgval-muted">Too few other organic posts in the last 90 days to place this one against them.</div>`;
+    const judged = judgedRows(p, p);
     const recClass = p.recommendation.action === 'boost' ? 'orgval-rec-go'
                    : p.recommendation.action === 'hold' ? 'orgval-rec-stop'
                    : ['wait', 'no_data', 'no_grade'].includes(p.recommendation.action) ? 'orgval-rec-none'
@@ -1627,18 +1761,20 @@ function buildValidationHTML(v) {
       <div class="orgval-plat-head">
         <span class="organic-platform" style="margin:0">${esc(p.label)}</span>
         <span class="orgval-chips">
-          ${p.cqr ? gradeChip(p.cqr) : ''}
-          ${p.state ? `<span class="val-badge inv-bg" title="${esc(p.state_note || '')}">${esc(p.state)}</span>`
-                    : (p.cqr ? '' : `<span class="val-badge inv-bg">Not rated</span>`)}
+          ${p.cqr
+            ? `<span class="orgval-grade ${cqrClass(p.cqr)}">${esc(p.cqr)}</span>`
+            : `<span class="orgval-grade orgval-grade-none">${esc(p.state ? stateShort(p.state) : 'Not rated')}</span>`}
+          ${p.cqr && p.state
+            ? `<span class="val-badge inv-bg" title="${esc(p.state_note || '')}">${esc(p.state)}</span>` : ''}
         </span>
       </div>
       ${countsBlock(p)}
       ${reactionsBlock(p)}
-      ${judgedRows(p, p) ? `<div class="orgval-divider">How it is judged</div>${judgedRows(p, p)}` : ''}
-      <div class="orgval-line"><b>Why:</b> ${esc(p.reason)}</div>
+      ${judged ? `<div class="orgval-divider">How it is judged</div>${judged}` : ''}
+      ${p.reason ? `<div class="orgval-line"><b>Why:</b> ${esc(p.reason)}</div>` : ''}
       ${standing}
       ${velocity}
-      <div class="orgval-rec-wrap"><div class="orgval-rec ${recClass}"><b>${ACTION_LABEL[p.recommendation.action] || 'Recommendation'}</b> — ${esc(p.recommendation.text)}</div></div>
+      <div class="orgval-rec-wrap"><div class="orgval-rec ${recClass}">${recLine(p.recommendation)}</div></div>
     </div>`;
   }).join('');
 
@@ -1647,9 +1783,11 @@ function buildValidationHTML(v) {
     ? `<div class="orgval-flags">${v.flags.map(f => `<div>${esc(f)}</div>`).join('')}</div>` : '';
 
   const w = v.winners || {};
-  const winners = `<div class="orgval-winners">
+  // A heading over nothing is still an empty box on the page. It only
+  // earns its space once there is something under it.
+  const winners = (!w.verdict && !(w.matches || []).length) ? '' : `<div class="orgval-winners">
     <div class="orgval-winners-head">What it has in common with your paid winners</div>
-    <div class="orgval-line">${esc(w.verdict || '')}</div>
+    ${w.verdict ? `<div class="orgval-line">${esc(w.verdict)}</div>` : ''}
     ${(w.matches || []).length
       ? `<ul class="orgval-list">${w.matches.slice(0, 5).map(m => `<li class="${m.helps ? 'orgval-supports' : 'orgval-against'}">
           <b>${esc(m.label)}</b> <span class="orgval-when">${m.timing === 'opening' ? 'opening' : 'whole video'}</span><br>
