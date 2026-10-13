@@ -283,7 +283,7 @@
 
     <div class="nav-tabs">
       <div class="nav-item active" data-press onclick="setNav('creatives',this)">Creative Hub</div>
-      <div class="nav-item" data-press onclick="setNav('kpi',this)">Campaign KPIs</div>
+      <div class="nav-item" data-press onclick="setNav('kpi',this)">Media Summary</div>
       <div class="nav-item" data-press onclick="setNav('creators',this)">Creators</div>
       <div class="nav-item" data-press onclick="setNav('pretests',this)">Pre-tests</div>
       <!-- Temporarily hidden, uncomment to restore:
@@ -588,7 +588,7 @@ window.addEventListener('load', () => setTimeout(syncFilterPills, 400));
       document.getElementById('creative-filters')?.classList.toggle('hidden', !creatives);
       document.getElementById('kpi-filters-bar')?.classList.toggle('hidden', !kpi);
       document.getElementById('filter-pills')?.classList.toggle('hidden', !creatives);
-      if (kpi && typeof renderKPIFilters === 'function') renderKPIFilters();
+      if (kpi && typeof msRenderFilters === 'function') msRenderFilters();
       if (signoff && typeof Signoff !== 'undefined') Signoff.render();
     };
   })();
