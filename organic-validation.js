@@ -216,13 +216,22 @@ function reasonFor({ rated, state, signal, band, signalName, type }) {
 // ---------------------------------------------------------------------
 //  2. Where it sits against the brand's own organic
 // ---------------------------------------------------------------------
+/**
+ * Where it sits against the brand's own posts.
+ *
+ * This is a different question from the rating, and the two can disagree
+ * honestly: the rating is against a fixed threshold, the standing is
+ * against your own output. A post read "Good" and "among your weakest"
+ * at the same time, which looks like a contradiction until you know
+ * that. The wording now says which comparison it is making.
+ */
 function standingWords(percentile) {
   if (percentile === null) return null;
-  if (percentile >= 90) return 'among your strongest organic posts this quarter';
-  if (percentile >= 70) return 'in the stronger half of your organic this quarter';
-  if (percentile >= 40) return 'around your organic average this quarter';
-  if (percentile >= 20) return 'in the weaker half of your organic this quarter';
-  return 'among your weakest organic posts this quarter';
+  if (percentile >= 90) return 'ahead of almost all your own organic posts this quarter';
+  if (percentile >= 70) return 'ahead of most of your own organic posts this quarter';
+  if (percentile >= 40) return 'about level with your own organic posts this quarter';
+  if (percentile >= 20) return 'behind most of your own organic posts this quarter';
+  return 'behind almost all your own organic posts this quarter';
 }
 
 function placeAmong(value, peers) {
@@ -255,7 +264,7 @@ function recommendFor({ platLabel, rated, state, standing, delivered, tooNew, mi
   }
   if (!delivered) {
     return { action: 'wait', confidence: 'none',
-      text: `Too little delivery on ${platLabel} to judge yet (under ${VIEW_FLOOR.toLocaleString()} views). Wait rather than act on this.` };
+      text: `Too little delivery on ${platLabel} to judge yet. Wait rather than act on this.` };
   }
   if (!rated) {
     return { action: 'no_grade', confidence: 'none',
@@ -644,7 +653,10 @@ async function buildValidation(brandId, creativeId) {
     flags.push(`No numbers yet for ${missingPlats.join(' and ')}. Nothing here says the post did badly, only that it has not been measured.`);
   }
   if (hoursSince !== null && hoursSince < MIN_HOURS) flags.push(`Posted ${Math.max(1, Math.round(hoursSince))} hours ago. Organic distribution is still running.`);
-  for (const p of platforms) if (!p.missing && !p.delivered) flags.push(`${p.label}: ${(p.views || 0).toLocaleString()} views is below the ${VIEW_FLOOR.toLocaleString()}-view floor, so the rating is not yet a signal.`);
+  // The floor still decides whether a rating counts; it just no longer
+  // announces itself with the number. "656 views is below the 1,000-view
+  // floor" tells people how to game it and reads like a system message.
+  for (const p of platforms) if (!p.missing && !p.delivered) flags.push(`${p.label}: too few views so far for the rating to mean much. Give it time rather than acting on it.`);
 
   return {
     creative_id: c.creative_id,
