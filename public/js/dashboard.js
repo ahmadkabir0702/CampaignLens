@@ -463,6 +463,47 @@ function fmtDur(sec) {
   return (n < 1 ? n.toFixed(1) : String(Math.round(n))) + 's';
 }
 
+/**
+ * Good, Average and Poor are ratings. Everything else the rating column
+ * can hold is a REASON THERE IS NO RATING: Boosted, Too Early, No Views
+ * and the rest. Printing those under a heading that says CQR makes
+ * "Boosted" look like a grade, which is how a boosted creative ended up
+ * appearing to be rated Boosted on all three platforms.
+ */
+const CQR_GRADES = new Set(['Good', 'Average', 'Poor']);
+const isGrade = (v) => CQR_GRADES.has(v);
+
+// Said in the space a card has.
+const STATE_SHORT = {
+  'Boosted':       'Mixed with paid',
+  'Too Early':     'Too early',
+  'Counts Hidden': 'Counts hidden',
+  'No Views':      'No views yet',
+  'No Duration':   'No length on file',
+  'No Watch Time': 'No watch time',
+  'No Threshold':  'No benchmark set',
+};
+const STATE_WHY = {
+  'Boosted':       'Spend is behind this post, so its organic numbers include paid delivery. The paid rating is the one that applies.',
+  'Too Early':     'Posted too recently to read anything from yet.',
+  'Counts Hidden': 'The account has hidden its like counts.',
+  'No Views':      'No views have come back for this post.',
+  'No Duration':   'The video length is missing, so retention cannot be worked out.',
+  'No Watch Time': 'No average watch time came back, which is what the rating needs.',
+  'No Threshold':  'No benchmark is set for this platform.',
+};
+const stateShort = (v) => STATE_SHORT[v] || v;
+
+/** 1st, 2nd, 3rd, 41st. It was printing "41th". */
+function ordinal(n) {
+  const i = Math.abs(Math.round(Number(n)));
+  if (!isFinite(i)) return String(n);
+  const rem100 = i % 100, rem10 = i % 10;
+  const suffix = (rem100 >= 11 && rem100 <= 13) ? 'th'
+    : rem10 === 1 ? 'st' : rem10 === 2 ? 'nd' : rem10 === 3 ? 'rd' : 'th';
+  return i + suffix;
+}
+
 // The platforms a creative can carry organic numbers on, in the order the
 // panels list them.
 const ORG_PLATFORMS = [
@@ -471,6 +512,39 @@ const ORG_PLATFORMS = [
   { key: 'ttOrganic', label: 'TikTok',    link: 'ttLink' },
 ];
 const PAID_PLATFORM_NAME = { meta: 'Meta', tiktok: 'TikTok' };
+
+/**
+ * Where the money is, as a thing rather than a sentence.
+ *
+ * This was the plain string "Running on Meta and TikTok", which said the
+ * right thing and looked like a log line. A live dot, the state, and the
+ * platforms as their own chips reads at a glance on a grid.
+ *
+ * No platform logos: Instagram, Facebook and TikTok marks are their
+ * trademarks and are not in the repo. If the official SVGs are dropped
+ * into public/img/ they can be wired in here.
+ */
+function statusPill(d) {
+  const ps = paidState(d);
+  // One chip, names joined, rather than several that butt up against
+  // each other with no separator.
+  const chips = (names) => `<span class="cstat-plat">${names.join(' · ')}</span>`;
+  let main;
+  if (ps.running.length) {
+    main = `<span class="cstat cstat-live"><span class="cstat-dot"></span>Ad running${chips(ps.running)}</span>`;
+  } else if (d.boostState === 'ended') {
+    const when = d.boostEnded
+      ? new Date(d.boostEnded).toLocaleDateString('en-GB', { day: 'numeric', month: 'short' }) : '';
+    main = `<span class="cstat cstat-off"><span class="cstat-dot"></span>Boost ended${
+      when ? `<span class="cstat-plat">${when}</span>` : ''}</span>`;
+  } else {
+    main = `<span class="cstat cstat-none"><span class="cstat-dot"></span>Never boosted</span>`;
+  }
+  const fade = ps.fading.length
+    ? `<span class="cstat cstat-fade" title="Rated ${d.fatigueFrom} in its first week, ${d.fatigueTo} last week">Fatiguing${chips(ps.fading)}</span>`
+    : '';
+  return `<div class="card-status">${main}${fade}</div>`;
+}
 
 /** Where this creative is live, where it has stopped, where it is fading. */
 function paidState(d) {
@@ -904,22 +978,33 @@ function renderCards(data) {
     // CQR per platform, which is what you came to the card to see. This
     // used to be Reach, Hook and Hold, all three of them paid metrics, so
     // on a creative that was never boosted it was three rows of zeros.
-    const cqrRows = ORG_PLATFORMS.filter(pl => d[pl.link] || d[pl.key]).map(pl => {
-      const v = (d[pl.key] || {}).cqr || null;
-      return `<div class="card-cqr-row">
-        <span class="card-cqr-plat">${pl.label}</span>
-        <span class="cqr-badge ${v ? cqrClass(v) : 'inv-bg'}">${v || 'Not rated'}</span>
+    const orgVals = ORG_PLATFORMS
+      .filter(pl => d[pl.link] || d[pl.key])
+      .map(pl => ({ label: pl.label, v: (d[pl.key] || {}).cqr || null }));
+    const row = (label, v) => `<div class="card-cqr-row">
+        <span class="card-cqr-plat">${label}</span>
+        ${isGrade(v)
+          ? `<span class="cqr-badge ${cqrClass(v)}">${v}</span>`
+          : `<span class="card-cqr-state" title="${escapeHtml(STATE_WHY[v] || '')}">${v ? stateShort(v) : 'Not rated yet'}</span>`}
       </div>`;
-    }).join('');
 
-    const ps = paidState(d);
-    const paidBits = [];
-    if (ps.running.length) paidBits.push(`<span class="card-paid-live">Running on ${ps.running.join(' and ')}</span>`);
-    else if (d.boostState === 'ended') paidBits.push(`<span>Boost ended${d.boostEnded
-      ? ' ' + new Date(d.boostEnded).toLocaleDateString('en-GB',{day:'numeric',month:'short'}) : ''}</span>`);
-    else paidBits.push('<span>Never boosted</span>');
-    if (ps.fading.length) paidBits.push(
-      `<span class="card-paid-fade" title="Rated ${d.fatigueFrom} in its first week, ${d.fatigueTo} last week">Fatiguing on ${ps.fading.join(' and ')}</span>`);
+    // When no platform has a rating and they all give the same reason,
+    // say it once. Three identical grey "Boosted" chips under a heading
+    // that says CQR is the worst of both: it looks like a rating and it
+    // repeats itself.
+    const states = [...new Set(orgVals.map(o => o.v))];
+    const sharedState = !orgVals.some(o => isGrade(o.v)) && states.length === 1 && states[0]
+      ? states[0] : null;
+    const orgBlock = !orgVals.length ? '' : (sharedState
+      ? `<div class="card-cqr-note" title="${escapeHtml(STATE_WHY[sharedState] || '')}">${
+          escapeHtml(STATE_WHY[sharedState] || stateShort(sharedState))}</div>`
+      : orgVals.map(o => row(o.label, o.v)).join(''));
+
+    // The rating that does apply once there is spend behind it.
+    const paidVals = [['meta', 'Meta'], ['tiktok', 'TikTok']]
+      .filter(([k]) => (d.paidBy || {})[k] && isGrade(d.paidBy[k].cqr))
+      .map(([k, label]) => row(label, d.paidBy[k].cqr)).join('');
+
 
     return `<div class="card ${d.id===selectedId?'selected':''}" data-press onclick="selectCard('${d.id}', this)">
       <div class="card-top">
@@ -936,12 +1021,16 @@ function renderCards(data) {
           <div class="card-tags">${durTag}${ctTag}${valTag}</div>
         </div>
       </div>
-      ${cqrRows ? `<div class="card-cqr">
-        <div class="card-cqr-head">CQR</div>
-        ${cqrRows}
+      ${orgBlock ? `<div class="card-cqr">
+        <div class="card-cqr-head">Organic CQR</div>
+        ${orgBlock}
+      </div>` : ''}
+      ${paidVals ? `<div class="card-cqr">
+        <div class="card-cqr-head">Paid CQR</div>
+        ${paidVals}
       </div>` : ''}
     <div class="card-footer">
-      <div class="card-paid">${paidBits.join('<span class="card-paid-sep">·</span>')}</div>
+      ${statusPill(d)}
       ${typeof BS !== 'undefined' ? BS.cardBadge(d) : ''}
     </div>
     </div>`;
@@ -1437,7 +1526,7 @@ function buildValidationHTML(v) {
     if (part.status === 'no_data' && !expected) return '';
     const val = part.rate === null || part.rate === undefined ? '—' : `${part.rate}${unit}`;
     const place = part.percentile === null || part.percentile === undefined
-      ? '' : `<span class="orgval-pct">${part.percentile}th percentile</span>`;
+      ? '' : `<span class="orgval-pct">${ordinal(part.percentile)} percentile</span>`;
     return `<div class="orgval-rate">
       <span class="organic-stat-label">${label}</span>
       <span class="orgval-rate-right">${place}<span class="organic-stat-val">${val}</span>${part.grade ? gradeChip(part.grade) : statusChip(part.status)}</span>
@@ -1464,19 +1553,30 @@ function buildValidationHTML(v) {
   // small chip at the end of a row headed with the metric name, so the
   // first thing read was "Retention" rather than the verdict. The metric
   // is still here, underneath, as the working.
-  const judgedRows = (p) => {
+  const judgedRows = (p, plat) => {
     const sg = p.signal;
     if (!sg) return '';
     const val = sg.value === null || sg.value === undefined ? '—' : `${sg.value}%`;
     const place = sg.percentile === null || sg.percentile === undefined
-      ? '' : `<span class="orgval-pct">${sg.percentile}th percentile</span>`;
+      ? '' : `<span class="orgval-pct">${ordinal(sg.percentile)} percentile</span>`;
     const band = sg.band
       ? `<div class="orgval-band">Good from ${sg.band.good_gte}%, poor below ${sg.band.poor_lt}%</div>` : '';
     const grade = sg.grade || null;
+    // A state is not a rating. Putting "Not rated" in the slot where the
+    // verdict goes, at verdict size, makes the absence of a rating look
+    // like one. The state and its reason take the space instead.
+    const st = (plat || {}).state || null;
+    const head = grade
+      ? `<span class="orgval-cqr-val ${cqrClass(grade)}">${esc(grade)}</span>`
+      : `<span class="orgval-cqr-none">${esc(st ? stateShort(st) : 'No rating yet')}</span>`;
+    const why = !grade
+      ? `<div class="orgval-note">${esc((plat || {}).state_note || STATE_WHY[st] || 'Not enough has come back to rate this yet.')}</div>`
+      : '';
     return `<div class="orgval-cqr">
         <span class="orgval-cqr-label">CQR</span>
-        <span class="orgval-cqr-val ${grade ? cqrClass(grade) : 'inv-bg'}">${esc(grade || 'Not rated')}</span>
+        ${head}
       </div>
+      ${why}
       <div class="orgval-rate">
         <span class="organic-stat-label">${esc(sg.name)}</span>
         <span class="orgval-rate-right">${place}<span class="organic-stat-val">${val}</span></span>
@@ -1527,13 +1627,14 @@ function buildValidationHTML(v) {
       <div class="orgval-plat-head">
         <span class="organic-platform" style="margin:0">${esc(p.label)}</span>
         <span class="orgval-chips">
-          ${p.cqr ? gradeChip(p.cqr) : `<span class="val-badge inv-bg">Not rated</span>`}
-          ${p.state ? `<span class="val-badge inv-bg" title="${esc(p.state_note || '')}">${esc(p.state)}</span>` : ''}
+          ${p.cqr ? gradeChip(p.cqr) : ''}
+          ${p.state ? `<span class="val-badge inv-bg" title="${esc(p.state_note || '')}">${esc(p.state)}</span>`
+                    : (p.cqr ? '' : `<span class="val-badge inv-bg">Not rated</span>`)}
         </span>
       </div>
       ${countsBlock(p)}
       ${reactionsBlock(p)}
-      ${judgedRows(p) ? `<div class="orgval-divider">How it is judged</div>${judgedRows(p)}` : ''}
+      ${judgedRows(p, p) ? `<div class="orgval-divider">How it is judged</div>${judgedRows(p, p)}` : ''}
       <div class="orgval-line"><b>Why:</b> ${esc(p.reason)}</div>
       ${standing}
       ${velocity}
