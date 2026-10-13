@@ -1371,20 +1371,43 @@ select:focus,.search-input:focus,.modal-input:focus{outline:none;border-color:va
   .kpi-list td{border-bottom-color:var(--ink-300)}
 }
 
-/* An ended session, said once at the top of the page rather than as a
-   bare "Not authenticated" inside whichever panel happened to ask the
-   server first. */
-.session-gone{
-  position:fixed;left:0;right:0;bottom:0;z-index:300;
-  display:flex;align-items:center;justify-content:center;gap:16px;flex-wrap:wrap;
-  padding:14px 24px;
-  background:var(--ink-900);color:#fff;
-  font:400 14px/20px var(--font);
-  box-shadow:0 -6px 24px rgba(0,0,80,.22);
+/* An ended session. This blocks rather than informs: nothing on the page
+   is live any more and nothing done on it will save, so carrying on is
+   working into a dead end. Above every modal in the app, which top out
+   at 120. */
+.session-lock{
+  position:fixed;inset:0;z-index:9999;
+  display:flex;align-items:center;justify-content:center;padding:24px;
+  background:rgba(10,10,46,.52);
+  opacity:var(--lock-scrim,1);
 }
-.session-gone button{
-  background:#fff;color:var(--ink-900);border:0;
-  padding:8px 16px;border-radius:var(--r-btn);
-  font:500 14px var(--font);cursor:pointer;flex-shrink:0;
+.session-lock-card{
+  background:var(--white);border-radius:var(--r-card);
+  box-shadow:0 24px 60px -12px rgba(0,0,80,.38),0 4px 12px rgba(0,0,80,.10);
+  padding:30px 32px 26px;max-width:430px;width:100%;text-align:left;
+  transform:translateY(var(--lock-y,0px)) scale(var(--lock-s,1));
+  will-change:transform;
 }
-.session-gone button:hover{background:var(--canvas-2)}
+.session-lock-title{
+  font:400 23px/30px var(--font);color:var(--ink-900);letter-spacing:-.019em;
+  margin-bottom:9px;
+}
+.session-lock-body{
+  font:400 14.5px/22px var(--font);color:var(--ink-600);margin-bottom:22px;
+}
+.session-lock-btn{
+  display:inline-flex;align-items:center;justify-content:center;
+  height:42px;padding:0 22px;border:0;border-radius:var(--r-btn);
+  background:var(--navy);color:#fff;cursor:pointer;
+  font:500 14.5px var(--font);letter-spacing:.002em;
+}
+.session-lock-btn:hover{background:#1A1A6B}
+.session-lock-btn:focus-visible{outline:none;box-shadow:0 0 0 3px rgba(0,0,80,.30)}
+
+@media (prefers-reduced-motion:reduce){
+  .session-lock-card{transform:none!important}
+}
+@media (prefers-contrast:more){
+  .session-lock{background:rgba(10,10,46,.75)}
+  .session-lock-card{border:1px solid var(--ink-900)}
+}

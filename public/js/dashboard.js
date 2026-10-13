@@ -14,16 +14,68 @@
   const realFetch = window.fetch.bind(window);
   let announced = false;
 
+  /**
+   * Lock the page.
+   *
+   * This was a bar along the bottom, which is the wrong weight for what it
+   * says. Nothing on screen is loading any more and nothing the person does
+   * will save, so letting them carry on clicking is letting them work into
+   * a dead end. It blocks instead: scrim over everything, one button, no
+   * way past it, and the page still visible underneath so they can see
+   * where they were.
+   */
   function announce() {
     if (announced) return;
     announced = true;
-    const bar = document.createElement('div');
-    bar.className = 'session-gone';
-    bar.innerHTML = `<span>Your session has ended. Anything on screen is from before it
-      expired, and nothing new will load until you sign in again.</span>
-      <button class="modal-btn modal-confirm" data-press>Sign in again</button>`;
-    bar.querySelector('button').onclick = () => { window.location = '/login'; };
-    (document.body || document.documentElement).appendChild(bar);
+
+    const lock = document.createElement('div');
+    lock.className = 'session-lock';
+    lock.setAttribute('role', 'alertdialog');
+    lock.setAttribute('aria-modal', 'true');
+    lock.setAttribute('aria-labelledby', 'session-lock-title');
+    lock.innerHTML = `
+      <div class="session-lock-card">
+        <div class="session-lock-title" id="session-lock-title">Your session has ended</div>
+        <p class="session-lock-body">
+          You have been signed out, so nothing on this page is live any more and
+          nothing you do here will be saved. Sign in again to carry on.
+        </p>
+        <button class="session-lock-btn" data-press type="button">Sign in again</button>
+      </div>`;
+
+    const go = () => { window.location = '/login'; };
+    const btn = lock.querySelector('button');
+    btn.onclick = go;
+
+    (document.body || document.documentElement).appendChild(lock);
+
+    // Nothing behind this should be reachable: not by scrolling, not by
+    // tabbing to a control that would only fail, not by Escape.
+    try { document.body.style.overflow = 'hidden'; } catch (e) {}
+    setTimeout(() => { try { btn.focus(); } catch (e) {} }, 0);
+    lock.addEventListener('keydown', (e) => {
+      if (e.key === 'Tab') { e.preventDefault(); btn.focus(); }
+      if (e.key === 'Escape') e.preventDefault();
+      if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); go(); }
+    });
+    // Focus can still be pulled out by the page underneath; pull it back.
+    document.addEventListener('focusin', (e) => {
+      if (!lock.contains(e.target)) { e.stopPropagation(); btn.focus(); }
+    }, true);
+
+    // Same entrance as the creative panel, so it reads as part of the app
+    // rather than a browser dialog. Reduced motion lands it immediately.
+    if (window.Motion && !Motion.reduced()) {
+      const card = lock.querySelector('.session-lock-card');
+      let p = 0;
+      const paint = (v) => {
+        lock.style.setProperty('--lock-scrim', v.toFixed(3));
+        card.style.setProperty('--lock-y', (10 * (1 - v)).toFixed(2) + 'px');
+        card.style.setProperty('--lock-s', (0.985 + 0.015 * v).toFixed(4));
+      };
+      paint(0);
+      Motion.spring(() => p, (v) => { p = v; paint(v); }, { preset: 'move' }).to(1);
+    }
   }
 
   window.fetch = async function (input, init) {
