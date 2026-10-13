@@ -268,7 +268,10 @@ select:focus,.search-input:focus,.modal-input:focus{outline:none;border-color:va
 .kpi-list td:last-child{padding-right:0}
 .kpi-list-n{color:var(--ink-400);width:24px;font-variant-numeric:tabular-nums}
 .kpi-list-num{text-align:right;font-variant-numeric:tabular-nums;color:var(--ink-600);white-space:nowrap}
-.kpi-list-grade{text-align:right;width:90px}
+.kpi-list-grade{text-align:right;width:110px}
+/* Which rating the row was ranked on. A list that silently switches
+   between paid and organic ratings is worse than one that says so. */
+.kpi-list-src{font:400 10px/13px var(--font);color:var(--ink-400);margin-top:3px}
 .kpi,.stat-card{
   background:var(--white);border-radius:var(--r-card);padding:18px 20px;border:0;
   box-shadow:var(--shadow-rest);
@@ -1462,17 +1465,15 @@ select:focus,.search-input:focus,.modal-input:focus{outline:none;border-color:va
 /* ---------- Organic panel: the rating leads ------------------------
    It used to be a small chip at the end of a row headed "Retention", so
    the first thing read was the metric rather than the verdict. */
-.orgval-cqr{
-  display:flex;align-items:baseline;gap:12px;
-  margin:2px 0 12px;
+/* The platform's rating, in the platform's own header, which is the only
+   place it appears now. It used to be a chip here AND a large pill a few
+   rows down, so each block said "Average" twice. */
+.orgval-grade{
+  font:500 17px/1 var(--font);letter-spacing:-.012em;
+  padding:5px 12px;border-radius:var(--r-pill);
 }
-.orgval-cqr-label{
-  font:400 11px/1 var(--font);color:var(--ink-400);
-  letter-spacing:.07em;text-transform:uppercase;
-}
-.orgval-cqr-val{
-  font:500 26px/32px var(--font);letter-spacing:-.02em;
-  padding:2px 14px;border-radius:var(--r-pill);
+.orgval-grade-none{
+  background:transparent;color:var(--ink-400);font-weight:400;padding-left:0;
 }
 
 /* ---------- Creative panel: the answers, before anything is expanded
@@ -1490,6 +1491,30 @@ select:focus,.search-input:focus,.modal-input:focus{outline:none;border-color:va
   letter-spacing:.07em;text-transform:uppercase;margin-bottom:8px;
 }
 .dsum-val{font:400 22px/28px var(--font);letter-spacing:-.018em;color:var(--ink-900)}
+
+/* Organic CQR is per platform, because a post can be Good on Instagram and
+   Poor on Facebook and a single averaged word hides exactly that. One row per
+   platform the creative actually ran on; platforms it did not run on are not
+   listed rather than shown empty. */
+.dsum-plats{display:flex;flex-direction:column;gap:5px;margin-top:2px}
+.dsum-plat{
+  display:flex;align-items:center;justify-content:space-between;gap:10px;
+  min-height:22px;
+}
+.dsum-plat-k{
+  font:500 11px/1 var(--font);letter-spacing:.05em;color:var(--ink-400);
+  flex:0 0 auto;
+}
+.dsum-plat-v{
+  font:500 13px/1 var(--font);letter-spacing:-.006em;
+  padding:4px 9px;border-radius:var(--r-pill);
+  flex:0 0 auto;
+}
+/* A state is not a rating, so it gets no pill and none of the rating colours. */
+.dsum-plat-none{
+  background:transparent;color:var(--ink-400);font-weight:400;
+  padding-right:0;font-size:12px;
+}
 .dsum-sub{font:400 12px/17px var(--font);color:var(--ink-500);margin-top:4px}
 .dsum-good-bg{color:var(--pos)}
 .dsum-avg-bg{color:var(--warn)}
@@ -1498,8 +1523,3 @@ select:focus,.search-input:focus,.modal-input:focus{outline:none;border-color:va
 .dsum-pos{color:var(--pos)}
 .dsum-warn{color:var(--warn)}
 
-/* No rating yet. Quiet, and clearly not a verdict sitting in the verdict
-   slot: "Not rated" at rating size reads as a rating. */
-.orgval-cqr-none{
-  font:400 18px/32px var(--font);color:var(--ink-400);letter-spacing:-.01em;
-}
