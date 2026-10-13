@@ -1427,15 +1427,37 @@ select:focus,.search-input:focus,.modal-input:focus{outline:none;border-color:va
 .card-cqr-row{display:flex;align-items:center;justify-content:space-between;gap:10px}
 .card-cqr-plat{font:400 13px/1 var(--font);color:var(--ink-600)}
 
-/* Paid state, named per platform. "Running" on a creative that is live on
-   Meta and stopped on TikTok was telling half the story. */
-.card-paid{
-  display:flex;align-items:center;gap:7px;flex-wrap:wrap;
-  font:400 12.5px/18px var(--font);color:var(--ink-500);
+/* A state that is not a rating. Boosted, Too Early and the rest are
+   reasons there is no rating, so they must not look like one: no colour,
+   no badge weight, nothing that reads as a verdict. */
+.card-cqr-state{
+  font:400 12.5px/1 var(--font);color:var(--ink-400);
+  padding:0 2px;cursor:help;
 }
-.card-paid-sep{color:var(--ink-300)}
-.card-paid-live{color:var(--pos);font-weight:500}
-.card-paid-fade{color:var(--warn);font-weight:500}
+.card-cqr-note{
+  font:400 12.5px/18px var(--font);color:var(--ink-500);cursor:help;
+}
+
+/* Paid state as an object rather than a sentence. "Running on Meta and
+   TikTok" said the right thing and looked like a log line. */
+.card-status{display:flex;align-items:center;gap:7px;flex-wrap:wrap}
+.cstat{
+  display:inline-flex;align-items:center;gap:7px;
+  height:26px;padding:0 11px 0 9px;border-radius:var(--r-pill);
+  font:500 12.5px/1 var(--font);letter-spacing:.002em;
+}
+.cstat-dot{width:7px;height:7px;border-radius:50%;flex-shrink:0}
+.cstat-plat{
+  font-weight:400;opacity:.78;
+  padding-left:7px;margin-left:1px;border-left:1px solid currentColor;
+}
+.cstat-live{background:var(--pos-bg);color:var(--pos)}
+.cstat-live .cstat-dot{background:var(--pos);box-shadow:0 0 0 3px rgba(4,120,92,.14)}
+.cstat-off{background:var(--canvas);color:var(--ink-600)}
+.cstat-off .cstat-dot{background:var(--ink-300)}
+.cstat-none{background:transparent;color:var(--ink-400);padding-left:0}
+.cstat-none .cstat-dot{background:transparent;box-shadow:inset 0 0 0 1.5px var(--ink-300)}
+.cstat-fade{background:var(--warn-bg);color:var(--warn)}
 
 /* ---------- Organic panel: the rating leads ------------------------
    It used to be a small chip at the end of a row headed "Retention", so
@@ -1475,3 +1497,9 @@ select:focus,.search-input:focus,.modal-input:focus{outline:none;border-color:va
 .dsum-inv-bg,.dsum-quiet{color:var(--ink-400);font-size:17px;line-height:28px}
 .dsum-pos{color:var(--pos)}
 .dsum-warn{color:var(--warn)}
+
+/* No rating yet. Quiet, and clearly not a verdict sitting in the verdict
+   slot: "Not rated" at rating size reads as a rating. */
+.orgval-cqr-none{
+  font:400 18px/32px var(--font);color:var(--ink-400);letter-spacing:-.01em;
+}
