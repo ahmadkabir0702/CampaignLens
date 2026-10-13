@@ -1011,7 +1011,7 @@ function updateSummaryOrganic(v) {
   const cells = ORG_PLATFORMS.filter(pl => byCode[pl.code]).map(pl => {
     const p = byCode[pl.code];
     const g = p.cqr || null;
-    return `<span class="dsum-plat"><span class="dsum-plat-k">${pl.short}</span>${
+    return `<span class="dsum-plat"><span class="dsum-plat-k">${pl.label}</span>${
       isGrade(g) ? `<span class="dsum-plat-v ${cqrClass(g)}">${g}</span>`
                  : `<span class="dsum-plat-v dsum-plat-none">${p.state ? stateShort(p.state) : '—'}</span>`}</span>`;
   });
@@ -1040,7 +1040,7 @@ function detailSummaryHTML(d) {
   // from it. See updateSummaryOrganic.
   const orgCells = ORG_PLATFORMS
     .filter(pl => d[pl.link] || d[pl.key])
-    .map(pl => ({ short: pl.short, v: (d[pl.key] || {}).cqr || null }));
+    .map(pl => ({ label: pl.label, v: (d[pl.key] || {}).cqr || null }));
   const paid = (d.cqr && d.cqr !== 'Invalid') ? d.cqr : null;
 
   let status, statusCls, statusSub = '';
@@ -1063,7 +1063,7 @@ function detailSummaryHTML(d) {
     <div class="dsum-cell" id="dsum-organic">
       <div class="dsum-label">Organic CQR</div>
       ${orgCells.length ? `<div class="dsum-plats">${orgCells.map(o =>
-        `<span class="dsum-plat"><span class="dsum-plat-k">${o.short}</span>${
+        `<span class="dsum-plat"><span class="dsum-plat-k">${o.label}</span>${
           isGrade(o.v) ? `<span class="dsum-plat-v ${cqrClass(o.v)}">${o.v}</span>`
                        : `<span class="dsum-plat-v dsum-plat-none">${o.v ? stateShort(o.v) : '—'}</span>`}</span>`
         ).join('')}</div>` : `<div class="dsum-val dsum-quiet">Not rated</div>`}
@@ -1688,7 +1688,7 @@ function buildValidationHTML(v) {
     const place = sg.percentile === null || sg.percentile === undefined
       ? '' : `<span class="orgval-pct">${ordinal(sg.percentile)} percentile</span>`;
     const band = sg.band
-      ? `<div class="orgval-band">Good from ${sg.band.good_gte}%, poor below ${sg.band.poor_lt}%</div>` : '';
+      ? `Good from ${sg.band.good_gte}%, poor below ${sg.band.poor_lt}%` : '';
     // No rating block here. The platform header four rows up already
     // carries this creative's CQR for this platform, so printing it again
     // in a large pill said "Average" twice in the same card and was the
@@ -1697,12 +1697,15 @@ function buildValidationHTML(v) {
     const why = !sg.grade
       ? `<div class="orgval-note">${esc((plat || {}).state_note || STATE_WHY[st] || 'Not enough has come back to rate this yet.')}</div>`
       : '';
+    // The metric is the one number the rating is actually made of, so it
+    // is the only thing in the card set large. Everything else here is
+    // the working, and reads as such.
     return `${why}
-      <div class="orgval-rate">
-        <span class="organic-stat-label">${esc(sg.name)}</span>
-        <span class="orgval-rate-right">${place}<span class="organic-stat-val">${val}</span></span>
+      <div class="orgval-metric">
+        <span class="orgval-metric-k">${esc(sg.name)}${place}</span>
+        <span class="orgval-metric-v">${val}</span>
       </div>
-      ${band}
+      ${band ? `<div class="orgval-band">${band}</div>` : ''}
       ${sg.note ? `<div class="orgval-note">${esc(sg.note)}</div>` : ''}`;
   };
 
@@ -1780,9 +1783,11 @@ function buildValidationHTML(v) {
     ? `<div class="orgval-flags">${v.flags.map(f => `<div>${esc(f)}</div>`).join('')}</div>` : '';
 
   const w = v.winners || {};
-  const winners = `<div class="orgval-winners">
+  // A heading over nothing is still an empty box on the page. It only
+  // earns its space once there is something under it.
+  const winners = (!w.verdict && !(w.matches || []).length) ? '' : `<div class="orgval-winners">
     <div class="orgval-winners-head">What it has in common with your paid winners</div>
-    <div class="orgval-line">${esc(w.verdict || '')}</div>
+    ${w.verdict ? `<div class="orgval-line">${esc(w.verdict)}</div>` : ''}
     ${(w.matches || []).length
       ? `<ul class="orgval-list">${w.matches.slice(0, 5).map(m => `<li class="${m.helps ? 'orgval-supports' : 'orgval-against'}">
           <b>${esc(m.label)}</b> <span class="orgval-when">${m.timing === 'opening' ? 'opening' : 'whole video'}</span><br>

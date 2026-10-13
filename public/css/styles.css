@@ -590,16 +590,47 @@ select:focus,.search-input:focus,.modal-input:focus{outline:none;border-color:va
 .organic-stat-val{font:400 13.5px var(--font);color:var(--ink-900)}
 .organic-empty{font:400 14px/20px var(--font);color:var(--ink-600);padding:8px 0}
 
-/* ---------- Organic validation ------------------------------------ */
-.orgval-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(300px,1fr));gap:14px}
-.orgval-plat{background:var(--white);border-radius:var(--r-card);padding:16px;
+/* ---------- Organic validation -------------------------------------
+   One size for everything is not a scale, it is a wall. Four levels, and
+   each one is a different job:
+
+     the platform, which titles the card
+     the metric value, the single number the rating is made of
+     the counts, which are the working
+     the prose, which is the explanation
+
+   The rating itself is deliberately NOT the largest thing here. It is one
+   word carried by colour, it repeats what the summary strip at the top of
+   the panel already said, and at 17px it was bigger than the name of the
+   platform it belonged to, which read as a mistake because it was one. */
+/* Narrow enough that all three platforms sit on one row at panel width.
+   At 286px the third wrapped onto a row of its own and left half the
+   panel empty beside it. */
+.orgval-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(246px,1fr));gap:12px}
+.orgval-plat{background:var(--white);border-radius:var(--r-card);padding:15px 16px;
   display:flex;flex-direction:column}
-.orgval-plat-head{display:flex;align-items:center;justify-content:space-between;margin-bottom:10px}
-.orgval-rate{display:flex;justify-content:space-between;align-items:center;
-  padding:6px 0;border-bottom:1px solid var(--line-soft)}
-.orgval-rate-right{display:flex;align-items:center;gap:8px}
-.orgval-pct{font:400 12px var(--font);color:var(--ink-400)}
-.orgval-chips{display:inline-flex;align-items:center;gap:5px}
+.orgval-plat-head{display:flex;align-items:baseline;justify-content:space-between;
+  gap:10px;margin-bottom:12px}
+.orgval-chips{display:inline-flex;align-items:baseline;gap:6px;flex:0 0 auto}
+
+/* The counts. Six ruled full-width rows made the card look like a table
+   with a heading, so they sit in two columns and the rules come off:
+   at this size the label/value pairing carries itself. */
+.orgval-counts{display:grid;grid-template-columns:1fr 1fr;gap:1px 14px;margin-bottom:13px}
+.orgval-counts .organic-stat-row{padding:3px 0;border-bottom:none}
+.orgval-counts .organic-stat-label{font:400 12.5px/18px var(--font);color:var(--ink-500)}
+.orgval-counts .organic-stat-val{font:400 12.5px/18px var(--font);color:var(--ink-800);
+  font-variant-numeric:tabular-nums}
+
+/* The metric, which is the one thing worth setting large. */
+.orgval-metric{display:flex;justify-content:space-between;align-items:baseline;gap:10px}
+.orgval-metric-k{font:400 12.5px/20px var(--font);color:var(--ink-600)}
+.orgval-metric-v{font:500 19px/24px var(--font);letter-spacing:-.015em;
+  color:var(--ink-900);font-variant-numeric:tabular-nums;flex:0 0 auto}
+/* On the metric's own line, not under it: the band underneath wraps to two
+   lines in a narrow card, and a right-aligned percentile beside a wrapping
+   line lands against the middle of it. */
+.orgval-pct{font:400 11px var(--font);color:var(--ink-400);margin-left:6px;white-space:nowrap}
 /* ---------- Creative fatigue --------------------------------------- */
 .fat-table{width:100%;border-collapse:collapse;margin-top:4px}
 .fat-table th{font:500 11.5px/16px var(--font);color:var(--ink-400);
@@ -619,15 +650,14 @@ select:focus,.search-input:focus,.modal-input:focus{outline:none;border-color:va
 .orgval-rec.fat-improved{border-left-color:var(--pos);background:var(--pos-bg)}
 .orgval-rec.fat-held{border-left-color:var(--line);background:var(--canvas-2)}
 .orgval-rec.fat-none{border-left-color:var(--ink-300);background:var(--canvas-2)}
-.orgval-band{font:400 11.5px var(--font);color:var(--ink-400);padding:5px 0 0}
-.orgval-note{font:400 12px/17px var(--font);color:var(--ink-400);padding:3px 0 0}
-.orgval-line{font:400 13.5px/20px var(--font);color:var(--ink-700);margin-top:10px}
-.orgval-line b{font-weight:500;color:var(--ink-900)}
+.orgval-band{font:400 11px/16px var(--font);color:var(--ink-400)}
+.orgval-note{font:400 11.5px/16px var(--font);color:var(--ink-400);padding:4px 0 0}
+.orgval-line{font:400 12.5px/18px var(--font);color:var(--ink-600);margin-top:9px}
+.orgval-line b{font-weight:500;color:var(--ink-800)}
 .orgval-muted{color:var(--ink-400)}
-.orgval-counts{margin-bottom:12px}
-.orgval-divider{font:500 11.5px/16px var(--font);color:var(--ink-400);
-  text-transform:uppercase;letter-spacing:.04em;
-  padding-top:10px;border-top:1px solid var(--line);margin-bottom:2px}
+.orgval-divider{font:500 10.5px/14px var(--font);color:var(--ink-400);
+  text-transform:uppercase;letter-spacing:.06em;
+  padding-top:11px;border-top:1px solid var(--line);margin-bottom:6px}
 .orgval-react-bar{display:flex;height:8px;border-radius:var(--r-pill);overflow:hidden;
   margin:8px 0 9px;background:var(--canvas-2)}
 .orgval-react-seg{display:block;height:8px}
@@ -643,10 +673,10 @@ select:focus,.search-input:focus,.modal-input:focus{outline:none;border-color:va
 .react-angry{background:var(--neg)}
 .orgval-when{font:400 11.5px var(--font);color:var(--ink-400);
   background:var(--canvas-2);border-radius:var(--r-pill);padding:1px 7px}
-.orgval-rec-wrap{margin-top:auto;padding-top:12px}
-.orgval-rec{padding:11px 12px;border-radius:var(--r-card);
+.orgval-rec-wrap{margin-top:auto;padding-top:11px}
+.orgval-rec{padding:9px 11px;border-radius:var(--r-btn);
   border-left:2px solid var(--line);background:var(--canvas-2);
-  font:400 13.5px/20px var(--font);color:var(--ink-700)}
+  font:400 12.5px/18px var(--font);color:var(--ink-700)}
 .orgval-rec b{font-weight:500;color:var(--ink-900)}
 .orgval-rec-go{border-left-color:var(--pos);background:var(--pos-bg)}
 .orgval-rec-mid{border-left-color:var(--warn);background:var(--warn-bg)}
@@ -1468,12 +1498,22 @@ select:focus,.search-input:focus,.modal-input:focus{outline:none;border-color:va
 /* The platform's rating, in the platform's own header, which is the only
    place it appears now. It used to be a chip here AND a large pill a few
    rows down, so each block said "Average" twice. */
-.orgval-grade{
-  font:500 17px/1 var(--font);letter-spacing:-.012em;
-  padding:5px 12px;border-radius:var(--r-pill);
+/* The platform titles its card, so it is the larger of the two. It used
+   to be 13px ink-600 against a 17px rating, which put the label above the
+   thing it labels and was the first thing the eye caught. */
+.orgval-plat-head .organic-platform{
+  font:500 14.5px/20px var(--font);color:var(--ink-900);
+  letter-spacing:-.008em;margin:0;
 }
+.orgval-grade{
+  font:500 12.5px/18px var(--font);letter-spacing:-.004em;
+  padding:2px 9px;border-radius:var(--r-pill);white-space:nowrap;
+}
+/* A state is a sentence fragment, not a rating, so it gets no pill, no
+   rating colour, and no claim on the eye. */
 .orgval-grade-none{
-  background:transparent;color:var(--ink-400);font-weight:400;padding-left:0;
+  background:transparent;color:var(--ink-400);font-weight:400;
+  font-size:11.5px;padding:0;text-align:right;
 }
 
 /* ---------- Creative panel: the answers, before anything is expanded
