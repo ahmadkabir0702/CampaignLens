@@ -1588,7 +1588,7 @@ function getRecHTML(item, titleLabel) {
   if (!item) return '';
   if (item.recommendation) {
     const isActioned = item.actionStatus && item.actionStatus.toLowerCase() === 'actioned';
-    // Only the admin (role='admin') or a client user (not internal WPP/agency
+    // Only the admin (role='admin') or a client user (not internal agency
     // staff) may mark a recommendation actioned and assign it to an agency.
     // Everyone else sees the same pending state with no way to act on it.
     const canAssignAgency = CURRENT_ROLE === 'admin' || !CURRENT_IS_INTERNAL;

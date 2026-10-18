@@ -1,5 +1,5 @@
 /**
- * signoff.js — Campaign Sign-Off (Unilever x WPP Media Social-First Sign-Off)
+ * signoff.js — Campaign Sign-Off (Unilever social-first sign-off)
  *
  * Backed by real endpoints now: POST /api/signoffs (client leads only),
  * GET /api/signoffs (whatever brands the session can see), POST
@@ -106,7 +106,7 @@
         <div class="so-head">
           <div>
             <div class="so-title">Campaign Sign-Off</div>
-            <div class="so-subtitle">Unilever &times; WPP Media social-first sign-off, one record per campaign, cleared before a campaign goes live.</div>
+            <div class="so-subtitle">Unilever social-first sign-off, one record per campaign, cleared before a campaign goes live.</div>
           </div>
           ${canCreate ? `<button class="btn-outline primary" onclick="Signoff.openCreate()">+ New Sign-Off</button>` : ''}
         </div>

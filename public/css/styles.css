@@ -1,8 +1,8 @@
 /* =====================================================================
-   WPP Media Design System v2 — Campaign Lens
+   Campaign Lens design system v2
    Replaces public/css/styles.css wholesale.
 
-   Derived from WPP Open, not the marketing palette. Light theme only.
+   Light theme only.
    Every existing class name is preserved, so the JS keeps working.
 
    The short version: navy does everything, type stays light, buttons
@@ -86,11 +86,10 @@ summary:focus-visible,.nav-item:focus-visible,.card:focus-visible,
   border-bottom:1px solid var(--line-soft);
   display:flex;align-items:center;gap:28px;padding:0 24px;
 }
-.topbar-brand{display:flex;align-items:center;gap:11px;flex-shrink:0}
-.topbar-brand img{height:26px;width:auto;display:block}
+.topbar-brand{display:flex;align-items:center;flex-shrink:0}
 .topbar-product{
-  font:300 18px/1 var(--font);color:var(--ink-600);letter-spacing:-.01em;
-  padding-left:11px;border-left:1px solid var(--line);
+  font:500 18px/1 var(--font);color:var(--ink-900);letter-spacing:-.01em;
+  white-space:nowrap;
 }
 
 .nav-tabs{display:flex;gap:26px}
@@ -787,7 +786,6 @@ select:focus,.search-input:focus,.modal-input:focus{outline:none;border-color:va
 @media (max-width:1400px){ .kpi-row{grid-template-columns:repeat(3,1fr)} }
 @media (max-width:1100px){
   .topbar{gap:18px;padding:0 16px}
-  .topbar-product{display:none}
   .filters{width:min(92vw,520px)}
 }
 @media (max-width:768px){

@@ -1,7 +1,7 @@
 {
-  "name": "lifebuoy-dashboard-backend",
+  "name": "campaign-lens",
   "version": "1.0.0",
-  "description": "Backend for Lifebuoy Campaign Dashboard",
+  "description": "Campaign Lens",
   "main": "server.js",
   "scripts": {
     "start": "node server.js",

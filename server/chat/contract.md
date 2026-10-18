@@ -12,7 +12,7 @@ chat is wrong. Keep it in the language your planners actually use.
 ## What this data covers
 
 Paid social (Meta and TikTok) and organic social (Facebook, Instagram,
-TikTok) for Unilever Sri Lanka brands, managed by Mindshare Fulcrum.
+TikTok) for Unilever Sri Lanka brands, in Campaign Lens.
 
 One brand is selected at a time. Every answer is about that brand only.
 
