@@ -1116,6 +1116,12 @@ function detailSummaryHTML(d) {
   </div>`;
 }
 
+/** "Instagram, Facebook and TikTok" rather than a comma-joined list. */
+function listWords(names) {
+  if (names.length <= 1) return names[0] || '';
+  return names.slice(0, -1).join(', ') + ' and ' + names[names.length - 1];
+}
+
 /**
  * How far a new post is through its validation window.
  *
@@ -1128,9 +1134,11 @@ function detailSummaryHTML(d) {
  * Elapsed time comes from the post's own timestamps rather than the date
  * field, which is a day with no clock on it.
  */
-function validationStrip(d) {
+function validationStrip(d, platformNames) {
   const states = ORG_PLATFORMS.map(pl => (d[pl.key] || {}).cqr).filter(Boolean);
   if (!states.length || !states.every(s => s === 'Too Early')) return '';
+  const on = (platformNames || []).length
+    ? `Reading ${listWords(platformNames)}. ` : '';
 
   const window = Number(VALIDATION_HOURS) || 24;
   const stamps = ORG_PLATFORMS
@@ -1142,7 +1150,7 @@ function validationStrip(d) {
   if (Number.isNaN(posted)) {
     return `<div class="card-validating">
       <div class="card-validating-l">Still being validated</div>
-      <div class="card-validating-s">Distribution is still running, so there is nothing to read yet.</div>
+      <div class="card-validating-s">${on}Distribution is still running, so there is nothing to read yet.</div>
     </div>`;
   }
 
@@ -1157,7 +1165,7 @@ function validationStrip(d) {
   return `<div class="card-validating">
     <div class="card-validating-l">Still being validated<span class="card-validating-t">${when}</span></div>
     <div class="card-validating-track"><div class="card-validating-fill" style="width:${pct}%"></div></div>
-    <div class="card-validating-s">${Math.max(1, Math.round(hours))}h of ${window}h. Distribution is still running, so the numbers below will move.</div>
+    <div class="card-validating-s">${on}${Math.max(1, Math.round(hours))}h of ${window}h. Counts are still climbing, so none are shown until they settle.</div>
   </div>`;
 }
 
@@ -1246,7 +1254,18 @@ function renderCards(data) {
           escapeHtml(STATE_WHY[sharedState] || stateShort(sharedState))}</div>`
       : '';
 
-    const orgBlock = !orgVals.length ? ''
+    // Inside the validation window the counts are deliberately left off.
+    //
+    // They are still climbing, so a number read now is not the number this
+    // post will settle at, and putting it on the card invites comparing it
+    // against posts that have finished. What is true right now is the
+    // state, so the state is what shows: the strip above carries it with
+    // how far through the window it is, and the rows name the platforms
+    // being read rather than repeating "Too early" once per platform.
+    // Inside the window the strip is the whole organic block, so the
+    // platform list goes into it rather than under a second heading.
+    const inWindow = sharedState === 'Too Early';
+    const orgBlock = (!orgVals.length || inWindow) ? ''
       : sharedNote + orgVals.map(o => row(o.label, o.v, o.o, !!sharedState)).join('');
 
     // The rating that does apply once there is spend behind it. Shown as
@@ -1265,7 +1284,8 @@ function renderCards(data) {
         return row(label, p.cqr, null, false, money);
       }).join('');
 
-    const validating = validationStrip(d);
+    const validating = validationStrip(d, ORG_PLATFORMS
+      .filter(pl => d[pl.link] || d[pl.key]).map(pl => pl.label));
 
     // Who posted it. Others Say is creator content by definition, and
     // creator-led Brand Say is fronted by one, so both carry a handle the
