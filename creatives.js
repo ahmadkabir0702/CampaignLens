@@ -10,6 +10,11 @@
 //    { brand: {id, name}, creatives: [...], account: [...], campaigns: [...] }
 // =====================================================================
 const { query } = require('./db');
+// The card shows how far through the validation window a new post is, so
+// it needs the same figure the rating uses. Imported rather than repeated,
+// because two copies of a window would drift and the card would then
+// disagree with the panel about when a post becomes readable.
+const { MIN_HOURS } = require('./organic-validation');
 
 const num = v => (v === null || v === undefined ? 0 : Number(v));
 const r1  = v => Math.round(num(v) * 10) / 10;
@@ -385,7 +390,9 @@ async function buildPayload(brandId) {
         kpiImpressions: num(a.kpi_impressions), kpiFrequency: num(a.kpi_frequency)
       };
     }),
-    campaigns: campR.rows.map(r => r.campaign)
+    campaigns: campR.rows.map(r => r.campaign),
+    // How long a post is left alone before its organic numbers are read.
+    validationHours: MIN_HOURS,
   };
 }
 
