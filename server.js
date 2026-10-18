@@ -317,6 +317,8 @@ require('./routes')(app, { ai, youtubedl });
 // Brainsuite pre-tests and creative scores. Its queue worker starts with the
 // creative worker (worker.js), wherever that runs.
 require('./server/brainsuite/routes')(app);
+// Digital share of voice: shares by category, read-only.
+require('./server/sov/routes')(app);
 // Ask Lens chat routes
 require('./server/chat/routes')(app);
 
