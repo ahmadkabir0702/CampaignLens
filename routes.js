@@ -786,7 +786,7 @@ app.get('/api/brands', async (req, res) => {
       const brand = resolveBrand(req);
       const { creative_id, platform, action_status, actioned_by, action_date, agency } = req.body;
 
-      // Only the admin or a client user (not internal WPP/agency staff) may
+      // Only the admin or a client user (not internal agency staff) may
       // mark a recommendation actioned and assign it to an agency.
       const isAdmin = req.session.role === 'admin';
       const isClient = !req.session.isInternal;
