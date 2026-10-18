@@ -1,9 +1,7 @@
 -- =====================================================================
 --  018 — Share of voice: skin cleansing, 20 Jul to 18 Oct 2026
 --
---  Results of the first collection (ScrapeCreators, Facebook, Instagram
---  and TikTok, Sri Lanka only), every post and comment read and labelled.
---  Shares only. Run after 017. Safe to re-run: it replaces this period.
+--  Facebook, Instagram and TikTok, Sri Lanka only. Shares only. Run after 017. Safe to re-run: it replaces this period.
 -- =====================================================================
 
 begin;
@@ -32,7 +30,7 @@ delete from sov_periods where category_id = 'skin_cleansing' and period_start = 
 
 insert into sov_periods (category_id, period_start, period_end, label, insights)
 values ('skin_cleansing', '2026-07-20', '2026-10-18', '20 Jul to 18 Oct 2026',
-        '["Unilever brands hold 61.8% of skin cleansing share of voice. Lux leads at 34.2%, followed by Lifebuoy (14.7%) and Rani (14.1%).", "Most of Unilever''s voice comes from its own brand pages and the comments they draw. Outside brand pages, Unilever brands account for 2.3% of public conversation.", "Public conversation is led by small home herbal sellers, with Sha Herbal''s Magic Soap at 46.1% and Thinu Soapy Co at 17.6%. Rani''s 11.5% comes almost entirely from a viral \"Rani soap\" meme on TikTok.", "Small sellers make 56.1% of public soap posts. 24.7% of public comments are questions, mostly about price and how to order. Price, fairness and glow, and herbal ingredients are the most discussed topics.", "Criticism of Lux and Lifebuoy is mostly about their campaigns, the film tie-in and the Mister Sri Lanka pageant, not the products. The few product complaints in the category are led by rashes linked to Calin."]'::jsonb);
+        '["Unilever brands hold 61.8% of skin cleansing share of voice. Lux leads at 34.2%, followed by Lifebuoy (14.7%) and Rani (14.1%).", "Unilever''s voice is mostly owned: brand content and the conversation it generates. In earned conversation, Unilever brands hold 2.3% of voice.", "Earned conversation is led by small home herbal sellers, with Sha Herbal''s Magic Soap at 46.1% and Thinu Soapy Co at 17.6%. Rani''s 11.5% earned voice is driven almost entirely by a viral \"Rani soap\" meme on TikTok.", "Small sellers generate 56.1% of earned content in the category. 24.7% of consumer conversation is questions, mostly on price and how to buy. Price, fairness and glow, and herbal ingredients are the leading themes.", "Negative sentiment toward Lux and Lifebuoy is aimed mostly at their campaigns, the film tie-in and the Mister Sri Lanka pageant, not the products. Product complaints in the category are few, led by skin reactions linked to Calin."]'::jsonb);
 
 insert into sov_brand_metrics (period_id, brand_name, share_of_voice, share_no_contest, share_engagement, share_earned, share_public,
   sentiment_positive, sentiment_neutral, sentiment_negative, share_facebook, share_instagram, share_tiktok) values
@@ -258,19 +256,19 @@ insert into sov_breakdowns (period_id, dimension, key, brand_name, grp, value, s
   ((select period_id from sov_periods where category_id = 'skin_cleansing' and period_start = '2026-07-20' and period_end = '2026-10-18'), 'topic', 'Pack and format', '', null, 0.01478, 10),
   ((select period_id from sov_periods where category_id = 'skin_cleansing' and period_start = '2026-07-20' and period_end = '2026-10-18'), 'topic', 'Family and kids', '', null, 0.01373, 11),
   ((select period_id from sov_periods where category_id = 'skin_cleansing' and period_start = '2026-07-20' and period_end = '2026-10-18'), 'topic', 'Germ protection', '', null, 0.00845, 12),
-  ((select period_id from sov_periods where category_id = 'skin_cleansing' and period_start = '2026-07-20' and period_end = '2026-10-18'), 'comment_type', 'Reaction only', '', null, 0.46208, 0),
-  ((select period_id from sov_periods where category_id = 'skin_cleansing' and period_start = '2026-07-20' and period_end = '2026-10-18'), 'comment_type', 'Question', '', null, 0.24661, 1),
+  ((select period_id from sov_periods where category_id = 'skin_cleansing' and period_start = '2026-07-20' and period_end = '2026-10-18'), 'comment_type', 'Reactions', '', null, 0.46208, 0),
+  ((select period_id from sov_periods where category_id = 'skin_cleansing' and period_start = '2026-07-20' and period_end = '2026-10-18'), 'comment_type', 'Questions', '', null, 0.24661, 1),
   ((select period_id from sov_periods where category_id = 'skin_cleansing' and period_start = '2026-07-20' and period_end = '2026-10-18'), 'comment_type', 'Praise', '', null, 0.19437, 2),
-  ((select period_id from sov_periods where category_id = 'skin_cleansing' and period_start = '2026-07-20' and period_end = '2026-10-18'), 'comment_type', 'Wants to buy or try', '', null, 0.03315, 3),
-  ((select period_id from sov_periods where category_id = 'skin_cleansing' and period_start = '2026-07-20' and period_end = '2026-10-18'), 'comment_type', 'Tags a friend', '', null, 0.03014, 4),
-  ((select period_id from sov_periods where category_id = 'skin_cleansing' and period_start = '2026-07-20' and period_end = '2026-10-18'), 'comment_type', 'Complaint', '', null, 0.02310, 5),
-  ((select period_id from sov_periods where category_id = 'skin_cleansing' and period_start = '2026-07-20' and period_end = '2026-10-18'), 'comment_type', 'Asks which soap to use', '', null, 0.00753, 6),
-  ((select period_id from sov_periods where category_id = 'skin_cleansing' and period_start = '2026-07-20' and period_end = '2026-10-18'), 'comment_type', 'Compares or switched brand', '', null, 0.00301, 7),
+  ((select period_id from sov_periods where category_id = 'skin_cleansing' and period_start = '2026-07-20' and period_end = '2026-10-18'), 'comment_type', 'Purchase intent', '', null, 0.03315, 3),
+  ((select period_id from sov_periods where category_id = 'skin_cleansing' and period_start = '2026-07-20' and period_end = '2026-10-18'), 'comment_type', 'Social sharing', '', null, 0.03014, 4),
+  ((select period_id from sov_periods where category_id = 'skin_cleansing' and period_start = '2026-07-20' and period_end = '2026-10-18'), 'comment_type', 'Complaints', '', null, 0.02310, 5),
+  ((select period_id from sov_periods where category_id = 'skin_cleansing' and period_start = '2026-07-20' and period_end = '2026-10-18'), 'comment_type', 'Recommendation seeking', '', null, 0.00753, 6),
+  ((select period_id from sov_periods where category_id = 'skin_cleansing' and period_start = '2026-07-20' and period_end = '2026-10-18'), 'comment_type', 'Brand comparison', '', null, 0.00301, 7),
   ((select period_id from sov_periods where category_id = 'skin_cleansing' and period_start = '2026-07-20' and period_end = '2026-10-18'), 'author_type', 'Small sellers', '', null, 0.56061, 0),
   ((select period_id from sov_periods where category_id = 'skin_cleansing' and period_start = '2026-07-20' and period_end = '2026-10-18'), 'author_type', 'Creators', '', null, 0.29394, 1),
   ((select period_id from sov_periods where category_id = 'skin_cleansing' and period_start = '2026-07-20' and period_end = '2026-10-18'), 'author_type', 'Brands', '', null, 0.06667, 2),
   ((select period_id from sov_periods where category_id = 'skin_cleansing' and period_start = '2026-07-20' and period_end = '2026-10-18'), 'author_type', 'Consumers', '', null, 0.06061, 3),
-  ((select period_id from sov_periods where category_id = 'skin_cleansing' and period_start = '2026-07-20' and period_end = '2026-10-18'), 'author_type', 'Media and other pages', '', null, 0.01818, 4);
+  ((select period_id from sov_periods where category_id = 'skin_cleansing' and period_start = '2026-07-20' and period_end = '2026-10-18'), 'author_type', 'Media and publishers', '', null, 0.01818, 4);
 
 commit;
 
