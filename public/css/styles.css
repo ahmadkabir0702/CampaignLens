@@ -1692,6 +1692,35 @@ select:focus,.search-input:focus,.modal-input:focus{outline:none;border-color:va
    was measured to get there. */
 .orgval-place{font:400 12px/18px var(--font);color:var(--ink-500);margin-top:2px}
 
+/* The dimension ranks.
+   Four of them rather than one, so the dimension the rating is built from
+   is not identifiable from the panel. Ranks, not values, so no threshold
+   is recoverable from them either. */
+.orgval-dim-sum{font:400 13px/19px var(--font);color:var(--ink-900);margin:9px 0 11px}
+.orgval-dims{display:flex;flex-direction:column;gap:10px;margin-bottom:14px}
+.orgval-dim{display:flex;flex-direction:column;gap:4px}
+.orgval-dim-head{display:flex;align-items:baseline;justify-content:space-between;gap:10px}
+.orgval-dim-k{font:400 12.5px/18px var(--font);color:var(--ink-600)}
+.orgval-dim-track{
+  display:block;height:7px;border-radius:var(--r-pill);
+  background:var(--line-soft);position:relative;
+}
+.orgval-dim-fill{display:block;height:7px;border-radius:var(--r-pill)}
+/* The brand's own median. Without it a bar is a length with nothing to
+   be long or short against. */
+.orgval-dim-mid{position:absolute;top:-3px;bottom:-3px;left:50%;width:1px;background:#C3C3D6}
+.orgval-dim-v{
+  font:500 12.5px/18px var(--font);color:var(--ink-900);
+  font-variant-numeric:tabular-nums;white-space:nowrap;
+}
+
+/* What is and is not working, as two statements in counts. */
+.orgval-wn{
+  display:flex;flex-direction:column;gap:6px;
+  padding-top:12px;border-top:1px solid var(--line-soft);
+}
+.orgval-wn b{font-weight:500;color:var(--ink-900);margin-right:4px}
+
 /* Paid state as an object rather than a sentence. "Running on Meta and
    TikTok" said the right thing and looked like a log line. */
 .card-status{display:flex;align-items:center;gap:7px;flex-wrap:wrap}

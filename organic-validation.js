@@ -218,6 +218,19 @@ const SIGNAL_WORDS = {
 };
 
 function reasonFor({ rated, state, signal, band, signalName, type }) {
+  // Boosted is not a verdict with a footnote, it is a different question.
+  //
+  // This used to read "Rated Average: some people respond to it, but not
+  // many. Spend went behind this post, so its numbers are organic and
+  // paid together." A confident grade, then a sentence explaining that
+  // the numbers behind the grade are contaminated. Once there is spend
+  // the organic rating is history, so it is worded as history.
+  if (String(state || '').toLowerCase() === 'boosted') {
+    return rated
+      ? `Spend went behind this post. It was rated ${rated} organically before that, which is what it earned on its own. From here it is a paid read.`
+      : 'Spend went behind this post before there was enough organic data to rate it. From here it is a paid read.';
+  }
+
   if (!rated) {
     return state
       ? CQR_STATES[state.toLowerCase()]
@@ -247,6 +260,181 @@ function standingWords(percentile) {
   if (percentile >= 40) return 'about level with your own organic posts this quarter';
   if (percentile >= 20) return 'behind most of your own organic posts this quarter';
   return 'behind almost all your own organic posts this quarter';
+}
+
+// ---------------------------------------------------------------------
+//  Dimensions
+//
+//  What the panel shows in place of the rating method.
+//
+//  Four of them, as ranks against the brand's own posts rather than as
+//  values against a threshold. A rank says how good without saying what
+//  good is, and four of them together mean the one the rating is built
+//  from is no longer identifiable: showing a single labelled metric
+//  pointed straight at the method.
+//
+//  Every dimension except reach is a rate rather than a count, because a
+//  count is mostly a function of how many people saw it. Ranking raw
+//  likes would rank distribution twice and tell you nothing about the
+//  creative.
+//
+//  No composite score is produced from these on purpose. Publishing a
+//  composite alongside its parts makes the weights solvable from thirty
+//  creatives and a spreadsheet, which would hand back the method these
+//  replaced. The grade stays the single verdict.
+// ---------------------------------------------------------------------
+const rate = (num, den) => {
+  const n = Number(num), d = Number(den);
+  if (!isFinite(n) || !isFinite(d) || d <= 0) return null;
+  return (n / d) * 100;
+};
+const anyOf = (o, ...fields) => {
+  for (const f of fields) {
+    const v = o ? o[f] : null;
+    if (v !== null && v !== undefined) return Number(v);
+  }
+  return null;
+};
+const engagementsOf = (o) => {
+  if (!o) return null;
+  // A hidden like count arrives as 0, which is not a count of zero.
+  if (o.likes === null || o.likes === undefined) return null;
+  const t = anyOf(o, 'total_interactions');
+  if (t !== null && t > 0) return t;
+  return ['likes', 'comments', 'shares', 'saves']
+    .reduce((s, f) => s + (Number(o[f]) || 0), 0);
+};
+
+const DIMENSIONS = [
+  {
+    key: 'reach',
+    // Labelled for whichever figure the platform actually returns, rather
+    // than calling views reach and hoping nobody checks.
+    label: (plat, reports) => (reports(plat, 'reach') ? 'Reach' : 'Views'),
+    value: (o, dur, plat, reports) =>
+      reports(plat, 'reach') ? anyOf(o, 'reach') : anyOf(o, 'views'),
+  },
+  {
+    key: 'engagement',
+    label: () => 'Engagement',
+    value: (o) => rate(engagementsOf(o), anyOf(o, 'views')),
+  },
+  {
+    key: 'watch',
+    label: () => 'Watch-through',
+    // Instagram and Facebook never return watch time on organic posts, so
+    // this one drops out rather than showing an empty bar on every post.
+    value: (o, dur) => {
+      const w = anyOf(o, 'avg_watch_time');
+      return (w === null || !dur) ? null : rate(w, dur);
+    },
+  },
+  {
+    key: 'spread',
+    label: () => 'Saves and shares',
+    value: (o) => {
+      if (!o) return null;
+      const s = anyOf(o, 'shares'), sv = anyOf(o, 'saves');
+      if (s === null && sv === null) return null;
+      return rate((s || 0) + (sv || 0), anyOf(o, 'views'));
+    },
+  },
+];
+
+const BAND_WORD = (pct) => (pct >= 70 ? 'strong' : pct >= 40 ? 'steady' : 'weak');
+
+const n0 = (v) => Number(v || 0).toLocaleString('en-US');
+/** "no comments" rather than "0 comments", which reads as a missing value. */
+const countWord = (v, one, many) => {
+  const n = Number(v || 0);
+  return n === 0 ? `no ${many}` : `${n0(n)} ${n === 1 ? one : many}`;
+};
+
+/**
+ * What each dimension looked like, in counts rather than in the rate the
+ * rank was computed from. The rank says where it sits; this says what
+ * actually happened, which is the half a percentile cannot carry.
+ */
+function countPhrase(key, o, dur, platLabel) {
+  switch (key) {
+    case 'reach': {
+      const v = anyOf(o, 'views');
+      const r = anyOf(o, 'reach');
+      // Duration belongs with watch-through, not with distribution: "on a
+      // 95 second cut" attached to a reach figure implies the length had
+      // something to do with how far it travelled.
+      const views = v === null ? null : `${n0(v)} views`;
+      const reach = r === null ? null : `${n0(r)} reached`;
+      return [reach, views].filter(Boolean).join(' from ');
+    }
+    case 'engagement':
+      return [countWord(anyOf(o, 'likes'), 'like', 'likes'),
+              countWord(anyOf(o, 'comments'), 'comment', 'comments')].join(', ');
+    case 'watch': {
+      const w = anyOf(o, 'avg_watch_time');
+      if (w === null || !dur) return null;
+      return `watched for ${Math.round(w)} seconds of ${Math.round(dur)} on average`;
+    }
+    case 'spread':
+      return [countWord(anyOf(o, 'shares'), 'share', 'shares'),
+              countWord(anyOf(o, 'saves'), 'save', 'saves')].join(', ');
+    default: return null;
+  }
+}
+
+const STANDING_PHRASE = (pct, platLabel) =>
+  pct >= 70 ? `ahead of most of your ${platLabel} posts this quarter`
+: pct >= 40 ? `about level with your ${platLabel} posts this quarter`
+            : `behind most of your ${platLabel} posts this quarter`;
+
+/**
+ * The two statements that replaced the rating sentence.
+ *
+ * Built from the strongest and weakest dimension, so they are specific to
+ * this post rather than a restatement of the grade. Both carry counts,
+ * because "some people respond to it, but not many" is the shape of
+ * sentence this is meant to stop producing.
+ */
+function workingPair(dims, o, dur, platLabel) {
+  if (dims.length < 2) return { working: null, notWorking: null };
+  const sorted = [...dims].sort((a, b) => b.percentile - a.percentile);
+  const top = sorted[0], bottom = sorted[sorted.length - 1];
+  const line = (d) => {
+    const phrase = countPhrase(d.key, o, dur, platLabel);
+    if (!phrase) return null;
+    return `${phrase.charAt(0).toUpperCase()}${phrase.slice(1)}, ${STANDING_PHRASE(d.percentile, platLabel)}.`;
+  };
+  return { working: line(top), notWorking: line(bottom) };
+}
+
+/** Each dimension as a rank, dropping the ones this platform cannot report. */
+function dimensionsFor(o, dur, plat, peers, reports) {
+  const out = [];
+  for (const d of DIMENSIONS) {
+    const mine = d.value(o, dur, plat, reports);
+    if (mine === null) continue;
+    const peerVals = peers
+      .map((p) => d.value(p, p.duration_s, plat, reports))
+      .filter((v) => v !== null);
+    const { percentile, peers: n } = placeAmong(mine, peerVals);
+    if (percentile === null) continue;
+    out.push({ key: d.key, label: d.label(plat, reports), percentile, peers: n });
+  }
+  return out;
+}
+
+/** "Strong reach, weak engagement." from the best and worst ranks. */
+function dimensionSummary(dims) {
+  if (dims.length < 2) return null;
+  const sorted = [...dims].sort((a, b) => b.percentile - a.percentile);
+  const top = sorted[0], bottom = sorted[sorted.length - 1];
+  // Nothing separates them, so naming a best and a worst would invent a
+  // contrast the numbers do not support.
+  if (top.percentile - bottom.percentile < 20) {
+    return `${BAND_WORD(top.percentile)} across the board`.replace(/^./, (ch) => ch.toUpperCase()) + '.';
+  }
+  const word = (d) => `${BAND_WORD(d.percentile)} ${d.label.toLowerCase()}`;
+  return `${word(top)}, ${word(bottom)}.`.replace(/^./, (ch) => ch.toUpperCase());
 }
 
 function placeAmong(value, peers) {
@@ -507,7 +695,8 @@ async function buildValidation(brandId, creativeId) {
     // percentile. The raw counts come too, because the standing is
     // computed from the same signal the rating uses, not from the view.
     query(
-      `select o.platform, o.views, o.likes, o.comments, o.avg_watch_time, c.duration_s
+      `select o.platform, o.views, o.reach, o.likes, o.comments, o.shares, o.saves,
+              o.total_interactions, o.avg_watch_time, c.duration_s
          from organic_perf o
          join creatives c on c.creative_id = o.creative_id
         where c.brand_id = $1
@@ -601,6 +790,11 @@ async function buildValidation(brandId, creativeId) {
     const standing = placeAmong(signal, peers.map((p) => ratingSignal(p, c.type, p.duration_s)));
     standing.words = standingWords(standing.percentile);
 
+    // What the panel shows in place of the method: four ranks, a one-line
+    // read of them, and the two statements built from the best and worst.
+    const dims = dimensionsFor(o, c.duration_s, plat, peers, reports);
+    const pair = workingPair(dims, o, c.duration_s, meta.label);
+
     return {
       platform: plat,
       label: meta.label,
@@ -640,6 +834,15 @@ async function buildValidation(brandId, creativeId) {
         grade: rated,
         percentile: standing.percentile,
       },
+      // Each dimension as a rank against the brand's own posts, the
+      // one-line read of them, and the two statements. Empty when there
+      // are too few comparable posts to place anything against, which the
+      // panel says rather than inventing a rank.
+      dimensions: dims,
+      dimension_summary: dimensionSummary(dims),
+      working: pair.working,
+      not_working: pair.notWorking,
+      peer_count: peers.length,
       reason: reasonFor({ rated, state, signal, band, signalName: signalName(c.type), type: c.type }),
       standing,
       velocity: velocity[plat] || null,

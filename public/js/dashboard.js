@@ -1116,6 +1116,12 @@ function detailSummaryHTML(d) {
   </div>`;
 }
 
+/** "Instagram, Facebook and TikTok" rather than a comma-joined list. */
+function listWords(names) {
+  if (names.length <= 1) return names[0] || '';
+  return names.slice(0, -1).join(', ') + ' and ' + names[names.length - 1];
+}
+
 /**
  * How far a new post is through its validation window.
  *
@@ -1128,9 +1134,11 @@ function detailSummaryHTML(d) {
  * Elapsed time comes from the post's own timestamps rather than the date
  * field, which is a day with no clock on it.
  */
-function validationStrip(d) {
+function validationStrip(d, platformNames) {
   const states = ORG_PLATFORMS.map(pl => (d[pl.key] || {}).cqr).filter(Boolean);
   if (!states.length || !states.every(s => s === 'Too Early')) return '';
+  const on = (platformNames || []).length
+    ? `Reading ${listWords(platformNames)}. ` : '';
 
   const window = Number(VALIDATION_HOURS) || 24;
   const stamps = ORG_PLATFORMS
@@ -1142,7 +1150,7 @@ function validationStrip(d) {
   if (Number.isNaN(posted)) {
     return `<div class="card-validating">
       <div class="card-validating-l">Still being validated</div>
-      <div class="card-validating-s">Distribution is still running, so there is nothing to read yet.</div>
+      <div class="card-validating-s">${on}Distribution is still running, so there is nothing to read yet.</div>
     </div>`;
   }
 
@@ -1157,7 +1165,7 @@ function validationStrip(d) {
   return `<div class="card-validating">
     <div class="card-validating-l">Still being validated<span class="card-validating-t">${when}</span></div>
     <div class="card-validating-track"><div class="card-validating-fill" style="width:${pct}%"></div></div>
-    <div class="card-validating-s">${Math.max(1, Math.round(hours))}h of ${window}h. Distribution is still running, so the numbers below will move.</div>
+    <div class="card-validating-s">${on}${Math.max(1, Math.round(hours))}h of ${window}h.</div>
   </div>`;
 }
 
@@ -1192,37 +1200,17 @@ function renderCards(data) {
       .filter(pl => d[pl.link] || d[pl.key])
       .map(pl => ({ label: pl.label, o: d[pl.key] || null, v: (d[pl.key] || {}).cqr || null }));
 
-    const interactionsOf = (o) => {
-      if (!o) return null;
-      // A hidden like count is not a count of zero. The account has turned
-      // the number off, so total_interactions comes back as 0 and printing
-      // "0 interactions" states something false about the post.
-      if (o.cqr === 'Counts Hidden' || o.likes === null || o.likes === undefined) return null;
-      if (o.totalInteractions !== null && o.totalInteractions !== undefined && o.totalInteractions !== 0) {
-        return o.totalInteractions;
-      }
-      const parts = [o.likes, o.comments, o.shares, o.saves]
-        .filter(v => v !== null && v !== undefined);
-      return parts.length ? parts.reduce((s, v) => s + Number(v), 0) : null;
-    };
-
-    // Plain counts. Neither of these is the figure a rating is made of, so
-    // showing them says what happened without saying how it is judged.
-    const statLine = (o, extra) => {
-      const bits = [];
-      if (o) {
-        if (o.views !== null && o.views !== undefined) bits.push(`${fmtN(o.views)} views`);
-        const inter = interactionsOf(o);
-        if (inter !== null) bits.push(`${fmtN(inter)} interaction${inter === 1 ? '' : 's'}`);
-      }
-      if (extra) bits.push(extra);
-      return bits.length ? `<div class="card-cqr-stats">${bits.join(' · ')}</div>` : '';
-    };
-
+    // The card carries the verdict and nothing else.
+    //
+    // Counts belong in the panel, where there is room to place them
+    // against something. On the card they were four numbers with no
+    // reference point, and a grid of them is harder to scan than the
+    // grades alone, which is the thing the card exists to show.
+    //
     // "Not rated yet" and "no numbers have arrived" are different things,
     // and the card said the first for both. A platform with no organic row
     // at all has not been measured, which is not a verdict on the post.
-    const row = (label, v, o, hideState, extra) => `<div class="card-cqr-row">
+    const row = (label, v, o, hideState) => `<div class="card-cqr-row">
         <div class="card-cqr-main">
           <span class="card-cqr-plat">${label}</span>
           ${isGrade(v)
@@ -1231,7 +1219,6 @@ function renderCards(data) {
               : `<span class="card-cqr-state" title="${escapeHtml(STATE_WHY[v] || '')}">${
                   v ? stateShort(v) : (o ? 'Not rated yet' : 'No numbers yet')}</span>`)}
         </div>
-        ${statLine(o, extra)}
       </div>`;
 
     // When no platform has a rating and they all give the same reason, the
@@ -1241,31 +1228,41 @@ function renderCards(data) {
     const sharedState = !orgVals.some(o => isGrade(o.v)) && states.length === 1 && states[0]
       ? states[0] : null;
 
+    // One reason, then the platforms it ran on as a list. Rows with the
+    // chip suppressed left a column of bare platform names beside nothing
+    // at all, which looked like a rendering fault rather than a state.
     const sharedNote = sharedState && sharedState !== 'Too Early'
       ? `<div class="card-cqr-note" title="${escapeHtml(STATE_WHY[sharedState] || '')}">${
-          escapeHtml(STATE_WHY[sharedState] || stateShort(sharedState))}</div>`
+          escapeHtml(STATE_WHY[sharedState] || stateShort(sharedState))}</div>
+         <div class="card-cqr-stats">On ${escapeHtml(listWords(orgVals.map(o => o.label)))}.</div>`
       : '';
 
-    const orgBlock = !orgVals.length ? ''
-      : sharedNote + orgVals.map(o => row(o.label, o.v, o.o, !!sharedState)).join('');
+    // Inside the validation window the counts are deliberately left off.
+    //
+    // They are still climbing, so a number read now is not the number this
+    // post will settle at, and putting it on the card invites comparing it
+    // against posts that have finished. What is true right now is the
+    // state, so the state is what shows: the strip above carries it with
+    // how far through the window it is, and the rows name the platforms
+    // being read rather than repeating "Too early" once per platform.
+    // Inside the window the strip is the whole organic block, so the
+    // platform list goes into it rather than under a second heading.
+    const inWindow = sharedState === 'Too Early';
+    const orgBlock = (!orgVals.length || inWindow) ? ''
+      : sharedState ? sharedNote
+      : orgVals.map(o => row(o.label, o.v, o.o, false)).join('');
 
     // The rating that does apply once there is spend behind it. Shown as
     // soon as there is spend, rated or not: "boosted but not yet rated" is
     // a different thing from "never boosted", and the card could not tell
     // them apart while this block only appeared on a grade.
     //
-    // Spend sits under each platform the way views do under the organic
-    // rows. The footer said a creative was running without ever saying on
-    // how much, which is the first thing asked about anything running.
     const paidVals = [['meta', 'Meta'], ['tiktok', 'TikTok']]
       .filter(([k]) => (d.paidBy || {})[k])
-      .map(([k, label]) => {
-        const p = d.paidBy[k];
-        const money = p.spend ? `${fmt(p.spend)} spent` : '';
-        return row(label, p.cqr, null, false, money);
-      }).join('');
+      .map(([k, label]) => row(label, d.paidBy[k].cqr, null, false)).join('');
 
-    const validating = validationStrip(d);
+    const validating = validationStrip(d, ORG_PLATFORMS
+      .filter(pl => d[pl.link] || d[pl.key]).map(pl => pl.label));
 
     // Who posted it. Others Say is creator content by definition, and
     // creator-led Brand Say is fronted by one, so both carry a handle the
@@ -1824,19 +1821,83 @@ function buildValidationHTML(v) {
   // What a planner needs from this panel is the same three things either
   // way: what the audience did, where it places against the brand's own
   // output, and whether to act. All three survive without the arithmetic.
-  const judgedRows = (p, plat) => {
-    const sg = p.signal;
-    if (!sg) return '';
-    const st = (plat || {}).state || null;
+  const DIM_COLOUR = (pct) => pct >= 70 ? '#04785C' : pct >= 40 ? '#C07A12' : '#A32040';
+  const ord = (n) => ordinal(n);
+
+  // Each dimension as a rank. The faint mark at the midpoint is the
+  // brand's own median, so a bar is read against something rather than
+  // floating against an empty track.
+  // Label and rank on one line, bar on its own underneath.
+  //
+  // Side by side, a 112px label and a 44px figure left about thirty
+  // pixels of track inside a panel card, which is not a bar. Stacked, the
+  // track gets the full width of the card at every breakpoint.
+  const dimBars = (dims) => !dims || !dims.length ? '' : `
+    <div class="orgval-dims">${dims.map(d => `
+      <div class="orgval-dim">
+        <div class="orgval-dim-head">
+          <span class="orgval-dim-k">${esc(d.label)}</span>
+          <span class="orgval-dim-v">${ord(d.percentile)}</span>
+        </div>
+        <span class="orgval-dim-track"><span class="orgval-dim-mid"></span><span
+          class="orgval-dim-fill" style="width:${Math.max(3, Math.min(100, d.percentile))}%;background:${DIM_COLOUR(d.percentile)}"></span></span>
+      </div>`).join('')}</div>`;
+
+  /**
+   * What the rating means, in four parts: where it ranks, a one-line read
+   * of the dimensions, the dimensions themselves, and what is and is not
+   * working stated in counts.
+   *
+   * Boosted is its own shape. The old block delivered a confident grade
+   * and then explained that spend was behind the numbers it came from,
+   * which is a verdict undercutting itself in the same breath. Once there
+   * is spend the organic grade is history, so it is worded as history.
+   */
+  const judgedRows = (p) => {
+    const sg = p.signal || {};
+    const st = p.state || null;
+
+    if (p.boosted) {
+      // The recommendation below already says to judge it on paid from
+      // here, so this stops at what the organic grade was and means.
+      return `<div class="orgval-line">${
+        sg.grade
+          ? `Rated <b>${esc(sg.grade)}</b> organically before the spend started. That is what it earned on its own.`
+          : 'Spend started before there was enough organic data to rate it.'
+      }</div>`;
+    }
+
     if (!sg.grade) {
       return `<div class="orgval-note">${esc(
-        (plat || {}).state_note || STATE_WHY[st] || 'Not enough has come back to rate this yet.')}</div>`;
+        p.state_note || STATE_WHY[st] || 'Not enough has come back to rate this yet.')}</div>`;
     }
-    // Percentile is a position, not a method: it says where this sits
-    // among the brand's own posts without saying what was measured.
-    const place = sg.percentile === null || sg.percentile === undefined ? ''
-      : `<div class="orgval-place">Ahead of ${sg.percentile}% of comparable posts this quarter.</div>`;
-    return place;
+
+    const dims = p.dimensions || [];
+    // No headline percentile.
+    //
+    // signal.percentile is the rank on the figure the rating is built
+    // from, so printed beside the dimension bars it is identical to one
+    // of them, and whichever it matches is the rating dimension. That
+    // hands back the method these bars exist to replace. The bars say
+    // where this sits on each dimension; the grade is the verdict.
+
+    // Below the floor the panel says how many comparable posts there were
+    // rather than printing a rank computed from three of them.
+    const thin = !dims.length
+      ? `<div class="orgval-note">Only ${p.peer_count || 0} comparable post${
+          (p.peer_count || 0) === 1 ? '' : 's'} this quarter, too few to place it against.</div>`
+      : '';
+
+    const summary = p.dimension_summary
+      ? `<div class="orgval-dim-sum">${esc(p.dimension_summary)}</div>` : '';
+
+    const wn = (p.working || p.not_working) ? `
+      <div class="orgval-wn">
+        ${p.working ? `<div class="orgval-line"><b>Working</b> ${esc(p.working)}</div>` : ''}
+        ${p.not_working ? `<div class="orgval-line"><b>Not working</b> ${esc(p.not_working)}</div>` : ''}
+      </div>` : '';
+
+    return `${thin}${summary}${dimBars(dims)}${wn}`;
   };
 
   // "Boost — " with nothing after the dash is what an empty recommendation
@@ -1878,10 +1939,16 @@ function buildValidationHTML(v) {
       : (p.velocity && p.velocity.points === 1
           ? `<div class="orgval-line orgval-muted">Only one reading so far, so there is no trend yet. A second pull will show whether it is still climbing.</div>`
           : '');
-    const standing = p.standing && p.standing.words
-      ? `<div class="orgval-line"><b>Where it sits:</b> ${esc(p.standing.words)}, against ${p.standing.peers} other posts of the same kind.</div>`
-      : `<div class="orgval-line orgval-muted">Too few other organic posts in the last 90 days to place this one against them.</div>`;
-    const judged = judgedRows(p, p);
+    const judged = judgedRows(p);
+    // The rank line inside judgedRows says where this sits, so the old
+    // standing sentence is kept only for posts that have no rank of their
+    // own: printing both said the same thing twice in different words.
+    const ranked = (p.signal || {}).percentile !== null
+      && (p.signal || {}).percentile !== undefined && !p.boosted;
+    const standing = ranked ? ''
+      : (p.standing && p.standing.words
+        ? `<div class="orgval-line"><b>Where it sits:</b> ${esc(p.standing.words)}, against ${p.standing.peers} other posts of the same kind.</div>`
+        : '');
     const recClass = p.recommendation.action === 'boost' ? 'orgval-rec-go'
                    : p.recommendation.action === 'hold' ? 'orgval-rec-stop'
                    : ['wait', 'no_data', 'no_grade'].includes(p.recommendation.action) ? 'orgval-rec-none'
@@ -1900,8 +1967,8 @@ function buildValidationHTML(v) {
       </div>
       ${countsBlock(p)}
       ${reactionsBlock(p)}
-      ${(judged || p.reason) ? `<div class="orgval-divider">What this rating means</div>` : ''}
-      ${p.reason ? `<div class="orgval-line">${esc(p.reason)}</div>` : ''}
+      ${judged ? `<div class="orgval-divider">${
+        p.boosted ? 'Where the organic rating stands' : 'What this rating means'}</div>` : ''}
       ${judged}
       ${standing}
       ${velocity}
