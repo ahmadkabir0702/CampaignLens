@@ -6,6 +6,7 @@ const youtubedl = require('youtube-dl-exec');
 const os = require('os'); // <--- ADD THIS
 const { GoogleGenAI } = require('@google/genai');
 const session = require('express-session');
+const bcrypt = require('bcryptjs');
 const { query } = require('./db');
 
 const app = express();
@@ -101,7 +102,10 @@ app.use((req, res, next) => {
   const p = req.path;
   if (role !== COORD_ROLE) return next();
 
-  const ok = p === '/coordinator' || p === '/logout'
+  // /change-password is open to every role, including this one. It is the
+  // one page a coordinator must be able to reach besides their own, and a
+  // forced rotation would otherwise bounce them in a loop.
+  const ok = p === '/coordinator' || p === '/logout' || p === '/change-password'
     || COORD_ASSET_RE.test(p) || COORD_SCRIPTS.has(p) || COORD_API.has(p);
   if (ok) return next();
   if (p.startsWith('/api/')) return res.status(403).json({ error: 'Not permitted for this role' });
@@ -181,6 +185,80 @@ app.get('/login', (req, res) => {
 app.get('/logout', (req, res) => {
   req.session.destroy();
   res.redirect('/login');
+});
+
+// ---------------------------------------------------------------------
+//  Changing your own password
+//
+//  There was no way to do this except editing the hash by hand. With 24
+//  shared logins across a client and eight agencies, that made every
+//  departure, every suspected leak and every routine rotation a database
+//  job, and it meant the password somebody was handed on day one was
+//  still their password a year later.
+//
+//  Served from here rather than public/, so the static handler cannot
+//  reach it and the only route in is this one, behind requireAuth.
+// ---------------------------------------------------------------------
+const CHANGE_PW_HTML = fs.readFileSync(path.join(__dirname, 'public', 'change-password.html'), 'utf8');
+
+function renderChangePw(req, message) {
+  const err = message ? `<div class="err">${message}</div>` : '';
+  const shared = req.session.mustChangePassword
+    ? 'This account needs a new password before you can continue.'
+    : 'If several people share this login, everyone will need the new password.';
+  return CHANGE_PW_HTML
+    .replace('<!-- ERROR_BLOCK -->', err)
+    .replace('<!-- USERNAME -->', String(req.session.user || ''))
+    .replace('<!-- SHARED_NOTE -->', shared);
+}
+
+app.get('/change-password', (req, res) => res.type('html').send(renderChangePw(req, null)));
+
+app.post('/change-password', async (req, res) => {
+  const user = req.session.user;
+  const current = String(req.body.current || '');
+  const next = String(req.body.next || '');
+  const confirm = String(req.body.confirm || '');
+
+  const fail = (m) => res.type('html').send(renderChangePw(req, m));
+
+  if (next !== confirm) return fail('The two new passwords do not match.');
+  if (next.length < 10) return fail('Use at least 10 characters.');
+  if (next === current) return fail('The new password is the same as the current one.');
+
+  try {
+    const { rows } = await query(
+      `select password_hash from app_users where username = $1 and is_active = true`, [user]);
+    if (!rows.length) return res.redirect('/logout');
+    if (!await bcrypt.compare(current, rows[0].password_hash)) {
+      return fail('That is not the current password.');
+    }
+    const hash = await bcrypt.hash(next, 10);
+    await query(
+      `update app_users
+          set password_hash = $2, password_changed_at = now(), must_change_password = false
+        where username = $1`, [user, hash]);
+
+    // The flag lives on the session too, so clear it here or the gate
+    // below keeps redirecting until they sign in again.
+    req.session.mustChangePassword = false;
+    console.log(`[change-password] ${user} changed their password`);
+    res.redirect('/');
+  } catch (e) {
+    console.error('[change-password] failed:', e.message);
+    fail('Could not change the password. Try again, and tell Kabir if it keeps failing.');
+  }
+});
+
+// A forced change is not optional. Anyone carrying the flag goes to the
+// form and stays there, including on API calls, which would otherwise let
+// the dashboard keep working around it.
+app.use((req, res, next) => {
+  if (!req.session || !req.session.mustChangePassword) return next();
+  const p = req.path;
+  if (p === '/change-password' || p === '/logout' || p.startsWith('/img/') || p.startsWith('/fonts/')) return next();
+  if (p.startsWith('/api/')) return res.status(403).json({ error: 'Password change required' });
+  res.redirect('/change-password');
 });
 
 app.post('/api/test-gemini', async (req, res) => {

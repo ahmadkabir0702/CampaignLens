@@ -66,7 +66,7 @@ module.exports = function mountRoutes(app, deps = {}) {
 
     try {
       const { rows } = await query(
-        `select password_hash, role,
+        `select password_hash, role, must_change_password,
                 can_ask_lens, can_add_creative, can_pretest
            from app_users
           where username = $1 and is_active = true`,
@@ -99,8 +99,16 @@ module.exports = function mountRoutes(app, deps = {}) {
         pretest:     rows[0].can_pretest      !== false,
       };
       req.session.activeBrand = access.brands[0];
+      req.session.mustChangePassword = rows[0].must_change_password === true;
+
+      // Stamped after the session is settled, and deliberately not awaited:
+      // a slow or failing write here should not stop someone signing in.
+      query(`update app_users set last_login_at = now() where username = $1`, [username])
+        .catch(e => console.warn('[login] last_login_at not recorded:', e.message));
+
       req.session.save(err => {
         if (err) { console.error('[login] session save:', err); return res.redirect('/login?error=1'); }
+        if (req.session.mustChangePassword) return res.redirect('/change-password');
         res.redirect(req.session.role === 'influencer_coordinator' ? '/coordinator' : '/');
       });
     } catch (err) {
