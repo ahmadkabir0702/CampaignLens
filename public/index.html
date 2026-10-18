@@ -569,11 +569,10 @@ window.addEventListener('load', () => setTimeout(syncFilterPills, 400));
   <script src="/js/markers.js"></script>
   <script src="/js/chat-cards.js"></script>
   <script src="/js/chat-panel.js"></script>
-  <script>
-    AskLens.init({
-      mountButton: document.querySelector('.topbar-right'),
-    });
-  </script>
+  <!-- Ask Lens is started by applyFeatures() in dashboard.js once the
+       server has confirmed this account may use it, rather than here
+       where it would appear for everyone and then have to be removed. -->
+
   <script>
   /* The two tabs have different filters. Show whichever belongs to the
      active tab; the KPI bar is rendered by kpi-dashboard.js into the

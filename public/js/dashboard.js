@@ -111,15 +111,45 @@ let chartsInit = {};
 
 let AGENCIES = [], CURRENT_USER = '', CURRENT_ROLE = '', CURRENT_IS_INTERNAL = false;
 
+// What this account may use. Starts closed: the controls are only put on
+// the page once the server has said so, so a failed or slow /api/brands
+// shows nothing rather than briefly offering a button that would 403.
+let FEATURES = { askLens: false, addCreative: false, pretest: false };
+
+/**
+ * Put the page in the shape this account's access allows.
+ *
+ * Controls are removed rather than hidden. Hiding leaves them one CSS
+ * edit away, and while the server refuses the endpoints either way,
+ * there is no reason to ship markup for something nobody can use.
+ */
+function applyFeatures() {
+  if (!FEATURES.pretest) {
+    document.querySelector('.nav-item[onclick*="pretests"]')?.remove();
+  }
+  if (!FEATURES.addCreative) {
+    document.querySelector('.topbar-right button[onclick*="openAddCreativeModal"]')?.remove();
+    document.getElementById('addCreativeModal')?.remove();
+  }
+  // Ask Lens builds its own button and panel, so it is simply never
+  // started rather than started and then taken apart.
+  if (FEATURES.askLens && typeof AskLens !== 'undefined' && !applyFeatures.askLensUp) {
+    applyFeatures.askLensUp = true;
+    AskLens.init({ mountButton: document.querySelector('.topbar-right') });
+  }
+}
+
 async function loadBrands() {
   try {
     const res = await fetch('/api/brands');
     if (!res.ok) return;
-    const { brands, active, agencies, user, isInternal } = await res.json();
+    const { brands, active, agencies, user, isInternal, features } = await res.json();
     AGENCIES = agencies || [];
     CURRENT_USER = (user && user.displayName) || '';
     CURRENT_ROLE = (user && user.role) || '';
     CURRENT_IS_INTERNAL = !!isInternal;
+    FEATURES = Object.assign({ askLens: true, addCreative: true, pretest: true }, features || {});
+    applyFeatures();
     const sel = document.getElementById('brand-switcher');
     if (!sel) return;
     sel.innerHTML = brands
@@ -301,6 +331,10 @@ function populateFilters() {
 }
 
 function setNav(page, element) {
+    // The nav item is removed for accounts without pre-tests, but setNav
+    // is also reachable from code and from a bookmarked state, so the
+    // page itself refuses rather than relying on the link being gone.
+    if (page === 'pretests' && !FEATURES.pretest) page = 'creatives';
     ['page-creatives', 'page-kpi', 'page-creators', 'page-pretests'].forEach(id => {
         const el = document.getElementById(id);
         if (el) el.classList.add('hidden');
