@@ -16,10 +16,14 @@ const { getPool } = require('./db');
 
 // Bump this whenever the digest format or the records shape changes.
 // Stored snapshots with a different schema version rebuild on next use.
-const SNAPSHOT_SCHEMA_VERSION = 5;
+// Bumped to 6: Brainsuite, fatigue and rating history were added, and the
+// CQR states stopped being reported as Invalid. Every stored snapshot
+// predating that is wrong, not merely thinner, so none should survive.
+const SNAPSHOT_SCHEMA_VERSION = 6;
 
 const T = S.tables, C = S.creative, P = S.paidView, O = S.organicView, OR = S.organicRawCols;
 const OB = S.organicBest, B = S.boost, TH = S.thresholds, CR = S.creator;
+const BSJ = S.brainsuite, W = S.windowed, CH = S.cqrHistory;
 
 function assertBrand(b) { if (!S.brands.includes(b)) throw new Error(`Unknown brand: ${b}`); return b; }
 const num = (v) => (v === null || v === undefined ? 0 : Number(v));
@@ -45,7 +49,14 @@ function displayLabel(id, hook) {
   if (words.length >= 3) return words.slice(0, 7).join(' ') + (words.length > 7 ? '…' : '');
   return shortName(id);
 }
-function bestCqr(list) { return list.filter(Boolean).sort((a, b) => (S.cqrRank[a] ?? 9) - (S.cqrRank[b] ?? 9))[0] || 'Invalid'; }
+// The best GRADE across platforms. A state is not a rating, so it cannot
+// win this comparison and cannot be the answer: with no grade anywhere the
+// creative is unrated, which the caller renders as such.
+function bestCqr(list) {
+  const graded = list.filter((c) => S.cqrGrades.includes(c));
+  if (graded.length) return graded.sort((a, b) => S.cqrRank[a] - S.cqrRank[b])[0];
+  return list.filter(Boolean)[0] || null;   // a state, or nothing at all
+}
 function rankCmp(a, b) {
   const c = (S.cqrRank[a.cqr] ?? 9) - (S.cqrRank[b.cqr] ?? 9); if (c) return c;
   const h = num(b.hook_rate) - num(a.hook_rate); if (h) return h;
@@ -108,6 +119,56 @@ async function qBoost(pool, brand) {
      left join ${T.boostStatus} bs on bs.${B.creativeId} = ob.${OB.creativeId}
      where ob.${OB.brand} = $1`, [brand]);
   return rows;
+}
+
+// ---------------------------------------------------------------
+//  Brainsuite, fatigue and rating history
+//
+//  Three sources the assistant had no sight of at all. Each query is
+//  written to fail soft: these tables arrived in later migrations, and a
+//  database that has not run them should leave Ask Lens working on
+//  everything else rather than erroring on every question.
+// ---------------------------------------------------------------
+const soft = async (fn, what) => {
+  try { return await fn(); }
+  catch (e) { console.warn(`[ask-lens] ${what} unavailable: ${e.message}`); return []; }
+};
+
+async function qBrainsuite(pool, brand) {
+  return soft(async () => {
+    const { rows } = await pool.query(
+      `select j.${BSJ.creativeId} as id, j.${BSJ.kind} as kind, j.${BSJ.status} as status,
+              j.${BSJ.assetName} as asset_name, r.${BSJ.score} as score, r.${BSJ.rating} as rating
+         from ${T.brainsuiteJobs} j
+         left join ${T.brainsuiteResults} r on r.job_id = j.${BSJ.jobId}
+        where j.${BSJ.brand} = $1
+        order by j.${BSJ.createdAt} desc`, [brand]);
+    return rows;
+  }, 'brainsuite');
+}
+
+// First window against last, per creative, so decline is visible. The view
+// holds one row per window; we only need the two ends.
+async function qWindowed(pool, brand) {
+  return soft(async () => {
+    const { rows } = await pool.query(
+      `select ${W.creativeId} as id, ${W.platform} as platform, ${W.windowName} as window_name,
+              ${W.cqr} as cqr, ${W.hookRate} as hook_rate, ${W.holdRate} as hold_rate,
+              ${W.spend} as spend, ${W.isActive} as is_active, ${W.isCurrent} as is_current
+         from ${T.paidWindowed} where ${W.brand} = $1`, [brand]);
+    return rows;
+  }, 'windowed paid');
+}
+
+async function qCqrHistory(pool, brand) {
+  return soft(async () => {
+    const { rows } = await pool.query(
+      `select ${CH.creativeId} as id, ${CH.channel} as channel, ${CH.platform} as platform,
+              ${CH.cqr} as cqr, ${CH.cqrLifetime} as cqr_lifetime
+         from ${T.cqrHistory} where ${CH.brand} = $1
+        order by id desc limit 500`, [brand]);
+    return rows;
+  }, 'cqr history');
 }
 
 async function qThresholds(pool, brand) {
@@ -297,10 +358,54 @@ function renderDigest(an, insights) {
 
   L.push('TOTALS');
   L.push(`  ${an.totals.creatives} boosted creatives, ${an.totals.active} active | spend ${money(an.totals.spend)} | reach ${fmtCount(an.totals.reach)} | impressions ${fmtCount(an.totals.impressions)}`);
-  L.push(`  CQR mix: ${an.cqrMix.Good} Good, ${an.cqrMix.Average} Average, ${an.cqrMix.Poor} Poor, ${an.cqrMix.Invalid} Invalid`);
+  L.push(`  CQR mix: ${an.cqrMix.Good} Good, ${an.cqrMix.Average} Average, ${an.cqrMix.Poor} Poor, ${an.cqrMix.Unrated} not yet rated`);
+  // Why the unrated ones are unrated, in the system's own words, so the
+  // assistant explains rather than guessing or calling them invalid.
+  const states = Object.entries(an.cqrStates || {}).sort((a, b) => b[1] - a[1]);
+  if (states.length) {
+    L.push(`  Not yet rated, by reason: ${states.map(([s, n]) =>
+      `${n} ${s} (${S.cqrStates[s] || 'no rating'})`).join(' | ')}`);
+    L.push('  Unrated is not a bad rating. Say why a creative has no rating rather than calling it invalid or poor.');
+  }
   L.push(`  Spend by CQR: Good ${money(an.spendByCqr.Good)} | Average ${money(an.spendByCqr.Average)} | Poor ${money(an.spendByCqr.Poor)}`);
   L.push(`  Brand avg hook ${fmtPct(an.totals.hook_rate)} (${an.totals.strongHookShare}% Strong) | avg hold ${fmtPct(an.totals.hold_rate)} (${an.totals.strongHoldShare}% Strong)`);
   L.push(`  Poor creatives: ${an.poorSplit.activeCount} still running on ${money(an.poorSplit.activeSpend)} (current waste), ${an.poorSplit.stoppedCount} stopped after ${money(an.poorSplit.stoppedSpend)} (past spend, already addressed)`);
+
+  // ---- Fatigue -------------------------------------------------
+  // The lifetime rating takes the best day a creative ever had, so it
+  // cannot fall. Decline is only visible by comparing windows, which is
+  // why this is stated separately rather than left for the model to
+  // infer from a rating that structurally never drops.
+  if ((an.fatiguing || []).length) {
+    L.push('');
+    L.push('FATIGUING (rated worse in the latest window than in its first, and still running)');
+    for (const f of an.fatiguing.slice(0, 10)) {
+      L.push(`  ${f.id} on ${S.platformLabels[f.platform] || f.platform}: ${f.from} to ${f.to}, ${money(f.spend)} in the latest window`);
+    }
+    L.push('  The lifetime rating will not show this. It keeps the best day the creative ever had.');
+  }
+
+  // ---- Brainsuite ----------------------------------------------
+  if ((an.brainsuite || []).length) {
+    L.push('');
+    L.push(`BRAINSUITE (pre-flight creative scores, ${an.brainsuite.length} scored)`);
+    const top = an.brainsuite.slice(0, 5), bottom = an.brainsuite.slice(-3).reverse();
+    L.push(`  Highest: ${top.map((b) => `${b.id} ${b.score}${b.rating ? ` (${b.rating})` : ''}`).join(', ')}`);
+    if (an.brainsuite.length > 8) {
+      L.push(`  Lowest: ${bottom.map((b) => `${b.id} ${b.score}${b.rating ? ` (${b.rating})` : ''}`).join(', ')}`);
+    }
+    L.push('  This judges the creative before any delivery. It is not a performance metric and should not be ranked against CQR, but it answers whether a creative was strong before money went behind it.');
+  }
+
+  // ---- Recorded rating changes ---------------------------------
+  if ((an.ratingChanges || []).length) {
+    L.push('');
+    L.push('RATING CHANGES RECORDED');
+    for (const h of an.ratingChanges.slice(0, 8)) {
+      L.push(`  ${h.id} ${h.channel} ${S.platformLabels[h.platform] || h.platform}: window ${h.cqr}, lifetime ${h.cqr_lifetime}`);
+    }
+    L.push('  Recorded from the night this was switched on, so an empty or short list means little history yet, not that nothing has moved.');
+  }
   if (an.hookHold.mostlyLose) L.push(`  Where creatives lose people: ${an.hookHold.mostlyLose}.${an.hookHold.manyWeakOnBoth ? ' Many creatives are weak on both hook and hold.' : ''}`);
   L.push('');
 
@@ -467,10 +572,19 @@ function renderDigest(an, insights) {
 async function buildSnapshot(brand, _r, opts = {}) {
   assertBrand(brand);
   const pool = opts.pool || getPool();
-  const [creatives, metaRows, ttRows, organicRows, boostRows, thresholds, monthly, freshness] = await Promise.all([
+  const [creatives, metaRows, ttRows, organicRows, boostRows, thresholds, monthly, freshness,
+         bsRows, windowRows, historyRows] = await Promise.all([
     qCreatives(pool, brand), qPaid(pool, T.paidMeta, brand, 'meta'), qPaid(pool, T.paidTiktok, brand, 'tiktok'),
     qOrganic(pool, brand), qBoost(pool, brand), qThresholds(pool, brand), qMonthly(pool, brand), qFreshness(pool, brand),
+    qBrainsuite(pool, brand), qWindowed(pool, brand), qCqrHistory(pool, brand),
   ]);
+  // Score per creative, from the most recent succeeded job. Earlier jobs
+  // and failed ones are kept out: a failed job is not a score of zero.
+  const bsBy = new Map();
+  for (const r of bsRows) {
+    if (r.kind !== 'creative' || r.status !== 'succeeded' || !r.id) continue;
+    if (!bsBy.has(r.id)) bsBy.set(r.id, r);     // rows arrive newest first
+  }
   const metaBy = new Map(metaRows.map((r) => [r.id, r])), ttBy = new Map(ttRows.map((r) => [r.id, r]));
   const boostBy = new Map(boostRows.map((r) => [r.id, r]));
 
@@ -492,6 +606,12 @@ async function buildSnapshot(brand, _r, opts = {}) {
       time_to_product_s: c.time_to_product_s, product_screen_pct: c.product_screen_pct,
       cuts_per_10s: c.cuts_per_10s,
       boosted: !!m, is_validated: !!(bs && bs.is_validated), organic_best_cqr: bs ? bs.best_cqr : null,
+      // Brainsuite is a pre-flight judgment of the creative itself, made
+      // before any delivery. It is not a performance metric and should
+      // never be ranked against CQR, but it answers "was this any good
+      // before we spent on it", which nothing else here can.
+      brainsuite_score: bsBy.has(id) ? Number(bsBy.get(id).score) : null,
+      brainsuite_rating: bsBy.has(id) ? bsBy.get(id).rating : null,
       ...(m || {}),
     };
     rec.labels = V.creativeLabels(rec);
@@ -511,8 +631,48 @@ async function buildSnapshot(brand, _r, opts = {}) {
     records[o.id].organic[o.platform] = o;
   }
 
+  // ---------------------------------------------------------------
+  //  Fatigue, from the windowed view
+  //
+  //  A creative is fatiguing when its rating in the latest window is
+  //  worse than in its first and it is still running. The lifetime
+  //  rating cannot show this: it takes the best day a creative ever had,
+  //  so it never falls.
+  // ---------------------------------------------------------------
+  const byCreativePlat = new Map();
+  for (const w of windowRows) {
+    const k = `${w.id}|${w.platform}`;
+    if (!byCreativePlat.has(k)) byCreativePlat.set(k, []);
+    byCreativePlat.get(k).push(w);
+  }
+  const fatiguing = [];
+  for (const [k, ws] of byCreativePlat) {
+    const graded = ws.filter((w) => S.cqrGrades.includes(w.cqr));
+    if (graded.length < 2) continue;
+    const first = graded[0], last = graded[graded.length - 1];
+    if (!last.is_current || !last.is_active) continue;
+    if (S.cqrRank[last.cqr] > S.cqrRank[first.cqr]) {
+      const [id, platform] = k.split('|');
+      fatiguing.push({ id, platform, from: first.cqr, to: last.cqr, spend: num(last.spend) });
+    }
+  }
+  fatiguing.sort((a, b) => b.spend - a.spend);
+
+  // Rating changes already recorded, newest first. The history table only
+  // fills from the night it was switched on, so an empty list means no
+  // change has been recorded yet rather than nothing having moved.
+  const ratingChanges = historyRows
+    .filter((h) => h.cqr && h.cqr_lifetime && h.cqr !== h.cqr_lifetime)
+    .slice(0, 20);
+
   // Everything computable is computed here, in code.
   const an = A.build({ brand, paid, organic, boost: boostRows, thresholds, monthly, freshness, all: allRecs });
+  an.fatiguing = fatiguing;
+  an.ratingChanges = ratingChanges;
+  an.brainsuite = [...bsBy.values()]
+    .filter((r) => r.score !== null && r.score !== undefined)
+    .map((r) => ({ id: r.id, score: Number(r.score), rating: r.rating }))
+    .sort((a, b) => b.score - a.score);
 
   const version = crypto.createHash('sha256')
     .update([brand, freshness.max_date, freshness.row_count, paid.length, organic.length, boostRows.length].join('|'))

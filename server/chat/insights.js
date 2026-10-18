@@ -171,7 +171,7 @@ function describe(an, id, role) {
 
 function buildCandidates(an) {
   const out = [];
-  const total = an.spendByCqr.Good + an.spendByCqr.Average + an.spendByCqr.Poor + (an.spendByCqr.Invalid || 0);
+  const total = an.spendByCqr.Good + an.spendByCqr.Average + an.spendByCqr.Poor + (an.spendByCqr.Unrated || 0);
 
   // 1. The creative elements that make the most difference.
   for (const e of (an.elements || []).slice(0, 6)) {
