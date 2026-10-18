@@ -451,6 +451,13 @@ select:focus,.search-input:focus,.modal-input:focus{outline:none;border-color:va
 }
 .card-id:empty{display:none}
 .card-campaign{font:400 12.5px/18px var(--font);color:var(--ink-600);margin-bottom:12px}
+/* Who posted it, on Others Say cards. Sits between the campaign line and
+   the tags, and is clipped rather than wrapped: a long handle pushing the
+   tags onto a third line changes the height of one card in a grid. */
+.card-creator{
+  font:400 12px/17px var(--font);color:var(--ink-500);
+  margin:-8px 0 10px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;
+}
 .card-tags{display:flex;gap:6px;flex-wrap:wrap;margin-bottom:0}
 
 .mini-bars{display:flex;flex-direction:column;gap:9px;padding-top:13px;border-top:1px solid var(--line-soft)}
@@ -1639,8 +1646,16 @@ select:focus,.search-input:focus,.modal-input:focus{outline:none;border-color:va
   font:400 11px/1 var(--font);color:var(--ink-400);
   letter-spacing:.07em;text-transform:uppercase;margin-bottom:1px;
 }
-.card-cqr-row{display:flex;align-items:center;justify-content:space-between;gap:10px}
+/* Platform and verdict on one line, the counts under it. Side by side they
+   needed four columns in a card this narrow and the numbers ended up
+   squeezed against the badge. */
+.card-cqr-row{display:flex;flex-direction:column;gap:3px}
+.card-cqr-main{display:flex;align-items:center;justify-content:space-between;gap:10px}
 .card-cqr-plat{font:400 13px/1 var(--font);color:var(--ink-600)}
+.card-cqr-stats{
+  font:400 11.5px/16px var(--font);color:var(--ink-400);
+  font-variant-numeric:tabular-nums;
+}
 
 /* A state that is not a rating. Boosted, Too Early and the rest are
    reasons there is no rating, so they must not look like one: no colour,
@@ -1652,6 +1667,30 @@ select:focus,.search-input:focus,.modal-input:focus{outline:none;border-color:va
 .card-cqr-note{
   font:400 12.5px/18px var(--font);color:var(--ink-500);cursor:help;
 }
+
+/* A post inside its validation window.
+   Deliberately not a warning colour. Nothing is wrong: distribution is
+   still running and the rating is waiting for it, so this reads as
+   in-progress rather than as a problem. */
+.card-validating{
+  margin-top:13px;padding-top:13px;border-top:1px solid var(--line-soft);
+  display:flex;flex-direction:column;gap:6px;
+}
+.card-validating-l{
+  display:flex;align-items:baseline;justify-content:space-between;gap:8px;
+  font:500 12.5px/18px var(--font);color:var(--ink-700);
+}
+.card-validating-t{font:400 11.5px/16px var(--font);color:var(--ink-400);white-space:nowrap}
+.card-validating-track{
+  height:4px;border-radius:var(--r-pill);background:var(--line-soft);overflow:hidden;
+}
+.card-validating-fill{height:4px;border-radius:var(--r-pill);background:#4747AD}
+.card-validating-s{font:400 11.5px/16px var(--font);color:var(--ink-400)}
+
+/* Where the panel places a rated post against the brand's own output.
+   A position, not a method: it says where this sits without saying what
+   was measured to get there. */
+.orgval-place{font:400 12px/18px var(--font);color:var(--ink-500);margin-top:2px}
 
 /* Paid state as an object rather than a sentence. "Running on Meta and
    TikTok" said the right thing and looked like a log line. */

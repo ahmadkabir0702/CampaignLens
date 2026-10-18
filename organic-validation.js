@@ -110,10 +110,12 @@ function ratingSignal(o, type, durationS) {
   return (Number(o.avg_watch_time) / dur) * 100;
 }
 
+// Internal only. signalName picks which wording set describes the grade;
+// it is never sent to the browser. signalNote described the formula in
+// words and was rendered in the panel, so it is gone rather than merely
+// unused: the comment block at the top of this file is where the method
+// is documented, for people reading the source.
 const signalName = (type) => (isOthersSay(type) ? 'Interaction' : 'Retention');
-const signalNote = (type) => (isOthersSay(type)
-  ? 'Likes plus twice comments, per 100 views. Shares and saves are not counted in the rating.'
-  : 'Average watch time as a share of the video length.');
 
 /**
  * Every value cqr_organic_label can return that is not a grade, and what
@@ -193,24 +195,37 @@ const S_RANK = { Good: 0, Average: 1, Poor: 2 };
 // and paid mixed together, so there is no organic verdict to give.
 
 // How the rating reads, in words. One signal, not two halves.
+/**
+ * What the rating means, in terms of what the audience did.
+ *
+ * These describe behaviour, not arithmetic. The metric a rating is built
+ * from, the weights inside it and the thresholds it is graded against are
+ * the product's own method and are never stated in the UI or sent to the
+ * browser. See the note on buildValidation for why hiding them in the
+ * render layer would not have been enough.
+ */
 const SIGNAL_WORDS = {
-  Retention: { Good: 'people watch most of it', Average: 'people watch some of it', Poor: 'people drop off early' },
-  Interaction: { Good: 'people act on it', Average: 'interaction is middling', Poor: 'almost nobody interacts' },
+  Retention: {
+    Good: 'people watch most of it before dropping off',
+    Average: 'people watch some of it, then leave part way',
+    Poor: 'people drop off early',
+  },
+  Interaction: {
+    Good: 'people do something after watching, not just scroll past',
+    Average: 'some people respond to it, but not many',
+    Poor: 'almost nobody responds to it',
+  },
 };
 
 function reasonFor({ rated, state, signal, band, signalName, type }) {
-  const basis = isOthersSay(type)
-    ? 'Others Say posts are rated on likes plus twice comments per 100 views. Shares, saves and watch time are not part of it.'
-    : 'Brand Say posts are rated on retention alone: average watch time as a share of the video length. Engagement is not part of it.';
-
   if (!rated) {
-    const why = state ? CQR_STATES[state.toLowerCase()] : (band ? 'The figure this rating needs did not come back.' : 'No benchmark is set for this platform, so there is nothing to rate against.');
-    return `${why} ${basis}`;
+    return state
+      ? CQR_STATES[state.toLowerCase()]
+      : 'There is not yet enough of the right data back from this platform to rate it.';
   }
-
   const words = (SIGNAL_WORDS[signalName] || {})[rated] || '';
   const stateLine = state ? ` ${CQR_STATES[state.toLowerCase()]}` : '';
-  return `Rated ${rated} on ${signalName.toLowerCase()}: ${words}. ${basis}${stateLine}`;
+  return `Rated ${rated}${words ? `: ${words}` : ''}.${stateLine}`;
 }
 
 // ---------------------------------------------------------------------
@@ -606,12 +621,23 @@ async function buildValidation(brandId, creativeId) {
       avg_watch_time: r1(o.avg_watch_time),
       reactions: reactionRead(o),
       time_posted: o.time_posted,
+      // The grade and where it places, and nothing else.
+      //
+      // This used to carry name ("Interaction"), note (the formula in
+      // words), value (the computed figure) and band (the good and poor
+      // thresholds). All four were rendered in the panel under "How it is
+      // judged", which published the rating method and the brand's own
+      // benchmarks to anyone with a login.
+      //
+      // Removing them from the renderer alone would not have been enough.
+      // The panel is fed by this endpoint, so the thresholds sat in the
+      // JSON whatever the page chose to draw, one devtools tab away. They
+      // are dropped here instead, which is the only place that settles it.
+      //
+      // signal, band and signalName are still computed above: the grade
+      // and the percentile are derived from them. They just stop here.
       signal: {
-        name: signalName(c.type),
-        note: signalNote(c.type),
-        value: signal === null ? null : Math.round(signal * 100) / 100,
         grade: rated,
-        band,
         percentile: standing.percentile,
       },
       reason: reasonFor({ rated, state, signal, band, signalName: signalName(c.type), type: c.type }),

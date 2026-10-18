@@ -416,12 +416,15 @@
               <button class="sort-btn" id="sort-dir-btn" data-press style="font-weight:600; padding:4px 6px;" onclick="toggleSortDir()">⬇ Desc</button>
             </div>
             <div class="sort-btns">
-              <div class="sort-btn active" id="sb-hook" data-press onclick="setSort('hook',this)">Hook Rate</div>
-              <div class="sort-btn" data-press id="sb-hold" onclick="setSort('hold',this)">Hold Rate</div>
-              <div class="sort-btn" data-press id="sb-reach" onclick="setSort('reach',this)">Reach</div>
+              <!-- Hook Rate and Hold Rate were here, and Hook was the default.
+                   Both are paid-only, so on a brand with nothing boosted the
+                   grid opened sorted by a column of zeros. Date Posted is the
+                   default instead: it is the one sort that means something on
+                   every brand whether or not there has been spend. -->
+              <div class="sort-btn active" data-press id="sb-date" onclick="setSort('date',this)">Date Posted</div>
               <div class="sort-btn" data-press id="sb-cqr" onclick="setSort('cqr',this)">CQR</div>
+              <div class="sort-btn" data-press id="sb-reach" onclick="setSort('reach',this)">Reach</div>
               <div class="sort-btn" data-press id="sb-spend" onclick="setSort('spend',this)">Spend</div>
-              <div class="sort-btn" data-press id="sb-date" onclick="setSort('date',this)">Date Posted</div>
               <div class="sort-btn" data-press id="sb-added" onclick="setSort('added',this)">Recently Added</div>
             </div>
           </div>

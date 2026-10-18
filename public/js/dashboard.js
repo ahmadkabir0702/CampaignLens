@@ -104,8 +104,12 @@ const parseNum = (val) => {
 let ALL = [];
 let ACCOUNT_OVERVIEW = [];
 let CAMPAIGNS = [];
+// How long a post is left alone before its organic numbers are read. Sent
+// by the API so the card and the rating cannot disagree about it; the
+// fallback only applies if an older server is still answering.
+let VALIDATION_HOURS = 24;
 let BRAND_NAME = '';
-let currentPlatform = 'both', currentSort = 'hook', sortAscending = false, selectedId = null;
+let currentPlatform = 'both', currentSort = 'date', sortAscending = false, selectedId = null;
 let currentPage = 'creatives';
 let chartsInit = {};
 
@@ -256,6 +260,7 @@ async function loadData() {
     ACCOUNT_OVERVIEW = data.account;
     CAMPAIGNS        = data.campaigns;
     BRAND_NAME       = data.brand.name;
+    if (data.validationHours) VALIDATION_HOURS = Number(data.validationHours);
 
     const bn = document.getElementById('brand-name');
     if (bn) bn.textContent = BRAND_NAME;
@@ -460,9 +465,9 @@ if (sf === 'ACTIVE')                data = data.filter(d => d.adStatus === 'ACTI
 
   return [...data].sort((a,b) => {
     let valA = 0, valB = 0;
-    if (currentSort==='hook')  { valA = a.hookRate; valB = b.hookRate; }
-    else if (currentSort==='hold')  { valA = a.holdRate; valB = b.holdRate; }
-    else if (currentSort==='reach') { valA = a.reach; valB = b.reach; }
+    // Hook and hold were sortable and are not any more: both are paid-only,
+    // so they ranked every unboosted creative as a zero.
+    if (currentSort==='reach') { valA = a.reach; valB = b.reach; }
     else if (currentSort==='spend') { valA = a.spend; valB = b.spend; }
     else if (currentSort==='cqr')   { const o={Good:0,Average:1,Poor:2,Invalid:3}; valB=(o[a.cqr]??4); valA=(o[b.cqr]??4); }
     // Date Posted had a button but no branch here, so it silently did nothing.
@@ -1111,6 +1116,51 @@ function detailSummaryHTML(d) {
   </div>`;
 }
 
+/**
+ * How far a new post is through its validation window.
+ *
+ * A post inside the window is not unrated because something is wrong with
+ * it. It is unrated because distribution is still running and reading it
+ * now would be reading noise. The card said "Posted too recently to read
+ * anything from yet" and left it there, which looks the same as a failure
+ * and gives no idea whether to come back in an hour or tomorrow.
+ *
+ * Elapsed time comes from the post's own timestamps rather than the date
+ * field, which is a day with no clock on it.
+ */
+function validationStrip(d) {
+  const states = ORG_PLATFORMS.map(pl => (d[pl.key] || {}).cqr).filter(Boolean);
+  if (!states.length || !states.every(s => s === 'Too Early')) return '';
+
+  const window = Number(VALIDATION_HOURS) || 24;
+  const stamps = ORG_PLATFORMS
+    .map(pl => (d[pl.key] || {}).timePosted)
+    .filter(Boolean)
+    .map(t => Date.parse(t))
+    .filter(t => !Number.isNaN(t));
+  const posted = stamps.length ? Math.max(...stamps) : (d.date ? Date.parse(d.date) : NaN);
+  if (Number.isNaN(posted)) {
+    return `<div class="card-validating">
+      <div class="card-validating-l">Still being validated</div>
+      <div class="card-validating-s">Distribution is still running, so there is nothing to read yet.</div>
+    </div>`;
+  }
+
+  const hours = Math.max(0, (Date.now() - posted) / 3600000);
+  const pct = Math.max(4, Math.min(100, hours / window * 100));
+  const left = Math.max(0, window - hours);
+  // Under an hour left, "0h left" reads as finished when it is not.
+  const when = left >= 1 ? `about ${Math.round(left)}h to go`
+             : left > 0 ? 'ready within the hour'
+             : 'due to be read on the next pull';
+
+  return `<div class="card-validating">
+    <div class="card-validating-l">Still being validated<span class="card-validating-t">${when}</span></div>
+    <div class="card-validating-track"><div class="card-validating-fill" style="width:${pct}%"></div></div>
+    <div class="card-validating-s">${Math.max(1, Math.round(hours))}h of ${window}h. Distribution is still running, so the numbers below will move.</div>
+  </div>`;
+}
+
 function renderCards(data) {
   document.getElementById('grid-count').textContent = `${data.length} creatives`;
   document.getElementById('card-grid').innerHTML = data.map(d => {
@@ -1131,35 +1181,100 @@ function renderCards(data) {
       ? (d.creatorLed ? 'BS · Creator-led' : 'BS')
       : (d.source === 'community' ? 'OS · Community' : 'OS');
 
-    // CQR per platform, which is what you came to the card to see. This
-    // used to be Reach, Hook and Hold, all three of them paid metrics, so
-    // on a creative that was never boosted it was three rows of zeros.
+    // Per platform: what it did, and how it was rated.
+    //
+    // The card used to carry the rating and nothing else, so a post inside
+    // its validation window showed one grey sentence and no numbers at
+    // all, while the panel behind it held views, reach and engagement for
+    // all three platforms. The numbers are the reason to open the card, so
+    // they belong on it.
     const orgVals = ORG_PLATFORMS
       .filter(pl => d[pl.link] || d[pl.key])
-      .map(pl => ({ label: pl.label, v: (d[pl.key] || {}).cqr || null }));
-    const row = (label, v) => `<div class="card-cqr-row">
-        <span class="card-cqr-plat">${label}</span>
-        ${isGrade(v)
-          ? `<span class="cqr-badge ${cqrClass(v)}">${v}</span>`
-          : `<span class="card-cqr-state" title="${escapeHtml(STATE_WHY[v] || '')}">${v ? stateShort(v) : 'Not rated yet'}</span>`}
+      .map(pl => ({ label: pl.label, o: d[pl.key] || null, v: (d[pl.key] || {}).cqr || null }));
+
+    const interactionsOf = (o) => {
+      if (!o) return null;
+      // A hidden like count is not a count of zero. The account has turned
+      // the number off, so total_interactions comes back as 0 and printing
+      // "0 interactions" states something false about the post.
+      if (o.cqr === 'Counts Hidden' || o.likes === null || o.likes === undefined) return null;
+      if (o.totalInteractions !== null && o.totalInteractions !== undefined && o.totalInteractions !== 0) {
+        return o.totalInteractions;
+      }
+      const parts = [o.likes, o.comments, o.shares, o.saves]
+        .filter(v => v !== null && v !== undefined);
+      return parts.length ? parts.reduce((s, v) => s + Number(v), 0) : null;
+    };
+
+    // Plain counts. Neither of these is the figure a rating is made of, so
+    // showing them says what happened without saying how it is judged.
+    const statLine = (o, extra) => {
+      const bits = [];
+      if (o) {
+        if (o.views !== null && o.views !== undefined) bits.push(`${fmtN(o.views)} views`);
+        const inter = interactionsOf(o);
+        if (inter !== null) bits.push(`${fmtN(inter)} interaction${inter === 1 ? '' : 's'}`);
+      }
+      if (extra) bits.push(extra);
+      return bits.length ? `<div class="card-cqr-stats">${bits.join(' · ')}</div>` : '';
+    };
+
+    // "Not rated yet" and "no numbers have arrived" are different things,
+    // and the card said the first for both. A platform with no organic row
+    // at all has not been measured, which is not a verdict on the post.
+    const row = (label, v, o, hideState, extra) => `<div class="card-cqr-row">
+        <div class="card-cqr-main">
+          <span class="card-cqr-plat">${label}</span>
+          ${isGrade(v)
+            ? `<span class="cqr-badge ${cqrClass(v)}">${v}</span>`
+            : (hideState ? ''
+              : `<span class="card-cqr-state" title="${escapeHtml(STATE_WHY[v] || '')}">${
+                  v ? stateShort(v) : (o ? 'Not rated yet' : 'No numbers yet')}</span>`)}
+        </div>
+        ${statLine(o, extra)}
       </div>`;
 
-    // When no platform has a rating and they all give the same reason,
-    // say it once. Three identical grey "Boosted" chips under a heading
-    // that says CQR is the worst of both: it looks like a rating and it
-    // repeats itself.
+    // When no platform has a rating and they all give the same reason, the
+    // reason is said once above the rows rather than as three identical
+    // grey chips. The rows stay, because they now carry the numbers.
     const states = [...new Set(orgVals.map(o => o.v))];
     const sharedState = !orgVals.some(o => isGrade(o.v)) && states.length === 1 && states[0]
       ? states[0] : null;
-    const orgBlock = !orgVals.length ? '' : (sharedState
+
+    const sharedNote = sharedState && sharedState !== 'Too Early'
       ? `<div class="card-cqr-note" title="${escapeHtml(STATE_WHY[sharedState] || '')}">${
           escapeHtml(STATE_WHY[sharedState] || stateShort(sharedState))}</div>`
-      : orgVals.map(o => row(o.label, o.v)).join(''));
+      : '';
 
-    // The rating that does apply once there is spend behind it.
+    const orgBlock = !orgVals.length ? ''
+      : sharedNote + orgVals.map(o => row(o.label, o.v, o.o, !!sharedState)).join('');
+
+    // The rating that does apply once there is spend behind it. Shown as
+    // soon as there is spend, rated or not: "boosted but not yet rated" is
+    // a different thing from "never boosted", and the card could not tell
+    // them apart while this block only appeared on a grade.
+    //
+    // Spend sits under each platform the way views do under the organic
+    // rows. The footer said a creative was running without ever saying on
+    // how much, which is the first thing asked about anything running.
     const paidVals = [['meta', 'Meta'], ['tiktok', 'TikTok']]
-      .filter(([k]) => (d.paidBy || {})[k] && isGrade(d.paidBy[k].cqr))
-      .map(([k, label]) => row(label, d.paidBy[k].cqr)).join('');
+      .filter(([k]) => (d.paidBy || {})[k])
+      .map(([k, label]) => {
+        const p = d.paidBy[k];
+        const money = p.spend ? `${fmt(p.spend)} spent` : '';
+        return row(label, p.cqr, null, false, money);
+      }).join('');
+
+    const validating = validationStrip(d);
+
+    // Who posted it. Others Say is creator content by definition, and
+    // creator-led Brand Say is fronted by one, so both carry a handle the
+    // card never showed: two posts from very different accounts were
+    // indistinguishable until you opened them.
+    const ci = (d.type === 'Others Say' || d.creatorLed) && typeof extractCreatorInfo === 'function'
+      ? extractCreatorInfo(d.creatorProfile, d.ttLink) : null;
+    const creatorTag = ci && ci.username
+      ? `<div class="card-creator" title="${escapeHtml(ci.username)}">${escapeHtml(ci.username)}</div>` : '';
 
 
     return `<div class="card ${d.id===selectedId?'selected':''}" data-press onclick="selectCard('${d.id}', this)">
@@ -1174,15 +1289,17 @@ function renderCards(data) {
           <div class="card-name">${d.short || d.id}</div>
           <div class="card-id" title="${escapeHtml(d.id)}">${d.short && d.short !== d.id ? d.id : ''}</div>
           <div class="card-campaign">${d.campaign} · ${d.month}</div>
+          ${creatorTag}
           <div class="card-tags">${durTag}${ctTag}${valTag}</div>
         </div>
       </div>
+      ${validating}
       ${orgBlock ? `<div class="card-cqr">
-        <div class="card-cqr-head">Organic CQR</div>
+        <div class="card-cqr-head">Organic</div>
         ${orgBlock}
       </div>` : ''}
       ${paidVals ? `<div class="card-cqr">
-        <div class="card-cqr-head">Paid CQR</div>
+        <div class="card-cqr-head">Paid</div>
         ${paidVals}
       </div>` : ''}
     <div class="card-footer">
@@ -1670,30 +1787,15 @@ function buildValidationHTML(v) {
     return `<div class="organic-empty">This creative has no organic platform on file, so there is nothing to validate.</div>`;
   }
 
-  const gradeChip = (g) => g ? `<span class="val-badge ${GRADE_CLASS[g] || 'inv-bg'}">${g}</span>` : '';
 
   // "No data" and "no benchmark" are different things and the panel says
   // which. Instagram and Facebook do not return watch time for organic
   // posts, so their retention is absent, not unmeasured-and-weak.
-  const statusChip = (status) => status === 'no_data'
-    ? `<span class="val-badge inv-bg">Not reported</span>`
-    : `<span class="val-badge inv-bg">No benchmark</span>`;
-
-  // A rate with its grade and, where there are enough peers, its standing.
-  const rateRow = (label, part, unit, expected) => {
-    if (!part) return '';
-    // Instagram and Facebook never return watch time on organic posts.
-    // A permanent "Not reported" row is a gap nobody can close, so it is
-    // left out entirely rather than shown as an absence on every post.
-    if (part.status === 'no_data' && !expected) return '';
-    const val = part.rate === null || part.rate === undefined ? '—' : `${part.rate}${unit}`;
-    const place = part.percentile === null || part.percentile === undefined
-      ? '' : `<span class="orgval-pct">${ordinal(part.percentile)} percentile</span>`;
-    return `<div class="orgval-rate">
-      <span class="organic-stat-label">${label}</span>
-      <span class="orgval-rate-right">${place}<span class="organic-stat-val">${val}</span>${part.grade ? gradeChip(part.grade) : statusChip(part.status)}</span>
-    </div>`;
-  };
+  // rateRow and statusChip were here and were already unused: they printed
+  // a rated metric with its figure and grade, which is the thing this panel
+  // no longer shows. Left in place they were a working renderer for the
+  // method, one call site away from putting it back. Removed rather than
+  // kept as dead code.
 
   // Facebook reaction split. The one sentiment signal available without
   // reading comments, and the one that can contradict the totals: a sad
@@ -1711,36 +1813,30 @@ function buildValidationHTML(v) {
       <div class="orgval-line ${r.negative_share >= 10 && r.enough ? '' : 'orgval-muted'}">${esc(r.verdict)}</div>`;
   };
 
-  // The rating leads. It is what people came for, and it used to be a
-  // small chip at the end of a row headed with the metric name, so the
-  // first thing read was "Retention" rather than the verdict. The metric
-  // is still here, underneath, as the working.
+  // What the rating means, not what it is made of.
+  //
+  // This block used to print the metric name, the figure, and the Good and
+  // Poor thresholds under the heading "How it is judged", which published
+  // the rating method and the brand's benchmarks to anyone with a login.
+  // The API no longer sends any of that, so there is nothing here to draw
+  // even if a future edit asked for it.
+  //
+  // What a planner needs from this panel is the same three things either
+  // way: what the audience did, where it places against the brand's own
+  // output, and whether to act. All three survive without the arithmetic.
   const judgedRows = (p, plat) => {
     const sg = p.signal;
     if (!sg) return '';
-    const val = sg.value === null || sg.value === undefined ? '—' : `${sg.value}%`;
-    const place = sg.percentile === null || sg.percentile === undefined
-      ? '' : `<span class="orgval-pct">${ordinal(sg.percentile)} percentile</span>`;
-    const band = sg.band
-      ? `Good from ${sg.band.good_gte}%, poor below ${sg.band.poor_lt}%` : '';
-    // No rating block here. The platform header four rows up already
-    // carries this creative's CQR for this platform, so printing it again
-    // in a large pill said "Average" twice in the same card and was the
-    // ugliest thing on the panel. What belongs here is the working.
     const st = (plat || {}).state || null;
-    const why = !sg.grade
-      ? `<div class="orgval-note">${esc((plat || {}).state_note || STATE_WHY[st] || 'Not enough has come back to rate this yet.')}</div>`
-      : '';
-    // The metric is the one number the rating is actually made of, so it
-    // is the only thing in the card set large. Everything else here is
-    // the working, and reads as such.
-    return `${why}
-      <div class="orgval-metric">
-        <span class="orgval-metric-k">${esc(sg.name)}${place}</span>
-        <span class="orgval-metric-v">${val}</span>
-      </div>
-      ${band ? `<div class="orgval-band">${band}</div>` : ''}
-      ${sg.note ? `<div class="orgval-note">${esc(sg.note)}</div>` : ''}`;
+    if (!sg.grade) {
+      return `<div class="orgval-note">${esc(
+        (plat || {}).state_note || STATE_WHY[st] || 'Not enough has come back to rate this yet.')}</div>`;
+    }
+    // Percentile is a position, not a method: it says where this sits
+    // among the brand's own posts without saying what was measured.
+    const place = sg.percentile === null || sg.percentile === undefined ? ''
+      : `<div class="orgval-place">Ahead of ${sg.percentile}% of comparable posts this quarter.</div>`;
+    return place;
   };
 
   // "Boost — " with nothing after the dash is what an empty recommendation
@@ -1804,8 +1900,9 @@ function buildValidationHTML(v) {
       </div>
       ${countsBlock(p)}
       ${reactionsBlock(p)}
-      ${judged ? `<div class="orgval-divider">How it is judged</div>${judged}` : ''}
-      ${p.reason ? `<div class="orgval-line"><b>Why:</b> ${esc(p.reason)}</div>` : ''}
+      ${(judged || p.reason) ? `<div class="orgval-divider">What this rating means</div>` : ''}
+      ${p.reason ? `<div class="orgval-line">${esc(p.reason)}</div>` : ''}
+      ${judged}
       ${standing}
       ${velocity}
       <div class="orgval-rec-wrap"><div class="orgval-rec ${recClass}">${recLine(p.recommendation)}</div></div>
