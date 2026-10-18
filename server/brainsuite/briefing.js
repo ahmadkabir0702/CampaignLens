@@ -15,7 +15,12 @@ const CHANNELS = {
   facebook_reel: 'Facebook Reel',
   facebook_story: 'Facebook Story',
   facebook_feed: 'Facebook Feed',
+  // YouTube is a separate app with its own endpoints (client.js picks it).
+  youtube: 'YouTube',
+  youtube_shorts: 'YouTube Shorts',
 };
+
+const isYouTubeChannel = c => c === 'youtube' || c === 'youtube_shorts';
 
 const BUSINESS_GROUPS = [
   'Beauty & Wellbeing', 'Personal Care', 'Home Care', 'Nutrition', 'Ice Cream',
@@ -60,10 +65,10 @@ function wordCount(s) {
  * user when something is missing or not on Brainsuite's lists.
  */
 function buildBriefing({ channel, projectName, assetName, brandName, businessGroup, category,
-                         contentType, language, keyMessage }) {
+                         contentType, language, keyMessage, ctaOverlay }) {
   if (!CHANNELS[channel]) throw new Error('Choose a placement.');
   if (!BUSINESS_GROUPS.includes(businessGroup) || !CATEGORIES.includes(category)) {
-    throw new Error('This brand is not set up for Brainsuite yet: it needs a business group and category.');
+    throw new Error('This brand is not set up for pre-testing yet: it needs a business group and category.');
   }
   const lang = LANGUAGES[language] ? language : 'en-US';
   const input = {
@@ -80,6 +85,14 @@ function buildBriefing({ channel, projectName, assetName, brandName, businessGro
     assetLanguage: lang,
     brandNames: [clean(brandName, 80) || 'Brand'],
   };
+  // The YouTube app requires this: does the video use YouTube's own
+  // call-to-action overlay (the clickable button over the ad)?
+  if (isYouTubeChannel(channel)) {
+    if (ctaOverlay !== 'yes' && ctaOverlay !== 'no') {
+      throw new Error('Say whether the video uses YouTube\'s call-to-action overlay.');
+    }
+    input.platformCTAOverlay = ctaOverlay === 'yes' ? 'overlayPresent' : 'overlayAbsent';
+  }
   const msg = clean(keyMessage, 600);
   if (msg) {
     if (wordCount(msg) > 50) throw new Error('Keep the key message to 50 words or fewer.');
@@ -90,6 +103,6 @@ function buildBriefing({ channel, projectName, assetName, brandName, businessGro
 }
 
 module.exports = {
-  CHANNELS, BUSINESS_GROUPS, CATEGORIES, LANGUAGES,
+  CHANNELS, BUSINESS_GROUPS, CATEGORIES, LANGUAGES, isYouTubeChannel,
   channelForPlatform, contentOriginFor, buildBriefing,
 };

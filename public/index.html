@@ -7,7 +7,7 @@
   <link rel="stylesheet" href="/css/styles.css">
   <script src="https://cdnjs.cloudflare.com/ajax/libs/Chart.js/4.4.1/chart.umd.js"></script>
   <link rel="stylesheet" href="/css/chat-panel.css">
-  <link rel="stylesheet" href="/css/brainsuite.css">
+  <link rel="stylesheet" href="/css/pretest.css">
 <style id="ac-plat-style">
   .plat-rows { margin-bottom: 10px; }
   .plat-row { display: flex; align-items: center; gap: 10px; margin-bottom: 8px; }
@@ -93,26 +93,26 @@
   </div>
 
   <!-- ═══════════════════════════════════════════════════════════════════
-     PRE-TEST (Brainsuite) — new test form and report view.
-     Logic in /js/brainsuite.js. The video goes from the browser straight
-     to Brainsuite; this server never receives the file.
+     CAMPAIGNLENS PRE-TESTING — new test form and report view.
+     Logic in /js/pretest.js. The video goes from the browser straight to
+     the scoring service; this server never receives the file.
 ════════════════════════════════════════════════════════════════════════ -->
-<div id="bsPretestModal" class="modal-overlay" onclick="if(event.target===this)BS.closeForm()">
+<div id="bsPretestModal" class="modal-overlay" onclick="if(event.target===this)PreTest.closeForm()">
   <div class="modal-box bs-form-box" role="dialog" aria-labelledby="bs-form-title">
     <div class="bs-form-head">
       <div>
         <h3 class="modal-title" id="bs-form-title">New pre-test</h3>
-        <p class="modal-desc" id="bs-form-desc">Brainsuite scores the video for attention, branding and recall. Usually ready in about 5 minutes.</p>
+        <p class="modal-desc" id="bs-form-desc">Scores the video for attention, branding and recall. Usually ready in about 5 minutes.</p>
       </div>
-      <button class="close-btn" data-press onclick="BS.closeForm()" aria-label="Close">×</button>
+      <button class="close-btn" data-press onclick="PreTest.closeForm()" aria-label="Close">×</button>
     </div>
 
-    <form id="bs-form" onsubmit="BS.submit(event)" novalidate>
+    <form id="bs-form" onsubmit="PreTest.submit(event)" novalidate>
       <div class="bs-drop" id="bs-drop" tabindex="0" role="button"
            onclick="document.getElementById('bs-file').click()"
            onkeydown="if(event.key==='Enter'||event.key===' '){event.preventDefault();this.click()}"
-           ondragover="BS.dragOver(event)" ondragleave="BS.dragLeave(event)" ondrop="BS.drop(event)">
-        <input type="file" id="bs-file" accept="video/mp4,video/quicktime,video/*" hidden onchange="BS.pickFile(this.files[0])">
+           ondragover="PreTest.dragOver(event)" ondragleave="PreTest.dragLeave(event)" ondrop="PreTest.drop(event)">
+        <input type="file" id="bs-file" accept="video/mp4,video/quicktime,video/*" hidden onchange="PreTest.pickFile(this.files[0])">
         <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 16V4M7 9l5-5 5 5M4 16v3a1 1 0 0 0 1 1h14a1 1 0 0 0 1-1v-3"/></svg>
         <div class="bs-drop-title" id="bs-drop-title">Drop a video here, or click to choose</div>
         <div class="bs-drop-hint" id="bs-drop-hint">MP4 or MOV, up to 500 MB</div>
@@ -125,7 +125,7 @@
           <input type="text" id="bs-campaign" class="modal-input" maxlength="80" list="bs-campaigns" placeholder="e.g. Lux Glow 2026">
           <datalist id="bs-campaigns"></datalist></div>
         <div class="bs-field"><span class="field-label">Placement</span>
-          <select id="bs-channel" class="modal-input"></select></div>
+          <select id="bs-channel" class="modal-input" onchange="PreTest.onChannel()"></select></div>
         <div class="bs-field"><span class="field-label">Content type</span>
           <select id="bs-content-type" class="modal-input">
             <option value="Brand Say">Brand Say</option>
@@ -133,6 +133,12 @@
           </select></div>
         <div class="bs-field"><span class="field-label">Language</span>
           <select id="bs-language" class="modal-input"></select></div>
+        <div class="bs-field bs-span2" id="bs-cta-row" hidden><span class="field-label">Does the video use YouTube's call-to-action overlay?</span>
+          <select id="bs-cta-overlay" class="modal-input">
+            <option value="">Choose one</option>
+            <option value="yes">Yes, it has the clickable call-to-action button</option>
+            <option value="no">No call-to-action overlay</option>
+          </select></div>
         <div class="bs-field"><span class="field-label">Business group</span>
           <select id="bs-business-group" class="modal-input"></select></div>
         <div class="bs-field"><span class="field-label">Category</span>
@@ -143,7 +149,7 @@
           <span class="bs-hint">Adds the Strategic Fit scores: whether the visuals and words carry this message.</span></div>
       </div>
 
-      <div class="bs-note" id="bs-lang-note">Brainsuite has no Sinhala yet. Choose English for Sinhala videos; the visual scores are unaffected.</div>
+      <div class="bs-note" id="bs-lang-note">Sinhala is not available yet. Choose English for Sinhala videos; the visual scores are unaffected.</div>
 
       <div class="bs-progress" id="bs-progress" hidden>
         <div class="bs-progress-label"><span id="bs-progress-text">Uploading</span><span id="bs-progress-pct">0%</span></div>
@@ -152,14 +158,14 @@
       <div class="bs-error" id="bs-error" role="alert" hidden></div>
 
       <div class="modal-actions">
-        <button type="button" class="modal-btn modal-cancel" onclick="BS.closeForm()">Cancel</button>
+        <button type="button" class="modal-btn modal-cancel" onclick="PreTest.closeForm()">Cancel</button>
         <button type="submit" class="modal-btn modal-confirm" id="bs-submit">Run pre-test</button>
       </div>
     </form>
   </div>
 </div>
 
-<div id="bsReportModal" class="modal-overlay" onclick="if(event.target===this)BS.closeReport()">
+<div id="bsReportModal" class="modal-overlay" onclick="if(event.target===this)PreTest.closeReport()">
   <div class="modal-box bs-report-box" role="dialog" aria-label="Pre-test report">
     <div id="bs-report-content"></div>
   </div>
@@ -568,7 +574,7 @@ window.addEventListener('load', () => setTimeout(syncFilterPills, 400));
   <script src="/js/kpi-dashboard.js"></script>
   <script src="/js/signoff.js"></script>
   <script src="/js/dropdowns.js"></script>
-  <script src="/js/brainsuite.js"></script>
+  <script src="/js/pretest.js"></script>
   <script src="/js/markers.js"></script>
   <script src="/js/chat-cards.js"></script>
   <script src="/js/chat-panel.js"></script>

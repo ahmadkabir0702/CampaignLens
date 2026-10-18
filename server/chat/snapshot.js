@@ -16,10 +16,12 @@ const { getPool } = require('./db');
 
 // Bump this whenever the digest format or the records shape changes.
 // Stored snapshots with a different schema version rebuild on next use.
-// Bumped to 6: Brainsuite, fatigue and rating history were added, and the
+// Bumped to 6: pre-test scores, fatigue and rating history were added, and the
 // CQR states stopped being reported as Invalid. Every stored snapshot
 // predating that is wrong, not merely thinner, so none should survive.
-const SNAPSHOT_SCHEMA_VERSION = 6;
+// Bumped to 7: the pre-flight score is presented as the "Pre-test Score"
+// and the vendor is never named, so stored digests using the old label go.
+const SNAPSHOT_SCHEMA_VERSION = 7;
 
 const T = S.tables, C = S.creative, P = S.paidView, O = S.organicView, OR = S.organicRawCols;
 const OB = S.organicBest, B = S.boost, TH = S.thresholds, CR = S.creator;
@@ -385,16 +387,17 @@ function renderDigest(an, insights) {
     L.push('  The lifetime rating will not show this. It keeps the best day the creative ever had.');
   }
 
-  // ---- Brainsuite ----------------------------------------------
-  if ((an.brainsuite || []).length) {
+  // ---- Pre-test Score ------------------------------------------
+  if ((an.pretest || []).length) {
     L.push('');
-    L.push(`BRAINSUITE (pre-flight creative scores, ${an.brainsuite.length} scored)`);
-    const top = an.brainsuite.slice(0, 5), bottom = an.brainsuite.slice(-3).reverse();
+    L.push(`PRE-TEST SCORES (pre-flight creative scores out of 100, ${an.pretest.length} scored)`);
+    const top = an.pretest.slice(0, 5), bottom = an.pretest.slice(-3).reverse();
     L.push(`  Highest: ${top.map((b) => `${b.id} ${b.score}${b.rating ? ` (${b.rating})` : ''}`).join(', ')}`);
-    if (an.brainsuite.length > 8) {
+    if (an.pretest.length > 8) {
       L.push(`  Lowest: ${bottom.map((b) => `${b.id} ${b.score}${b.rating ? ` (${b.rating})` : ''}`).join(', ')}`);
     }
     L.push('  This judges the creative before any delivery. It is not a performance metric and should not be ranked against CQR, but it answers whether a creative was strong before money went behind it.');
+    L.push('  Always call it the Pre-test Score (CampaignLens Pre-testing). Never name the vendor or tool that produces it.');
   }
 
   // ---- Recorded rating changes ---------------------------------
@@ -606,12 +609,12 @@ async function buildSnapshot(brand, _r, opts = {}) {
       time_to_product_s: c.time_to_product_s, product_screen_pct: c.product_screen_pct,
       cuts_per_10s: c.cuts_per_10s,
       boosted: !!m, is_validated: !!(bs && bs.is_validated), organic_best_cqr: bs ? bs.best_cqr : null,
-      // Brainsuite is a pre-flight judgment of the creative itself, made
-      // before any delivery. It is not a performance metric and should
+      // The Pre-test Score is a pre-flight judgment of the creative itself,
+      // made before any delivery. It is not a performance metric and should
       // never be ranked against CQR, but it answers "was this any good
       // before we spent on it", which nothing else here can.
-      brainsuite_score: bsBy.has(id) ? Number(bsBy.get(id).score) : null,
-      brainsuite_rating: bsBy.has(id) ? bsBy.get(id).rating : null,
+      pretest_score: bsBy.has(id) ? Number(bsBy.get(id).score) : null,
+      pretest_rating: bsBy.has(id) ? bsBy.get(id).rating : null,
       ...(m || {}),
     };
     rec.labels = V.creativeLabels(rec);
@@ -669,7 +672,7 @@ async function buildSnapshot(brand, _r, opts = {}) {
   const an = A.build({ brand, paid, organic, boost: boostRows, thresholds, monthly, freshness, all: allRecs });
   an.fatiguing = fatiguing;
   an.ratingChanges = ratingChanges;
-  an.brainsuite = [...bsBy.values()]
+  an.pretest = [...bsBy.values()]
     .filter((r) => r.score !== null && r.score !== undefined)
     .map((r) => ({ id: r.id, score: Number(r.score), rating: r.rating }))
     .sort((a, b) => b.score - a.score);

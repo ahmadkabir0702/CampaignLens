@@ -134,7 +134,7 @@ const FEATURE_GATES = [
   { flag: 'addCreative', label: 'Add creative',
     covers: p => p === '/api/add-creative' || p === '/api/check-links' },
   { flag: 'pretest',     label: 'Pre-tests',
-    covers: p => p.startsWith('/api/pretests') || p.startsWith('/api/brainsuite/') },
+    covers: p => p.startsWith('/api/pretests') || p.startsWith('/api/pretest-scores/') },
 ];
 
 app.use((req, res, next) => {

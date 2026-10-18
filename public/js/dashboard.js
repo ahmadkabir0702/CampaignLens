@@ -181,7 +181,7 @@ async function switchBrand(brandId) {
     if (currentPage === 'kpi' && typeof renderKPIDashboard === 'function') {
       renderKPIDashboard();
     }
-    if (typeof BS !== 'undefined') BS.onBrandChange(currentPage);
+    if (typeof PreTest !== 'undefined') PreTest.onBrandChange(currentPage);
   } catch (e) {
     alert('Could not switch brand: ' + e.message);
   }
@@ -369,7 +369,7 @@ function setNav(page, element) {
     if (page === 'creators' && typeof renderCreatorTab === 'function') {
         renderCreatorTab();
     }
-    if (typeof BS !== 'undefined') BS.onPage(page);
+    if (typeof PreTest !== 'undefined') PreTest.onPage(page);
 }
 
 function setPlatform(p, el) {
@@ -1109,7 +1109,7 @@ function detailSummaryHTML(d) {
     </div>
     ${cell('Paid CQR', paid || (d.boostState === 'never' ? 'No spend yet' : 'Not rated'),
            paid ? 'dsum-' + cqrClass(paid) : 'dsum-quiet')}
-    ${cell('Brainsuite', d.bsScore === null || d.bsScore === undefined ? 'Not scored' : d.bsScore,
+    ${cell('Pre-test Score', d.bsScore === null || d.bsScore === undefined ? 'Not scored' : d.bsScore,
            d.bsScore === null || d.bsScore === undefined ? 'dsum-quiet' : '',
            d.bsRating || (d.bsScore === null || d.bsScore === undefined ? '' : 'of 100'))}
     ${cell('Paid status', status, statusCls, statusSub)}
@@ -1304,7 +1304,7 @@ function renderCards(data) {
       </div>` : ''}
     <div class="card-footer">
       ${statusPill(d)}
-      ${typeof BS !== 'undefined' ? BS.cardBadge(d) : ''}
+      ${typeof PreTest !== 'undefined' ? PreTest.cardBadge(d) : ''}
     </div>
     </div>`;
   }).join('');
@@ -2135,7 +2135,7 @@ function renderDetail(d) {
              data-fallback="${encodeURIComponent(buildOrganicHTML(d))}"><div class="organic-empty">Loading…</div></div>
       </details>
 
-      ${typeof BS !== 'undefined' ? BS.detailSection(d) : ''}
+      ${typeof PreTest !== 'undefined' ? PreTest.detailSection(d) : ''}
 
       ${statsHTML}
 

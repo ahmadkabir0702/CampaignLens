@@ -24,7 +24,7 @@ const schema = {
     creators: 'creators',
     brands: 'brands',
     // Added October 2026. The assistant could not see any of these, so
-    // "what did Brainsuite score this", "which creatives are fatiguing"
+    // "what was this creative's Pre-test Score", "which creatives are fatiguing"
     // and "has this rating moved" had no answer at all.
     brainsuiteJobs: 'brainsuite_jobs',
     brainsuiteResults: 'brainsuite_results',
