@@ -23,6 +23,39 @@ const schema = {
     thresholds: 'cqr_thresholds',
     creators: 'creators',
     brands: 'brands',
+    // Added October 2026. The assistant could not see any of these, so
+    // "what did Brainsuite score this", "which creatives are fatiguing"
+    // and "has this rating moved" had no answer at all.
+    brainsuiteJobs: 'brainsuite_jobs',
+    brainsuiteResults: 'brainsuite_results',
+    paidWindowed: 'v_paid_windowed',
+    cqrHistory: 'cqr_history',
+  },
+
+  // brainsuite_jobs joined to brainsuite_results. One row per scored
+  // creative; status matters because a job can be queued or failed and
+  // then there is no score to talk about.
+  brainsuite: {
+    jobId: 'id', creativeId: 'creative_id', brand: 'brand_id', kind: 'kind',
+    status: 'status', assetName: 'asset_name', createdAt: 'created_at',
+    score: 'total_score', rating: 'total_rating', summary: 'summary',
+  },
+
+  // v_paid_windowed. One row per creative per platform per window, so a
+  // creative's first week can be compared against its last.
+  windowed: {
+    creativeId: 'creative_id', brand: 'brand_id', platform: 'platform',
+    windowName: 'window_name', fromDate: 'from_date', toDate: 'to_date',
+    days: 'days', impressions: 'impressions', spend: 'spend',
+    isActive: 'is_active', isCurrent: 'is_current',
+    hookRate: 'hook_rate', holdRate: 'hold_rate', cqr: 'cqr',
+  },
+
+  // cqr_history. cqr is the windowed rating, which is the one that moves;
+  // cqr_lifetime is what the rest of the app was showing at the time.
+  cqrHistory: {
+    creativeId: 'creative_id', brand: 'brand_id', channel: 'channel',
+    platform: 'platform', cqr: 'cqr', cqrLifetime: 'cqr_lifetime',
   },
 
   creative: {
@@ -62,7 +95,38 @@ const schema = {
   creator: { id: 'id', name: 'name', isActive: 'is_active' },
 
   merge: { cqr: 'best', hookRate: 'avg', holdRate: 'max', reach: 'max', spend: 'sum', impressions: 'sum' },
-  cqrRank: { Good: 0, Average: 1, Poor: 2, Invalid: 3 },
+
+  // ---------------------------------------------------------------
+  //  Grades and states are different things in the same column.
+  //
+  //  Good, Average and Poor are RATINGS. Everything else the column can
+  //  hold is a STATE: a reason there is no rating yet. They arrive
+  //  through cqr the same way, which is why this file used to treat the
+  //  states as a fourth rating called Invalid.
+  //
+  //  That was not a gap, it was a wrong answer. A creative posted
+  //  yesterday reported to a client as "Invalid", and a boosted post
+  //  whose organic rating is withheld on purpose, because paid delivery
+  //  contaminates the organic numbers, reported the same way.
+  //
+  //  Ranked only on the grades. A state has no place in an ordering,
+  //  since it is not better or worse than anything, it is absent.
+  // ---------------------------------------------------------------
+  cqrGrades: ['Good', 'Average', 'Poor'],
+  cqrRank: { Good: 0, Average: 1, Poor: 2 },
+
+  // What each state means, in the words the assistant should use. It
+  // reads these rather than inventing a gloss for a bare label.
+  cqrStates: {
+    'Boosted':       'spend is behind this post, so its organic numbers include paid delivery and the paid rating is the one that applies',
+    'Too Early':     'posted too recently to rate',
+    'Counts Hidden': 'the platform is not returning the counts needed to rate it',
+    'No Views':      'no views have come back yet',
+    'No Duration':   'the video length is missing, so retention cannot be worked out',
+    'No Watch Time': 'no watch time has come back yet',
+    'No Threshold':  'no benchmark band covers this brand, platform and duration',
+    'Invalid':       'could not be rated',
+  },
 
   metricHierarchy: ['cqr', 'hook_rate', 'hold_rate', 'engagement_rate', 'reach', 'video_views'],
   vanityMetrics: ['ctr', 'vtr', 'cpm', 'cpc'],
@@ -102,8 +166,24 @@ const schema = {
   // Data older than this many days shows a staleness note in the panel.
   staleAfterDays: 2,
 
-  brands: ['dove', 'knorr', 'lifebuoy', 'lux', 'pears', 'ponds', 'sunsilk', 'surfexcel', 'vaseline'],
-  brandLabels: { dove: 'Dove', knorr: 'Knorr', lifebuoy: 'Lifebuoy', lux: 'Lux', pears: 'Pears', ponds: 'Ponds', sunsilk: 'Sunsilk', surfexcel: 'Surf Excel', vaseline: 'Vaseline' },
+  // Every brand Ask Lens will answer about. assertBrand throws on anything
+  // absent here and routes.js refuses to pick it, so a brand missing from
+  // this list is not merely unanswered, it is rejected. The six added in
+  // October were rejected for exactly that reason.
+  //
+  // This wants to read the brands table rather than be a list someone has
+  // to remember to edit. Left as a list for now because prewarm walks it
+  // at boot, before a query is cheap to make.
+  brands: [
+    'cif', 'closeup', 'dove', 'knorr', 'lifebuoy', 'lux', 'pears', 'ponds',
+    'rexona', 'signal', 'sunlight', 'sunsilk', 'surfexcel', 'vaseline', 'viva',
+  ],
+  brandLabels: {
+    cif: 'Cif', closeup: 'Closeup', dove: 'Dove', knorr: 'Knorr',
+    lifebuoy: 'Lifebuoy', lux: 'Lux', pears: 'Pears', ponds: 'Ponds',
+    rexona: 'Rexona', signal: 'Signal', sunlight: 'Sunlight', sunsilk: 'Sunsilk',
+    surfexcel: 'Surf Excel', vaseline: 'Vaseline', viva: 'Viva',
+  },
   platforms: ['meta', 'tiktok'],
   organicPlatforms: ['facebook', 'instagram', 'tiktok'],
   platformLabels: { meta: 'Meta', tiktok: 'TikTok', facebook: 'Facebook', instagram: 'Instagram' },

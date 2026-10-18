@@ -566,11 +566,23 @@ function build({ brand, paid, organic, boost, thresholds, monthly, freshness, al
     strongHoldShare: paid.length ? Math.round(paid.filter((c) => c.hold_q === 'Strong').length / paid.length * 100) : null,
   };
 
-  const cqrMix = { Good: 0, Average: 0, Poor: 0, Invalid: 0 };
-  const spendByCqr = { Good: 0, Average: 0, Poor: 0, Invalid: 0 };
+  // Grades counted as grades, states counted separately.
+  //
+  // This used to funnel every unrecognised value into Invalid, so a
+  // creative posted yesterday and a boosted post whose organic rating is
+  // withheld on purpose both came back to the user as "Invalid". Unrated
+  // is not a bad rating, and the two should never have shared a bucket.
+  const cqrMix = { Good: 0, Average: 0, Poor: 0, Unrated: 0 };
+  const spendByCqr = { Good: 0, Average: 0, Poor: 0, Unrated: 0 };
+  const cqrStates = {};
   for (const c of paid) {
-    const k = cqrMix[c.cqr] !== undefined ? c.cqr : 'Invalid';
+    const graded = S.cqrGrades.includes(c.cqr);
+    const k = graded ? c.cqr : 'Unrated';
     cqrMix[k] += 1; spendByCqr[k] += num(c.spend);
+    if (!graded) {
+      const state = c.cqr || 'Invalid';
+      cqrStates[state] = (cqrStates[state] || 0) + 1;
+    }
   }
 
   // ---- Media waste --------------------------------------------
@@ -766,7 +778,7 @@ function build({ brand, paid, organic, boost, thresholds, monthly, freshness, al
 
   return {
     brand, freshness, floor, excluded,
-    totals, cqrMix, spendByCqr, poorSplit, hookHold,
+    totals, cqrMix, spendByCqr, cqrStates, poorSplit, hookHold,
     ranked, top: ranked.slice(0, 10), bottom: ranked.slice(-10).reverse(),
     named: nameable(ranked),
     waste, wasteSpend, anomalies,
