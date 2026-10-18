@@ -925,6 +925,10 @@ select:focus,.search-input:focus,.modal-input:focus{outline:none;border-color:va
    so a bar of four counts stretched halfway across the page while the
    numbers beside it were squeezed. */
 .ms-mixcell{width:300px;min-width:210px;padding-top:8px;padding-bottom:8px}
+/* Inside a full-width card the label is nowrap on the left and the bar is
+   capped on the right, which left the middle empty. Capping the table
+   keeps the two together. */
+.ms-table-narrow{max-width:620px}
 .ms-table-cut td{border-bottom:1px solid var(--line-soft)}
 .ms-cut-k{white-space:nowrap;padding-right:16px}
 .ms-cut-n{font:400 11px/15px var(--font);color:var(--ink-400);margin-top:2px}
@@ -936,13 +940,70 @@ select:focus,.search-input:focus,.modal-input:focus{outline:none;border-color:va
 }
 .ms-link:hover{border-bottom-color:var(--navy)}
 
+/* ---------- Paid: findings rather than figures ----------------------
+   A heading inside a section, for the Brainsuite block, which is its own
+   question rather than another card in the row above it.               */
+.ms-sub-h{
+  font:500 13.5px/20px var(--font);color:var(--ink-900);
+  margin:22px 0 4px;
+}
+/* The sentence a card opens with, so the bar below it is read as the
+   evidence for a stated point and not as the point itself. */
+.ms-lead{font:400 13px/19px var(--font);color:var(--ink-700);margin-bottom:12px}
+/* Separates two questions inside one card, where two cards would have left
+   a short panel beside a tall one. */
+.ms-rule{height:1px;background:var(--line-soft);margin:20px 0 16px}
+
+/* One finding, stated. A left rule carries the tone rather than a filled
+   background: these sit directly under charts that are already carrying
+   the same three colours as fills, and a tinted block behind text would
+   read as a fourth series. */
+.ms-callout{
+  border-left:2px solid var(--line);
+  padding:2px 0 2px 12px;margin-top:14px;
+}
+.ms-callout-l{font:500 13px/19px var(--font);color:var(--ink-900)}
+.ms-callout-s{font:400 12px/17px var(--font);color:var(--ink-500);margin-top:3px}
+.ms-callout.t-neg{border-left-color:#A32040}
+.ms-callout.t-warn{border-left-color:#C07A12}
+.ms-callout.t-pos{border-left-color:#04785C}
+
+/* Two figures set against each other. Full width above the card row,
+   because it is one line of argument rather than a panel. */
+.ms-compare{
+  background:var(--white);border-radius:var(--r-card);
+  padding:16px 20px;margin-bottom:12px;
+}
+.ms-compare-h{font:500 13.5px/20px var(--font);color:var(--ink-900);margin-bottom:10px}
+.ms-compare-rows{display:flex;flex-direction:column;gap:8px}
+.ms-compare-row{display:grid;grid-template-columns:150px 1fr 86px;
+  align-items:center;gap:12px}
+.ms-compare-k{font:400 12.5px/18px var(--font);color:var(--ink-600)}
+.ms-compare-track{height:9px;border-radius:var(--r-pill);background:var(--line-soft)}
+.ms-compare-fill{height:9px;border-radius:var(--r-pill)}
+.ms-compare-v{font:500 14px/20px var(--font);color:var(--ink-900);
+  text-align:right;font-variant-numeric:tabular-nums}
+
+/* A share beside the figure it divides, dimmer so the figure stays first. */
+.ms-share{
+  display:block;font:400 11px/15px var(--font);
+  color:var(--ink-400);font-variant-numeric:tabular-nums;
+}
+.ms-table td .ms-key-dot{display:inline-block;margin-right:7px;vertical-align:1px}
+
 @media (max-width:1240px){
   .ms-tiles.cols-5{grid-template-columns:repeat(3,1fr)}
   .ms-grid.cols-3{grid-template-columns:repeat(2,1fr)}
 }
 @media (max-width:860px){
-  .ms-tiles.cols-5,.ms-tiles.cols-4,.ms-tiles.cols-3{grid-template-columns:1fr 1fr}
+  .ms-tiles.cols-5,.ms-tiles.cols-4{grid-template-columns:1fr 1fr}
   .ms-grid.cols-3,.ms-grid.cols-2{grid-template-columns:1fr}
+  .ms-compare-row{grid-template-columns:110px 1fr 76px;gap:9px}
+}
+/* Three tiles stay on one row until they would be too narrow to read.
+   Folding them to two columns leaves the third alone beside a gap. */
+@media (max-width:620px){
+  .ms-tiles.cols-3{grid-template-columns:1fr}
 }
 
 /* ---------- Loading skeleton ---------------------------------------

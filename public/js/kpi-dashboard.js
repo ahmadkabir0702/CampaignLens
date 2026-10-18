@@ -369,8 +369,58 @@ function msSectionOrganic(data) {
 }
 
 // ---------- 4. Paid -------------------------------------------------
+//
+//  WHY THERE ARE NO RATES IN HERE.
+//
+//  This section used to print hook rate, hold rate and average watch time
+//  as Meta against TikTok, with the larger side bolded. That comparison
+//  was not sound. 011_paid_windowed.sql bands hook and hold against
+//  separate thresholds for meta_paid and tt_paid, split again by Brand Say
+//  and Others Say, and hold rate by duration on top of that. If 31% on
+//  Meta and 29% on TikTok are measured against different benchmarks, the
+//  bigger number is not the better one, and a six-second TikTok and a
+//  thirty-second Meta asset are not competing on watch time at all.
+//
+//  The averages were also unweighted: mean() divided by creative count, so
+//  a creative with 2,000 impressions moved the figure exactly as far as
+//  one with two million.
+//
+//  So no rate appears here as a number. Where the money went, judged by
+//  the rating of what it ran behind, is the question this section answers.
+//
+//  CPM is on the vanity list in schema.config.js and used to be a headline
+//  tile. It survives only as a comparison between Good-rated and
+//  Poor-rated delivery, where it carries an argument rather than a number.
+// ---------------------------------------------------------------------
+
+/**
+ * Brainsuite's rating collapsed to three bands, matching the badge its own
+ * panel shows, so the same creative is never Strong in one place and
+ * positive in another.
+ */
+const MS_BS_TONE = {
+  positive: 'Strong', veryPositive: 'Strong',
+  medium: 'Mixed',
+  negative: 'Weak', veryNegative: 'Weak',
+  negativeTooLow: 'Weak', negativeTooHigh: 'Weak',
+};
+const MS_BS_BANDS = ['Strong', 'Mixed', 'Weak'];
+// Pre-flight and post-flight are different judgments, but both run
+// good / middle / bad, so they share one scale rather than making the
+// reader learn a second set of colours.
+const MS_BS_C = { Strong: MS_C.Good, Mixed: MS_C.Average, Weak: MS_C.Poor, none: MS_C.none };
+
+const msBsBand = (d) => MS_BS_TONE[d.bsRating] || null;
+const msIsGrade = (v) => typeof isGrade === 'function' ? isGrade(v) : MS_GRADES.includes(v);
+const msOrgGrade = (d) => typeof bestOrganicGrade === 'function' ? bestOrganicGrade(d) : null;
+
+// Below this many creatives carrying both a Brainsuite score and a real
+// paid rating, the agreement view is noise dressed as a finding.
+const MS_BS_MIN = 8;
+
 function msSectionPaid(data) {
-  const spend = data.reduce((s, d) => s + msNum(d.spend), 0);
+  const sumF = (arr, f) => arr.reduce((s, x) => s + msNum(x[f]), 0);
+  const spend = sumF(data, 'spend');
   if (!spend) {
     return `<div class="ms-sec">
       <div class="ms-sec-h">Paid</div>
@@ -380,88 +430,274 @@ function msSectionPaid(data) {
     </div>`;
   }
 
-  const reach = data.reduce((s, d) => Math.max(s, msNum(d.reach)), 0);
-  const impr = data.reduce((s, d) => s + msNum(d.impressions), 0);
-  const freq = reach ? impr / reach : 0;
-  const cpm = impr ? spend / impr * 1000 : 0;
+  const impr = sumF(data, 'impressions');
+  // Gross reach, summed per creative. d.reach is already the widest single
+  // platform for that creative, so this double counts anyone reached by two
+  // creatives, which is what makes it gross rather than unique.
+  //
+  // The old tile divided total impressions by the largest single creative's
+  // reach and called the result frequency. On any brand with more than a
+  // handful of creatives that produced numbers like 33x.
+  const grossReach = sumF(data, 'reach');
+  const freq = grossReach ? impr / grossReach : 0;
   const boosted = data.filter(d => d.boostState !== 'never');
+  const live = data.filter(d => d.adStatus === 'ACTIVE');
+  const liveSpend = sumF(live, 'spend');
 
-  // Where the money went, by the rating of what it went behind.
+  // ---- 1. Where the money went ---------------------------------------
   const mix = { Good: 0, Average: 0, Poor: 0, none: 0 };
-  data.forEach(d => {
-    const g = (typeof isGrade === 'function' && isGrade(d.cqr)) ? d.cqr : 'none';
-    mix[g] += msNum(d.spend);
-  });
+  data.forEach(d => { mix[msIsGrade(d.cqr) ? d.cqr : 'none'] += msNum(d.spend); });
+  const working = mix.Good + mix.Average;
 
+  const livePoor = live.filter(d => d.cqr === 'Poor');
+  const livePoorSpend = sumF(livePoor, 'spend');
+  const wasteCallout = livePoor.length ? msCallout('neg',
+    `${fmt(livePoorSpend)} is still running behind ${msCount(livePoor.length, 'creative')} rated Poor.`,
+    msNames(livePoor)) : '';
+
+  const lead = `${fmt(working)} of ${fmt(spend)} ran behind creative rated Good or Average.`;
+
+  // ---- 2. What it bought ---------------------------------------------
   const tiles =
-    msTile('Spend', fmt(spend), `${boosted.length} creative${boosted.length === 1 ? '' : 's'} boosted`) +
-    msTile('Reach', fmtN(reach), 'largest single-platform reach') +
-    msTile('Impressions', fmtN(impr), `${freq.toFixed(2)}x frequency`) +
-    msTile('CPM', 'Rs. ' + cpm.toFixed(2), 'per thousand impressions');
+    msTile('Spend', fmt(spend), `${msCount(boosted.length, 'creative')} boosted`) +
+    msTile('Impressions', fmtN(impr), freq ? `${freq.toFixed(1)}x gross frequency` : '') +
+    msTile('Still running', String(live.length), live.length ? `${fmt(liveSpend)} live` : 'nothing live');
 
-  // Meta against TikTok, from the per-platform blocks rather than the
-  // rolled-up fields, so a creative running on both counts on both.
-  const side = (k) => data.map(d => d[k]).filter(Boolean);
-  const meta = side('_meta'), tt = side('_tt');
-  const sum = (a, f) => a.reduce((s, x) => s + msNum(x[f]), 0);
-  const mean = (a, f) => { const v = a.map(x => msNum(x[f])).filter(n => n > 0);
-    return v.length ? v.reduce((x, y) => x + y, 0) / v.length : 0; };
+  // CPM as an argument rather than a headline: does better-rated creative
+  // actually deliver cheaper?
+  const cpmOf = (arr) => { const i = sumF(arr, 'impressions'); return i ? sumF(arr, 'spend') / i * 1000 : 0; };
+  const gRated = data.filter(d => d.cqr === 'Good'), pRated = data.filter(d => d.cqr === 'Poor');
+  const gCpm = cpmOf(gRated), pCpm = cpmOf(pRated);
+  // A gap under a tenth is not a finding. Reading "3% cheaper" as an
+  // argument for better creative is exactly the overclaim this section is
+  // meant to stop making.
+  const gap = (gCpm && pCpm) ? Math.abs(gCpm - pCpm) / Math.max(gCpm, pCpm) : 0;
+  const cpmLine = (gCpm && pCpm) ? msCompare(
+    'Cost per thousand impressions',
+    [{ label: `Good rated (${gRated.length})`, v: gCpm, c: MS_C.Good },
+     { label: `Poor rated (${pRated.length})`, v: pCpm, c: MS_C.Poor }],
+    v => 'Rs. ' + v.toFixed(2),
+    gap < 0.1
+      ? 'The two are close enough that delivery cost is not separating on rating here.'
+      : (gCpm < pCpm
+        ? `Good-rated creative delivered ${Math.round((pCpm - gCpm) / pCpm * 100)}% cheaper.`
+        : `Poor-rated creative delivered cheaper here, so cost is not following quality in this selection.`)
+  ) : '';
 
-  const platRow = (label, mv, tv, fmtF, lowerIsBetter) => {
-    if (!meta.length || !tt.length || mv === tv || (!mv && !tv)) {
-      return `<tr><td>${label}</td><td class="n">${meta.length ? fmtF(mv) : '—'}</td><td class="n">${tt.length ? fmtF(tv) : '—'}</td></tr>`;
-    }
-    const metaWins = lowerIsBetter ? mv < tv : mv > tv;
-    return `<tr><td>${label}</td>
-      <td class="n ${metaWins ? 'ms-better' : ''}">${fmtF(mv)}</td>
-      <td class="n ${metaWins ? '' : 'ms-better'}">${fmtF(tv)}</td></tr>`;
-  };
+  // ---- 3. Brainsuite against outcome ---------------------------------
+  const bs = msBrainsuiteBlock(data, spend, live, sumF);
 
-  const mSpend = sum(meta, 'spend'), tSpend = sum(tt, 'spend');
-  const mImpr = sum(meta, 'impressions'), tImpr = sum(tt, 'impressions');
-  const money = v => fmt(v), count = v => fmtN(v), rs = v => 'Rs. ' + v.toFixed(2), one = v => v.toFixed(1);
+  // ---- 4. Boost coverage ---------------------------------------------
+  const missed = data.filter(d => d.boostState === 'never' && msOrgGrade(d) === 'Good');
+  const missedCard = missed.length ? msCard('Never boosted',
+    msCallout('warn',
+      `${msCount(missed.length, 'creative')} rated Good organically never had spend behind ${missed.length === 1 ? 'it' : 'them'}.`,
+      msNames(missed)),
+    'strong organic that paid never picked up') : '';
 
-  const platTable = (meta.length || tt.length) ? `
-    <table class="ms-table">
-      <thead><tr><th></th><th class="n">Meta</th><th class="n">TikTok</th></tr></thead>
-      <tbody>
-        ${platRow('Creatives', meta.length, tt.length, v => String(v), false)}
-        ${platRow('Spend', mSpend, tSpend, money, false)}
-        ${platRow('Reach', sum(meta, 'reach'), sum(tt, 'reach'), count, false)}
-        ${platRow('Impressions', mImpr, tImpr, count, false)}
-        ${platRow('CPM', mImpr ? mSpend / mImpr * 1000 : 0, tImpr ? tSpend / tImpr * 1000 : 0, rs, true)}
-        ${platRow('Hook rate', mean(meta, 'hookRate'), mean(tt, 'hookRate'), v => one(v) + '%', false)}
-        ${platRow('Hold rate', mean(meta, 'holdRate'), mean(tt, 'holdRate'), v => one(v) + '%', false)}
-        ${platRow('Avg watch', mean(meta, 'watchTime'), mean(tt, 'watchTime'), v => one(v) + 's', false)}
-        ${platRow('Still running', meta.filter(x => x.adStatus === 'ACTIVE').length,
-                  tt.filter(x => x.adStatus === 'ACTIVE').length, v => String(v), false)}
-      </tbody>
-    </table>
-    <div class="ms-foot">The stronger side of each comparable row is marked.</div>` : '';
+  // ---- Meta against TikTok, as a split rather than a contest ----------
+  const platTable = msPlatformSplit(data, spend, impr);
+
+  const cards = [
+    msCard('Where the money went', `
+      <div class="ms-lead">${lead}</div>
+      ${msSpendMix(mix, spend)}
+      ${wasteCallout}`, 'spend by the rating of what it ran behind'),
+    platTable,
+  ].filter(Boolean);
 
   return `<div class="ms-sec">
     <div class="ms-sec-h">Paid</div>
-    <div class="ms-tiles cols-4">${tiles}</div>
-    <div class="ms-grid cols-2">
-      ${msCard('Where the money went', msSpendMix(mix, spend), 'spend by the rating of what it ran behind')}
-      ${platTable ? msCard('Meta against TikTok', platTable) : ''}
-    </div>
+    <div class="ms-tiles cols-3">${tiles}</div>
+    ${cpmLine}
+    <div class="ms-grid cols-${Math.min(cards.length, 2)}">${cards.join('')}</div>
+    ${bs}
+    ${missedCard ? `<div class="ms-grid cols-1">${missedCard}</div>` : ''}
   </div>`;
+}
+
+/**
+ * Brainsuite crossed with paid.
+ *
+ * Three questions, in the order they are useful. What is running right now
+ * behind creative the score flagged, which is the one thing actionable
+ * today. Where the money went by pre-flight score. And whether the score
+ * and the outcome agreed often enough to trust it for budgeting.
+ *
+ * CQR cannot answer the first of those. It needs delivery before it means
+ * anything, which is what the Too Early state is. Brainsuite exists before
+ * a rupee is spent, so it is the only signal on anything launched this
+ * week.
+ */
+function msBrainsuiteBlock(data, spend, live, sumF) {
+  const scored = data.filter(d => msBsBand(d));
+  if (!scored.length) return '';
+
+  const scoredSpend = sumF(scored, 'spend');
+  const coverage = msPct(scoredSpend, spend);
+
+  // 3a. Running now behind a weak score.
+  const liveWeak = live.filter(d => msBsBand(d) === 'Weak');
+  const liveWeakSpend = sumF(liveWeak, 'spend');
+  const tooEarly = liveWeak.filter(d => !msIsGrade(d.cqr)).length;
+  const flagged = liveWeak.length ? msCallout('neg',
+    `${fmt(liveWeakSpend)} is running behind ${msCount(liveWeak.length, 'creative')} Brainsuite rated Weak.`,
+    tooEarly
+      ? `${tooEarly} of ${liveWeak.length} ${tooEarly === 1 ? 'has' : 'have'} no paid rating yet, so the score is the only read available. ${msNames(liveWeak)}`
+      : msNames(liveWeak)) : '';
+
+  // 3b. Spend by pre-flight score.
+  const bsMix = { Strong: 0, Mixed: 0, Weak: 0, none: 0 };
+  data.forEach(d => { bsMix[msBsBand(d) || 'none'] += msNum(d.spend); });
+  const bsBar = msMoneyBar(bsMix, spend, [...MS_BS_BANDS, 'none'], MS_BS_C,
+    { none: 'Not scored' });
+
+  // 3c. Did the score and the outcome agree?
+  const both = scored.filter(d => msIsGrade(d.cqr));
+  let agree;
+  if (both.length < MS_BS_MIN) {
+    agree = `<div class="ms-bar-empty">
+      ${both.length} creative${both.length === 1 ? '' : 's'} so far carry both a Brainsuite score
+      and a paid rating. Below ${MS_BS_MIN} the split says more about which creatives happened to
+      be scored than about the score itself, so it is held back.</div>`;
+  } else {
+    const rows = MS_BS_BANDS.map(b => {
+      const items = both.filter(d => msBsBand(d) === b);
+      const counts = { Good: 0, Average: 0, Poor: 0, none: 0 };
+      items.forEach(d => { counts[d.cqr] += 1; });
+      return { band: b, items, counts };
+    }).filter(r => r.items.length);
+
+    agree = `
+      <table class="ms-table ms-table-cut ms-table-narrow">
+        <tbody>${rows.map(r => `
+          <tr>
+            <td class="ms-cut-k">Brainsuite ${r.band}<div class="ms-cut-n">${msCount(r.items.length, 'creative')}</div></td>
+            <td class="ms-mixcell">${msCqrBar(r.counts, r.items.length)}</td>
+          </tr>`).join('')}
+        </tbody>
+      </table>
+      <div class="ms-foot">How each pre-flight band ended up on paid. Agreement is a reason to
+        weight the score when setting budget, not proof that it caused the outcome: if budget
+        already follows the score, delivery follows budget, and the rating follows delivery.</div>`;
+  }
+
+  // One card rather than two side by side. The money bar is three lines
+  // tall and the agreement table is fifteen, so as a two-column row the
+  // short side left a block of empty card the width of half the page.
+  return `
+    <div class="ms-sub-h">Brainsuite against outcome</div>
+    <div class="ms-note">${coverage}% of paid spend sits behind creative that has been scored.</div>
+    ${flagged}
+    <div class="ms-grid cols-1">
+      ${msCard('Brainsuite and paid', `
+        <div class="ms-lead">Where the money went by pre-flight score</div>
+        ${bsBar}
+        <div class="ms-rule"></div>
+        <div class="ms-lead">Did the score and the result agree</div>
+        ${agree}`)}
+    </div>`;
+}
+
+/**
+ * Meta and TikTok as shares of one budget.
+ *
+ * Deliberately not a contest. The two platforms are measured against
+ * separate benchmarks, so marking a winner on raw volume says only which
+ * one got more money. Share of spend against share of impressions is a
+ * fair read because both sides of that ratio come from the same platform.
+ */
+function msPlatformSplit(data, spend, impr) {
+  const side = (k) => data.map(d => d[k]).filter(Boolean);
+  const meta = side('_meta'), tt = side('_tt');
+  if (!meta.length && !tt.length) return '';
+  const sum = (a, f) => a.reduce((s, x) => s + msNum(x[f]), 0);
+
+  const rows = [
+    { label: 'Meta', items: meta, c: MS_C.a },
+    { label: 'TikTok', items: tt, c: MS_C.b },
+  ].filter(r => r.items.length);
+
+  const mSpend = sum(meta, 'spend'), tSpend = sum(tt, 'spend');
+  const platSpend = mSpend + tSpend;
+  const mImpr = sum(meta, 'impressions'), tImpr = sum(tt, 'impressions');
+  const platImpr = mImpr + tImpr;
+
+  const body = `
+    <table class="ms-table">
+      <thead><tr><th></th><th class="n">Creatives</th><th class="n">Spend</th>
+        <th class="n">Impressions</th><th class="n">Running</th></tr></thead>
+      <tbody>${rows.map(r => {
+        const s = sum(r.items, 'spend'), i = sum(r.items, 'impressions');
+        return `<tr>
+          <td><span class="ms-key-dot" style="background:${r.c}"></span>${r.label}</td>
+          <td class="n">${r.items.length}</td>
+          <td class="n">${fmt(s)}<span class="ms-share">${msPct(s, platSpend)}%</span></td>
+          <td class="n">${fmtN(i)}<span class="ms-share">${msPct(i, platImpr)}%</span></td>
+          <td class="n">${r.items.filter(x => x.adStatus === 'ACTIVE').length}</td>
+        </tr>`;
+      }).join('')}</tbody>
+    </table>
+    <div class="ms-foot">Shares of the boosted total. Hook rate, hold rate and watch time are
+      left out on purpose: each platform is banded against its own benchmark, so the raw rates
+      are not comparable side by side.</div>`;
+
+  return msCard('Meta and TikTok', body, 'how one budget was split');
 }
 
 /** Spend split by rating. Money, so the segments carry amounts. */
 function msSpendMix(mix, total) {
-  if (!total) return `<div class="ms-bar-empty">No spend to split</div>`;
-  const order = [...MS_GRADES, 'none'].filter(g => mix[g] > 0);
-  if (!order.length) return `<div class="ms-bar-empty">No spend to split</div>`;
-  return `
-    <div class="ms-bar">${order.map(g =>
-      `<span class="ms-seg" style="width:${mix[g] / total * 100}%;background:${MS_C[g]}"
-         title="${g === 'none' ? 'Not rated' : g}: ${fmt(mix[g])}"></span>`).join('')}</div>
-    <div class="ms-keys">${order.map(g => `
-      <span class="ms-key"><span class="ms-key-dot" style="background:${MS_C[g]}"></span>${
-        g === 'none' ? 'Not rated' : g} ${fmt(mix[g])} (${msPct(mix[g], total)}%)</span>`).join('')}</div>`;
+  return msMoneyBar(mix, total, [...MS_GRADES, 'none'], MS_C, { none: 'Not rated' });
 }
+
+/** A money split as one bar, in whatever bands the caller names. */
+function msMoneyBar(mix, total, order, colours, labels) {
+  if (!total) return `<div class="ms-bar-empty">No spend to split</div>`;
+  const present = order.filter(g => mix[g] > 0);
+  if (!present.length) return `<div class="ms-bar-empty">No spend to split</div>`;
+  const name = (g) => (labels && labels[g]) || g;
+  return `
+    <div class="ms-bar">${present.map(g =>
+      `<span class="ms-seg" style="width:${mix[g] / total * 100}%;background:${colours[g]}"
+         title="${msEsc(name(g))}: ${fmt(mix[g])}"></span>`).join('')}</div>
+    <div class="ms-keys">${present.map(g => `
+      <span class="ms-key"><span class="ms-key-dot" style="background:${colours[g]}"></span>${
+        msEsc(name(g))} ${fmt(mix[g])} (${msPct(mix[g], total)}%)</span>`).join('')}</div>`;
+}
+
+/** "3 creatives", "1 creative". */
+const msCount = (n, word) => `${n} ${word}${n === 1 ? '' : 's'}`;
+
+/** Up to five creatives named, then a count for the rest. */
+function msNames(arr, cap = 5) {
+  const names = arr.slice(0, cap).map(d => msEsc(d.short || d.id));
+  const rest = arr.length - names.length;
+  return names.join(', ') + (rest > 0 ? ` and ${rest} more` : '');
+}
+
+/** A single finding, stated rather than tabulated. */
+const msCallout = (tone, line, sub) => `
+  <div class="ms-callout t-${tone}">
+    <div class="ms-callout-l">${line}</div>
+    ${sub ? `<div class="ms-callout-s">${sub}</div>` : ''}
+  </div>`;
+
+/** Two figures set against each other, with the point written out. */
+const msCompare = (title, parts, fmtF, note) => {
+  const max = Math.max(...parts.map(p => p.v), 0) || 1;
+  return `
+    <div class="ms-compare">
+      <div class="ms-compare-h">${msEsc(title)}</div>
+      <div class="ms-compare-rows">${parts.map(p => `
+        <div class="ms-compare-row">
+          <div class="ms-compare-k">${msEsc(p.label)}</div>
+          <div class="ms-compare-track"><div class="ms-compare-fill"
+            style="width:${Math.max(2, p.v / max * 100)}%;background:${p.c}"></div></div>
+          <div class="ms-compare-v">${fmtF(p.v)}</div>
+        </div>`).join('')}</div>
+      ${note ? `<div class="ms-foot">${msEsc(note)}</div>` : ''}
+    </div>`;
+};
 
 // ---------- 5. What worked ------------------------------------------
 function msSectionWhatWorked(data) {
