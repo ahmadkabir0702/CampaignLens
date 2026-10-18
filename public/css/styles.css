@@ -948,7 +948,7 @@ select:focus,.search-input:focus,.modal-input:focus{outline:none;border-color:va
 .ms-link:hover{border-bottom-color:var(--navy)}
 
 /* ---------- Paid: findings rather than figures ----------------------
-   A heading inside a section, for the Brainsuite block, which is its own
+   A heading inside a section, for the Pre-test Score block, which is its own
    question rather than another card in the row above it.               */
 .ms-sub-h{
   font:500 13.5px/20px var(--font);color:var(--ink-900);

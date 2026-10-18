@@ -1,5 +1,5 @@
 /* =====================================================================
-   Brainsuite — pre-tests page, form, report, card badge.
+   CampaignLens Pre-testing — pre-tests page, form, report, card badge, PDF.
    Built on the design system tokens in styles.css: navy does the work,
    ratings use the pos / warn / neg pairs, cards are borderless white.
    ===================================================================== */
@@ -146,3 +146,54 @@ figcaption{font:400 12.5px/18px var(--font);color:var(--ink-600);margin-top:4px}
 .bs-detail .bs-sec,.bs-detail .bs-hero,.bs-detail .bs-all{background:var(--white)}
 .bs-detail .bs-bar-track,.bs-detail .bs-total{background:var(--canvas-2)}
 .bs-detail .bs-fix{background:var(--canvas-2)}
+
+/* ---------- YouTube field, PDF button ------------------------------ */
+.bs-field[hidden]{display:none}
+.bs-head-actions{display:flex;align-items:flex-start;gap:8px;flex:none}
+.bs-pdf-btn{display:inline-flex;align-items:center;gap:6px;height:34px;padding:0 12px;white-space:nowrap}
+.bs-pdf-btn svg{width:15px;height:15px;stroke:currentColor;stroke-width:1.7;fill:none;stroke-linecap:round;stroke-linejoin:round}
+.bs-pdf-btn:disabled{opacity:.6;cursor:progress}
+.bs-detail-foot{display:flex;align-items:center;justify-content:space-between;gap:12px;flex-wrap:wrap;margin-top:12px}
+.bs-detail-foot .bs-fine{margin-top:0}
+#pt-print{display:none}
+
+/* ---------- PDF (print) ------------------------------------------------
+   Only the report copy in #pt-print prints. Everything else on the page,
+   including the open modal, is hidden. Sections never split across pages,
+   and the colours print as they look on screen. */
+@media print{
+  @page{size:A4;margin:14mm 12mm}
+  body.pt-printing{background:#fff!important}
+  body.pt-printing > *:not(#pt-print){display:none!important}
+  body.pt-printing #pt-print{display:block;color:var(--ink-700);font:400 12.5px/18px var(--font)}
+  #pt-print *{-webkit-print-color-adjust:exact;print-color-adjust:exact}
+
+  .pt-head{border-bottom:2px solid var(--navy);padding-bottom:10px;margin-bottom:14px}
+  .pt-kicker{font:500 11px/14px var(--font);color:var(--navy);text-transform:uppercase;letter-spacing:.06em}
+  .pt-title{font:500 22px/28px var(--font);color:var(--ink-900);margin:4px 0 4px}
+  .pt-meta{font:400 12px/17px var(--font);color:var(--ink-600)}
+  .pt-foot{margin-top:16px;padding-top:8px;border-top:1px solid var(--line);font:400 10.5px/15px var(--font);color:var(--ink-400)}
+
+  #pt-print .bs-report{gap:10px}
+  #pt-print .bs-hero,#pt-print .bs-sec,#pt-print .bs-all{background:#F4F6F8}
+  /* Long sections flow across pages; only single items stay whole. */
+  #pt-print .bs-hero,#pt-print .bs-cols,#pt-print .bs-chips{break-inside:avoid;page-break-inside:avoid}
+  #pt-print .bs-h{break-after:avoid;page-break-after:avoid}
+  #pt-print .bs-hero{padding:12px}
+  #pt-print .bs-total{width:72px;height:72px;background:#fff}
+  #pt-print .bs-total-num{font-size:26px;line-height:28px}
+  #pt-print .bs-cols{grid-template-columns:1fr 1fr;gap:10px}
+  #pt-print .bs-sec{padding:12px}
+  #pt-print .bs-h{font-size:13.5px;margin-bottom:6px}
+  #pt-print .bs-bar{padding:2px 0}
+  #pt-print .bs-bar-track{background:#fff}
+  #pt-print .bs-fix{background:#fff;break-inside:avoid;page-break-inside:avoid}
+  #pt-print .bs-stills{grid-template-columns:repeat(4,1fr)}
+  #pt-print .bs-stills img{aspect-ratio:9/16}
+  #pt-print figure{break-inside:avoid;page-break-inside:avoid}
+  #pt-print .bs-montage img{max-height:120mm;object-fit:contain;background:#fff}
+  #pt-print .bs-all summary{cursor:default}
+  #pt-print .bs-all summary::after{content:''}
+  #pt-print .bs-table{margin-bottom:12px}
+  #pt-print .bs-table tr{break-inside:avoid;page-break-inside:avoid}
+}

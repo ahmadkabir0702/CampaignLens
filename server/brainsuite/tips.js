@@ -33,5 +33,8 @@ module.exports = {
   fitToMessageVoiceOverProvided: 'Use words in the voice-over that are intuitively associated with the key message.',
   fitToBrandValueVisual: 'Use visuals that are intuitively associated with the brand values.',
   fitToBrandValueText: 'Use words that are intuitively associated with the brand values.',
+  // YouTube only. Not in the report export we copied the others from, so
+  // this one is our own wording.
+  conceptCallToActionAttention: 'Make the call to action easy to see: give it contrast, size and enough time on screen, and keep it clear of clutter.',
   conceptCallToActionAvailableVoiceOverProvided: 'Include a call to action in the voice-over, in sync with the one on screen.',
 };

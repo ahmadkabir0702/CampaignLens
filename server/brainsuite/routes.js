@@ -9,9 +9,12 @@
  *   POST   /api/pretests/:id/start       after the browser's upload: start the test
  *   GET    /api/pretests/:id             one pre-test with its report
  *   DELETE /api/pretests/:id             cancel an upload, or delete a report now
- *   GET    /api/brainsuite/creative/:id  a creative's score
- *   GET    /api/brainsuite/jobs/:id/media  fresh image and video links
- *   GET    /api/brainsuite/usage         this month's tests (internal users)
+ *   GET    /api/pretest-scores/creative/:id    a creative's Pre-test Score
+ *   GET    /api/pretest-scores/jobs/:id/media  fresh image and video links
+ *   GET    /api/pretest-scores/usage           this month's tests (internal users)
+ *
+ * Nothing sent from here names the scoring vendor: the vendor's weblink is
+ * kept in the database but never sent, and stored error text is scrubbed.
  */
 const { query, assertBrandAllowed } = require('../../db');
 const store = require('./store');
@@ -20,6 +23,15 @@ const { BUSINESS_GROUPS, CATEGORIES, LANGUAGES, CHANNELS } = require('./briefing
 
 const { HttpError } = service;
 
+// Errors written before the rename (or passed through from the vendor) can
+// carry its name. Scrub on the way out rather than rewriting history.
+function scrub(text) {
+  if (text == null) return text;
+  return String(text)
+    .replace(/brainsuite[\w.-]*/gi, 'the scoring service')
+    .replace(/the scoring service\s+(POST|GET)\s+\S+\s+failed/gi, 'The scoring service failed');
+}
+
 function send(res, err, label) {
   const status = err.status && err.status >= 400 && err.status < 600 ? err.status
     : (String(err.message || '').startsWith('Access denied') || String(err.message || '').startsWith('No brand access')) ? 403
@@ -27,9 +39,9 @@ function send(res, err, label) {
   if (status >= 500) console.error(`[brainsuite] ${label}:`, err.message);
   // A missing table means the migration has not been run yet.
   if (err.code === '42P01' || err.code === '42703') {
-    return res.status(503).json({ error: 'Brainsuite is not set up on this database yet (run server/012_brainsuite.sql).' });
+    return res.status(503).json({ error: 'Pre-testing is not set up on this database yet (run server/012_brainsuite.sql).' });
   }
-  res.status(status).json({ error: status >= 500 && !err.status ? 'Something went wrong. Try again.' : err.message });
+  res.status(status).json({ error: status >= 500 && !err.status ? 'Something went wrong. Try again.' : scrub(err.message) });
 }
 
 function resolveBrand(req) {
@@ -60,14 +72,15 @@ function publicRow(row, result) {
     campaign: (row.briefing && row.briefing.projectName) || null,
     contentOrigin: row.briefing && row.briefing.contentOrigin,
     keyMessage: row.briefing && row.briefing.intendedMessages ? row.briefing.intendedMessages[0] : null,
+    ctaOverlay: row.briefing && row.briefing.platformCTAOverlay
+      ? (row.briefing.platformCTAOverlay === 'overlayPresent' ? 'yes' : 'no') : null,
     requestedBy: row.requested_by_name || row.requested_by,
-    error: row.error,
+    error: scrub(row.error),
     createdAt: row.created_at, startedAt: row.started_at,
     completedAt: row.completed_at, expiresAt: row.expires_at,
     totalScore: result ? Number(result.total_score) : (row.total_score != null ? Number(row.total_score) : null),
     totalRating: result ? result.total_rating : (row.total_rating || null),
     summary: result ? result.summary : undefined,
-    weblink: result ? result.weblink : undefined,
   };
 }
 
@@ -133,7 +146,7 @@ module.exports = function mountBrainsuite(app) {
     } catch (err) { send(res, err, 'delete pretest'); }
   });
 
-  app.get('/api/brainsuite/creative/:creativeId', async (req, res) => {
+  app.get('/api/pretest-scores/creative/:creativeId', async (req, res) => {
     try {
       const { rows } = await query(`select brand_id from creatives where creative_id = $1`, [req.params.creativeId]);
       if (!rows.length) throw new HttpError(404, 'Creative not found.');
@@ -141,17 +154,16 @@ module.exports = function mountBrainsuite(app) {
       const j = await store.latestForCreative(req.params.creativeId);
       if (!j) return res.json({ status: 'none' });
       res.json({
-        id: j.id, status: j.status, error: j.error, channel: j.channel,
+        id: j.id, status: j.status, error: scrub(j.error), channel: j.channel,
         channelLabel: CHANNELS[j.channel] || j.channel,
         reused: !!j.reused_from, completedAt: j.completed_at,
         totalScore: j.total_score != null ? Number(j.total_score) : null, totalRating: j.total_rating,
         summary: j.status === 'succeeded' ? j.summary : null,
-        weblink: j.weblink || null,
       });
     } catch (err) { send(res, err, 'creative score'); }
   });
 
-  app.get('/api/brainsuite/jobs/:id/media', async (req, res) => {
+  app.get('/api/pretest-scores/jobs/:id/media', async (req, res) => {
     try {
       let row = await store.getJob(req.params.id);
       if (!row) throw new HttpError(404, 'Test not found.');
@@ -164,12 +176,12 @@ module.exports = function mountBrainsuite(app) {
     } catch (err) { send(res, err, 'media'); }
   });
 
-  app.get('/api/brainsuite/usage', async (req, res) => {
+  app.get('/api/pretest-scores/usage', async (req, res) => {
     try {
       if (!req.session.isInternal) throw new HttpError(403, 'Internal users only.');
       res.json({ settings: service.settings(), rows: await store.usage() });
     } catch (err) { send(res, err, 'usage'); }
   });
 
-  console.log('[brainsuite] routes mounted at /api/pretests and /api/brainsuite');
+  console.log('[brainsuite] routes mounted at /api/pretests and /api/pretest-scores');
 };

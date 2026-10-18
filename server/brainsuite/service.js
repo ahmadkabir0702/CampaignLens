@@ -86,7 +86,7 @@ function statusFor(bsStatus) {
  * form. The video goes from the browser straight to Brainsuite.
  */
 async function createPretest({ brandId, username, fields }) {
-  if (!client.configured()) throw new HttpError(503, 'Brainsuite is not connected on this server yet.');
+  if (!client.configured()) throw new HttpError(503, 'Pre-testing is not connected on this server yet.');
   const brand = await store.brandInfo(brandId);
   if (!brand) throw new HttpError(404, 'Brand not found.');
 
@@ -108,14 +108,15 @@ async function createPretest({ brandId, username, fields }) {
       contentType: fields.content_type,
       language: fields.language || brand.bs_language,
       keyMessage: fields.key_message,
+      ctaOverlay: fields.cta_overlay,
     });
   } catch (e) { throw new HttpError(400, e.message); }
 
   await checkPretestCap();
 
   const fileName = safeFileName(fields.file_name);
-  const bsJob = await client.announceJob();
-  const asset = await client.announceAsset(bsJob.id, fileName);
+  const bsJob = await client.announceJob(briefing.channel);
+  const asset = await client.announceAsset(briefing.channel, bsJob.id, fileName);
   const row = await store.insertJob({
     bsJobId: bsJob.id, kind: 'pretest', brandId, requestedBy: username, status: 'uploading',
     channel: briefing.channel, briefing, assetName, fileName, fileBytes: fileBytes || null,
@@ -127,7 +128,7 @@ async function createPretest({ brandId, username, fields }) {
 // returns a fresh one.
 async function freshUpload(row) {
   if (row.status !== 'uploading') throw new HttpError(409, 'This pre-test is no longer waiting for its upload.');
-  const asset = await client.announceAsset(row.bs_job_id, row.file_name);
+  const asset = await client.announceAsset(row.channel, row.bs_job_id, row.file_name);
   return { url: asset.uploadUrl, fields: asset.fields };
 }
 
@@ -139,13 +140,13 @@ async function startPretest(row) {
   const claimed = await store.claimForStart(row.id);
   if (!claimed) throw new HttpError(409, 'This pre-test has already been started.');
   try {
-    await client.startJob(row.bs_job_id, row.briefing);
+    await client.startJob(row.channel, row.bs_job_id, row.briefing);
   } catch (e) {
     if (refused(e)) {
       // 422 = Brainsuite did not like the briefing or never got the file.
       const why = (e.detail || e.message).slice(0, 300);
-      await store.updateJob(row.id, { status: 'failed', started_at: null, error: `Brainsuite could not start the test: ${why}` });
-      throw new HttpError(502, `Brainsuite could not start the test: ${why}`);
+      await store.updateJob(row.id, { status: 'failed', started_at: null, error: `The test could not be started: ${why}` });
+      throw new HttpError(502, `The test could not be started: ${why}`);
     }
     console.error(`[brainsuite] start ${row.id} unclear, polling to find out: ${e.message}`);
   }
@@ -176,19 +177,19 @@ async function pollOnce(rowId) {
 
   let result;
   try {
-    result = await client.getJob(row.bs_job_id);
+    result = await client.getJob(row.channel, row.bs_job_id);
   } catch (e) {
     if (e.status === 429 && e.retryAt) return Math.max(5000, e.retryAt.getTime() - Date.now());
-    if (e.status === 404) { await fail('Brainsuite no longer has this test'); return null; }
+    if (e.status === 404) { await fail('This test is no longer available'); return null; }
     console.error(`[brainsuite] poll ${rowId}: ${e.message}`);
-    if (age > GIVE_UP_MS) { await fail('Timed out waiting for Brainsuite'); return null; }
+    if (age > GIVE_UP_MS) { await fail('Timed out waiting for the score'); return null; }
     return 2 * 60 * 1000;
   }
 
   // A start that timed out on our side but never reached Brainsuite leaves
   // the job Announced. It will not start on its own, and it used no quota.
   if (result.status === 'Announced' && age > 10 * 60 * 1000) {
-    await fail('Brainsuite did not start the test. Run it again.');
+    await fail('The test did not start. Run it again.');
     return null;
   }
 
@@ -196,7 +197,7 @@ async function pollOnce(rowId) {
   if (status === 'succeeded') {
     let summary;
     try { summary = summarise(result, row.channel); } catch (e) {
-      await fail(`Could not read the Brainsuite result: ${e.message}`);
+      await fail(`Could not read the result: ${e.message}`);
       return null;
     }
     const expiresAt = row.kind === 'pretest' ? new Date(Date.now() + TTL_HOURS * 3600 * 1000) : null;
@@ -209,11 +210,11 @@ async function pollOnce(rowId) {
     return null;
   }
   if (status === 'failed') {
-    await fail(result.error || `Brainsuite marked the test ${result.status}`);
+    await fail(result.error || `The test ended as ${String(result.status).toLowerCase()}`);
     return null;
   }
   if (row.status !== status) await store.updateIfRunning(rowId, { status });
-  if (age > GIVE_UP_MS) { await fail('Timed out waiting for Brainsuite'); return null; }
+  if (age > GIVE_UP_MS) { await fail('Timed out waiting for the score'); return null; }
   return age > SLOW_AFTER_MS ? SLOW_POLL_MS : POLL_MS;
 }
 
@@ -235,7 +236,7 @@ async function mediaFor(row) {
   }
   let result;
   try {
-    result = await client.getJob(row.bs_job_id);
+    result = await client.getJob(row.channel, row.bs_job_id);
   } catch (e) {
     if (e.status === 404) return { montage: null, stills: [], heatmovie: null, gone: true };
     throw e;
@@ -301,13 +302,13 @@ async function scoreCreative({ creativeId, brandId, type, platform, campaign, fi
     let row = null;
     let startCalled = false;
     try {
-      const bsJob = await client.announceJob();
+      const bsJob = await client.announceJob(channel);
       row = await store.insertJob({ ...base, briefing, bsJobId: bsJob.id, status: 'uploading' });
-      const asset = await client.announceAsset(bsJob.id, fileName);
+      const asset = await client.announceAsset(channel, bsJob.id, fileName);
       await client.uploadFile(asset, filePath, fileName);
       startCalled = true;
       try {
-        await client.startJob(bsJob.id, briefing);
+        await client.startJob(channel, bsJob.id, briefing);
       } catch (e) {
         if (refused(e)) throw e;
         console.error(`[brainsuite] ${creativeId}: start unclear, polling to find out: ${e.message}`);

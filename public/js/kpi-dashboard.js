@@ -394,7 +394,7 @@ function msSectionOrganic(data) {
 // ---------------------------------------------------------------------
 
 /**
- * Brainsuite's rating collapsed to three bands, matching the badge its own
+ * The Pre-test Score's rating collapsed to three bands, matching the badge its own
  * panel shows, so the same creative is never Strong in one place and
  * positive in another.
  */
@@ -414,7 +414,7 @@ const msBsBand = (d) => MS_BS_TONE[d.bsRating] || null;
 const msIsGrade = (v) => typeof isGrade === 'function' ? isGrade(v) : MS_GRADES.includes(v);
 const msOrgGrade = (d) => typeof bestOrganicGrade === 'function' ? bestOrganicGrade(d) : null;
 
-// Below this many creatives carrying both a Brainsuite score and a real
+// Below this many creatives carrying both a Pre-test Score and a real
 // paid rating, the agreement view is noise dressed as a finding.
 const MS_BS_MIN = 8;
 
@@ -484,8 +484,8 @@ function msSectionPaid(data) {
         : `Poor-rated creative delivered cheaper here, so cost is not following quality in this selection.`)
   ) : '';
 
-  // ---- 3. Brainsuite against outcome ---------------------------------
-  const bs = msBrainsuiteBlock(data, spend, live, sumF);
+  // ---- 3. Pre-test Score against outcome -----------------------------
+  const bs = msPretestBlock(data, spend, live, sumF);
 
   // ---- 4. Boost coverage ---------------------------------------------
   const missed = data.filter(d => d.boostState === 'never' && msOrgGrade(d) === 'Good');
@@ -517,7 +517,7 @@ function msSectionPaid(data) {
 }
 
 /**
- * Brainsuite crossed with paid.
+ * The Pre-test Score crossed with paid.
  *
  * Three questions, in the order they are useful. What is running right now
  * behind creative the score flagged, which is the one thing actionable
@@ -525,11 +525,11 @@ function msSectionPaid(data) {
  * and the outcome agreed often enough to trust it for budgeting.
  *
  * CQR cannot answer the first of those. It needs delivery before it means
- * anything, which is what the Too Early state is. Brainsuite exists before
+ * anything, which is what the Too Early state is. The Pre-test Score exists before
  * a rupee is spent, so it is the only signal on anything launched this
  * week.
  */
-function msBrainsuiteBlock(data, spend, live, sumF) {
+function msPretestBlock(data, spend, live, sumF) {
   const scored = data.filter(d => msBsBand(d));
   if (!scored.length) return '';
 
@@ -541,7 +541,7 @@ function msBrainsuiteBlock(data, spend, live, sumF) {
   const liveWeakSpend = sumF(liveWeak, 'spend');
   const tooEarly = liveWeak.filter(d => !msIsGrade(d.cqr)).length;
   const flagged = liveWeak.length ? msCallout('neg',
-    `${fmt(liveWeakSpend)} is running behind ${msCount(liveWeak.length, 'creative')} Brainsuite rated Weak.`,
+    `${fmt(liveWeakSpend)} is running behind ${msCount(liveWeak.length, 'creative')} the pre-test rated Weak.`,
     tooEarly
       ? `${tooEarly} of ${liveWeak.length} ${tooEarly === 1 ? 'has' : 'have'} no paid rating yet, so the score is the only read available. ${msNames(liveWeak)}`
       : msNames(liveWeak)) : '';
@@ -557,7 +557,7 @@ function msBrainsuiteBlock(data, spend, live, sumF) {
   let agree;
   if (both.length < MS_BS_MIN) {
     agree = `<div class="ms-bar-empty">
-      ${both.length} creative${both.length === 1 ? '' : 's'} so far carry both a Brainsuite score
+      ${both.length} creative${both.length === 1 ? '' : 's'} so far carry both a Pre-test Score
       and a paid rating. Below ${MS_BS_MIN} the split says more about which creatives happened to
       be scored than about the score itself, so it is held back.</div>`;
   } else {
@@ -572,7 +572,7 @@ function msBrainsuiteBlock(data, spend, live, sumF) {
       <table class="ms-table ms-table-cut ms-table-narrow">
         <tbody>${rows.map(r => `
           <tr>
-            <td class="ms-cut-k">Brainsuite ${r.band}<div class="ms-cut-n">${msCount(r.items.length, 'creative')}</div></td>
+            <td class="ms-cut-k">Pre-test ${r.band}<div class="ms-cut-n">${msCount(r.items.length, 'creative')}</div></td>
             <td class="ms-mixcell">${msCqrBar(r.counts, r.items.length)}</td>
           </tr>`).join('')}
         </tbody>
@@ -586,11 +586,11 @@ function msBrainsuiteBlock(data, spend, live, sumF) {
   // tall and the agreement table is fifteen, so as a two-column row the
   // short side left a block of empty card the width of half the page.
   return `
-    <div class="ms-sub-h">Brainsuite against outcome</div>
+    <div class="ms-sub-h">Pre-test Score against outcome</div>
     <div class="ms-note">${coverage}% of paid spend sits behind creative that has been scored.</div>
     ${flagged}
     <div class="ms-grid cols-1">
-      ${msCard('Brainsuite and paid', `
+      ${msCard('Pre-test Score and paid', `
         <div class="ms-lead">Where the money went by pre-flight score</div>
         ${bsBar}
         <div class="ms-rule"></div>

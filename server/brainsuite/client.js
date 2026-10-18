@@ -1,5 +1,13 @@
 /**
- * Brainsuite API client — ACE Social Media Video (Meta & TikTok).
+ * Pre-testing API client (Brainsuite ACE Social Media Video).
+ *
+ * Users never see the vendor's name: every message an error can carry to
+ * the screen says "the scoring service" instead. Env vars, table names and
+ * this module keep the vendor name, because nobody sees them.
+ *
+ * Two apps, picked by the placement being tested:
+ *   Meta & TikTok  ACE_VIDEO_SMV_PRO_UNILEVER_V2  (tiktok, facebook_*, instagram_*)
+ *   YouTube        ACE_VIDEO_SMV_PRO_UNILEVER     (youtube, youtube_shorts)
  *
  * The only file that holds the client secret or talks to Brainsuite. The
  * browser never sees either; it only ever receives the one-file upload form
@@ -13,7 +21,8 @@
  * Needs on the service:
  *   BRAINSUITE_CLIENT_ID, BRAINSUITE_CLIENT_SECRET
  * Optional:
- *   BRAINSUITE_TOOL_VARIANT  default ACE_VIDEO_SMV_PRO_UNILEVER_V2
+ *   BRAINSUITE_TOOL_VARIANT          default ACE_VIDEO_SMV_PRO_UNILEVER_V2 (Meta & TikTok)
+ *   BRAINSUITE_YOUTUBE_TOOL_VARIANT  default ACE_VIDEO_SMV_PRO_UNILEVER   (YouTube)
  *   BRAINSUITE_API_BASE      default https://api.brainsuite.ai
  *   BRAINSUITE_AUTH_URL      default https://auth.brainsuite.ai/oauth2/token
  */
@@ -24,7 +33,16 @@ const FormData = require('form-data');
 const API_BASE = (process.env.BRAINSUITE_API_BASE || 'https://api.brainsuite.ai').replace(/\/+$/, '');
 const AUTH_URL = process.env.BRAINSUITE_AUTH_URL || 'https://auth.brainsuite.ai/oauth2/token';
 const VARIANT = process.env.BRAINSUITE_TOOL_VARIANT || 'ACE_VIDEO_SMV_PRO_UNILEVER_V2';
-const APP_PATH = `/v1/jobs/ACE_VIDEO/${VARIANT}`;
+const YOUTUBE_VARIANT = process.env.BRAINSUITE_YOUTUBE_TOOL_VARIANT || 'ACE_VIDEO_SMV_PRO_UNILEVER';
+
+function isYouTube(channel) {
+  return channel === 'youtube' || channel === 'youtube_shorts';
+}
+
+// The API path for the app that scores this placement.
+function appPath(channel) {
+  return `/v1/jobs/ACE_VIDEO/${isYouTube(channel) ? YOUTUBE_VARIANT : VARIANT}`;
+}
 
 // The asset id we announce. One asset per job, so a fixed name is enough,
 // and re-announcing the same id is how Brainsuite hands out a fresh upload form.
@@ -53,7 +71,7 @@ let tokenExpires = 0;
 let tokenPending = null;
 
 async function fetchToken() {
-  if (!configured()) throw new BrainsuiteError('Brainsuite is not configured (BRAINSUITE_CLIENT_ID / BRAINSUITE_CLIENT_SECRET).');
+  if (!configured()) throw new BrainsuiteError('Pre-testing is not connected on this server (BRAINSUITE_CLIENT_ID / BRAINSUITE_CLIENT_SECRET).');
   const basic = Buffer.from(
     `${process.env.BRAINSUITE_CLIENT_ID}:${process.env.BRAINSUITE_CLIENT_SECRET}`, 'latin1'
   ).toString('base64');
@@ -68,7 +86,7 @@ async function fetchToken() {
     return token;
   } catch (err) {
     const status = err.response ? err.response.status : null;
-    throw new BrainsuiteError(`Brainsuite token request failed${status ? ` (HTTP ${status})` : ''}`, {
+    throw new BrainsuiteError(`Could not sign in to the scoring service${status ? ` (HTTP ${status})` : ''}`, {
       status, body: err.response ? err.response.data : null,
     });
   }
@@ -115,27 +133,27 @@ async function call(method, path, body, { retried = false } = {}) {
       const h = err.response.headers || {};
       const reset = h['x-ratelimit-reset'] ? new Date(h['x-ratelimit-reset']) : null;
       const retryAt = reset && !isNaN(reset) ? reset : new Date(Date.now() + 60000);
-      throw new BrainsuiteError('Brainsuite rate limit reached', { status, body: data, retryAt });
+      throw new BrainsuiteError('The scoring service is busy. Trying again shortly.', { status, body: data, retryAt });
     }
     throw new BrainsuiteError(
-      `Brainsuite ${method.toUpperCase()} ${path.replace(APP_PATH, '')} failed${status ? ` (HTTP ${status})` : ''}: ${describe(data) || err.message}`,
+      `The scoring service did not respond as expected${status ? ` (HTTP ${status})` : ''}: ${describe(data) || err.message}`,
       { status, body: data, detail: describe(data) || null }
     );
   }
 }
 
 // ── The job lifecycle ────────────────────────────────────────────────────────
-async function announceJob() {
-  const job = await call('post', `${APP_PATH}/announce`);
-  if (!job || !job.id) throw new BrainsuiteError('Brainsuite announce returned no job id');
+async function announceJob(channel) {
+  const job = await call('post', `${appPath(channel)}/announce`);
+  if (!job || !job.id) throw new BrainsuiteError('The scoring service did not return a test id.');
   return job;
 }
 
 // Returns { assetId, name, uploadUrl, fields }. Valid for 5 minutes; call
 // again with the same job to get a fresh one.
-async function announceAsset(bsJobId, fileName) {
-  const a = await call('post', `${APP_PATH}/${bsJobId}/assets`, { assetId: ASSET_ID, name: fileName });
-  if (!a || !a.uploadUrl || !a.fields) throw new BrainsuiteError('Brainsuite asset announce returned no upload URL');
+async function announceAsset(channel, bsJobId, fileName) {
+  const a = await call('post', `${appPath(channel)}/${bsJobId}/assets`, { assetId: ASSET_ID, name: fileName });
+  if (!a || !a.uploadUrl || !a.fields) throw new BrainsuiteError('The scoring service did not return an upload form.');
   return a;
 }
 
@@ -156,20 +174,20 @@ async function uploadFile(asset, filePath, fileName) {
     return res.status;
   } catch (err) {
     const status = err.response ? err.response.status : null;
-    throw new BrainsuiteError(`Upload to Brainsuite failed${status ? ` (HTTP ${status})` : ''}: ${describe(err.response && err.response.data) || err.message}`, { status });
+    throw new BrainsuiteError(`The video upload failed${status ? ` (HTTP ${status})` : ''}: ${describe(err.response && err.response.data) || err.message}`, { status });
   }
 }
 
 // Uses one test of quota.
-async function startJob(bsJobId, input) {
-  return call('post', `${APP_PATH}/${bsJobId}/start`, { input });
+async function startJob(channel, bsJobId, input) {
+  return call('post', `${appPath(channel)}/${bsJobId}/start`, { input });
 }
 
-async function getJob(bsJobId) {
-  return call('get', `${APP_PATH}/${bsJobId}`);
+async function getJob(channel, bsJobId) {
+  return call('get', `${appPath(channel)}/${bsJobId}`);
 }
 
 module.exports = {
   configured, getToken, announceJob, announceAsset, uploadFile, startJob, getJob,
-  BrainsuiteError, ASSET_ID, VARIANT,
+  BrainsuiteError, ASSET_ID, VARIANT, YOUTUBE_VARIANT, isYouTube,
 };
