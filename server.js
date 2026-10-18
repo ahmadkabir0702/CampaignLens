@@ -112,6 +112,42 @@ app.use((req, res, next) => {
   return res.redirect('/coordinator');
 });
 
+// ---------------------------------------------------------------------
+//  Per-account feature access
+//
+//  The UI hides the controls an account cannot use, but hiding a button
+//  is not access control: anyone can call the endpoint directly. This is
+//  where the decision is actually enforced, and the UI is only there so
+//  people are not offered things that will fail.
+//
+//  Each gate names its API surface by prefix rather than by listing
+//  routes, so a new endpoint added under one of these is covered the day
+//  it is written instead of the day somebody remembers it exists.
+//
+//  A session with no features object predates this change. Those are let
+//  through rather than locked out, so a deploy does not log out everyone
+//  mid-session; they pick the flags up on their next sign-in.
+// ---------------------------------------------------------------------
+const FEATURE_GATES = [
+  { flag: 'askLens',     label: 'Ask Lens',
+    covers: p => p.startsWith('/api/chat/') },
+  { flag: 'addCreative', label: 'Add creative',
+    covers: p => p === '/api/add-creative' || p === '/api/check-links' },
+  { flag: 'pretest',     label: 'Pre-tests',
+    covers: p => p.startsWith('/api/pretests') || p.startsWith('/api/brainsuite/') },
+];
+
+app.use((req, res, next) => {
+  const f = (req.session && req.session.features) || null;
+  if (!f) return next();
+  for (const g of FEATURE_GATES) {
+    if (f[g.flag] === false && g.covers(req.path)) {
+      return res.status(403).json({ error: `${g.label} is not available on this account.` });
+    }
+  }
+  next();
+});
+
 // Served from views/, not public/. The static handler cannot reach it, so the
 // only way to this page is through this route, which is behind requireAuth
 // and the role check below.

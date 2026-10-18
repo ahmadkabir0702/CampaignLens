@@ -66,7 +66,9 @@ module.exports = function mountRoutes(app, deps = {}) {
 
     try {
       const { rows } = await query(
-        `select password_hash, role, must_change_password from app_users
+        `select password_hash, role, must_change_password,
+                can_ask_lens, can_add_creative, can_pretest
+           from app_users
           where username = $1 and is_active = true`,
         [username]
       );
@@ -88,6 +90,14 @@ module.exports = function mountRoutes(app, deps = {}) {
       req.session.brands = access.brands;
       req.session.isInternal = access.isInternal;
       req.session.role = rows[0].role || null;
+      // Read once at login rather than per request. A change to someone's
+      // access takes effect on their next sign-in, which is the same way
+      // their brand list already behaves.
+      req.session.features = {
+        askLens:     rows[0].can_ask_lens     !== false,
+        addCreative: rows[0].can_add_creative !== false,
+        pretest:     rows[0].can_pretest      !== false,
+      };
       req.session.activeBrand = access.brands[0];
       req.session.mustChangePassword = rows[0].must_change_password === true;
 
@@ -279,7 +289,12 @@ app.get('/api/brands', async (req, res) => {
         agencies: a.rows,
         user: { username: req.session.user,
                 displayName: u.rows[0]?.display_name || req.session.user,
-                role: req.session.role || null }
+                role: req.session.role || null },
+        // What this account may use. The server refuses these endpoints
+        // regardless; this is so the UI does not offer a button that
+        // would only return 403.
+        features: req.session.features
+               || { askLens: true, addCreative: true, pretest: true }
       });
     } catch (err) {
       res.status(500).json({ error: err.message });

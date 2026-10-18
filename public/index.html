@@ -283,7 +283,7 @@
 
     <div class="nav-tabs">
       <div class="nav-item active" data-press onclick="setNav('creatives',this)">Creative Hub</div>
-      <div class="nav-item" data-press onclick="setNav('kpi',this)">Campaign KPIs</div>
+      <div class="nav-item" data-press onclick="setNav('kpi',this)">Media Summary</div>
       <div class="nav-item" data-press onclick="setNav('creators',this)">Creators</div>
       <div class="nav-item" data-press onclick="setNav('pretests',this)">Pre-tests</div>
       <!-- Temporarily hidden, uncomment to restore:
@@ -569,11 +569,10 @@ window.addEventListener('load', () => setTimeout(syncFilterPills, 400));
   <script src="/js/markers.js"></script>
   <script src="/js/chat-cards.js"></script>
   <script src="/js/chat-panel.js"></script>
-  <script>
-    AskLens.init({
-      mountButton: document.querySelector('.topbar-right'),
-    });
-  </script>
+  <!-- Ask Lens is started by applyFeatures() in dashboard.js once the
+       server has confirmed this account may use it, rather than here
+       where it would appear for everyone and then have to be removed. -->
+
   <script>
   /* The two tabs have different filters. Show whichever belongs to the
      active tab; the KPI bar is rendered by kpi-dashboard.js into the
@@ -588,7 +587,7 @@ window.addEventListener('load', () => setTimeout(syncFilterPills, 400));
       document.getElementById('creative-filters')?.classList.toggle('hidden', !creatives);
       document.getElementById('kpi-filters-bar')?.classList.toggle('hidden', !kpi);
       document.getElementById('filter-pills')?.classList.toggle('hidden', !creatives);
-      if (kpi && typeof renderKPIFilters === 'function') renderKPIFilters();
+      if (kpi && typeof msRenderFilters === 'function') msRenderFilters();
       if (signoff && typeof Signoff !== 'undefined') Signoff.render();
     };
   })();

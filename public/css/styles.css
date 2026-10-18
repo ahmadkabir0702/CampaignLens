@@ -819,10 +819,131 @@ select:focus,.search-input:focus,.modal-input:focus{outline:none;border-color:va
   background:var(--sel);border-color:var(--sel-line);
   color:var(--ink-900);font-weight:500;
 }
-/* The KPI campaign select is enhanced by dropdowns.js — size the control,
-   not the hidden native element. */
+/* The selects are enhanced by dropdowns.js — size the control, not the
+   hidden native element. */
 .kfi-select{height:34px;min-width:170px}
 #kpi-filters-bar .dd-btn{height:34px;min-width:180px}
+
+/* One row of selects, all the same shape. The bar used to be one select
+   plus two rows of pills, which grew a new pill every month. */
+.ms-fgroup{display:flex;flex-direction:column;gap:5px}
+.ms-flabel{
+  font:400 11px/14px var(--font);color:var(--ink-400);
+  letter-spacing:.05em;text-transform:uppercase;
+}
+
+/* =====================================================================
+   Media Summary
+   Formerly the Campaign KPIs tab, which shipped its own stylesheet of
+   hardcoded hex inside the JS and so drifted from everything else. These
+   are the same tokens the Creative Hub uses.
+   ===================================================================== */
+.ms-scope{font:400 13px/19px var(--font);color:var(--ink-500);margin:0 0 20px}
+.ms-scope b{font-weight:500;color:var(--ink-900)}
+
+.ms-sec{margin-bottom:30px}
+.ms-sec-h{font:500 16px/24px var(--font);letter-spacing:-.01em;
+  color:var(--ink-900);margin-bottom:12px}
+.ms-note{font:400 12.5px/18px var(--font);color:var(--ink-400);margin:-6px 0 12px}
+
+.ms-tiles{display:grid;gap:12px;margin-bottom:12px}
+.ms-tiles.cols-5{grid-template-columns:repeat(5,1fr)}
+.ms-tiles.cols-4{grid-template-columns:repeat(4,1fr)}
+.ms-tiles.cols-3{grid-template-columns:repeat(3,1fr)}
+.ms-tile{background:var(--white);border-radius:var(--r-card);
+  padding:15px 16px;box-shadow:var(--shadow-rest)}
+.ms-tile-k{font:400 11px/14px var(--font);color:var(--ink-400);
+  letter-spacing:.06em;text-transform:uppercase;margin-bottom:9px}
+.ms-tile-v{font:400 25px/30px var(--font);letter-spacing:-.022em;
+  color:var(--ink-900);font-variant-numeric:tabular-nums;
+  overflow-wrap:anywhere}
+.ms-tile-s{font:400 12px/17px var(--font);color:var(--ink-500);margin-top:5px}
+
+/* start, not stretch: a short card beside a long table should not grow a
+   field of empty white to match its neighbour's height. */
+.ms-grid{display:grid;gap:12px;align-items:start}
+.ms-grid.cols-3{grid-template-columns:repeat(3,1fr)}
+.ms-grid.cols-2{grid-template-columns:repeat(2,1fr)}
+.ms-grid.cols-1{grid-template-columns:1fr}
+.ms-card{background:var(--white);border-radius:var(--r-card);
+  padding:15px 16px;box-shadow:var(--shadow-rest)}
+.ms-card-head{font:500 13.5px/20px var(--font);color:var(--ink-900);
+  margin-bottom:12px;display:flex;align-items:baseline;
+  justify-content:space-between;gap:10px}
+.ms-card-note{font:400 11px/16px var(--font);color:var(--ink-400);
+  font-weight:400;text-align:right;flex:0 0 auto}
+.ms-bar-empty{font:400 12.5px/18px var(--font);color:var(--ink-400);padding:6px 0}
+.ms-foot{font:400 11.5px/16px var(--font);color:var(--ink-400);margin-top:10px}
+
+/* A rating or spend mix as one bar. The gap between segments is surface,
+   not a border: it separates the two fills that sit closest together
+   under colour-blindness without adding a line to the drawing. */
+.ms-bar{display:flex;height:9px;border-radius:var(--r-pill);
+  overflow:hidden;background:var(--canvas-2);gap:2px}
+.ms-seg{display:block;height:9px}
+.ms-keys{display:flex;flex-wrap:wrap;gap:3px 13px;margin-top:8px}
+.ms-key{display:inline-flex;align-items:center;gap:5px;
+  font:400 11.5px/16px var(--font);color:var(--ink-600);
+  font-variant-numeric:tabular-nums}
+.ms-key-dot{width:8px;height:8px;border-radius:2px;flex:0 0 auto}
+
+/* A short series. Six bars need no axis: each one carries its own value
+   above it and its own month below it. */
+.ms-trend{display:flex;align-items:flex-end;gap:8px;height:124px}
+.ms-trend-col{flex:1;display:flex;flex-direction:column;align-items:center;
+  height:100%;min-width:0}
+.ms-trend-v{font:400 11px/15px var(--font);color:var(--ink-600);
+  font-variant-numeric:tabular-nums;white-space:nowrap;margin-bottom:3px}
+/* No filled track behind the bar. A grey block above every column reads as
+   a second stacked segment, and a month with nothing in it should look
+   empty rather than full of grey. The baseline carries the axis instead. */
+.ms-trend-track{flex:1;width:100%;display:flex;align-items:flex-end;
+  border-bottom:1px solid var(--line)}
+.ms-trend-fill{width:100%;border-radius:4px 4px 0 0}
+.ms-trend-k{font:400 10.5px/14px var(--font);color:var(--ink-400);
+  margin-top:6px;white-space:nowrap}
+
+.ms-table{width:100%;border-collapse:collapse}
+.ms-table th{
+  font:400 11px/14px var(--font);color:var(--ink-400);
+  letter-spacing:.05em;text-transform:uppercase;text-align:left;
+  padding:0 10px 8px 0;border-bottom:1px solid var(--line);white-space:nowrap;
+}
+.ms-table th.n,.ms-table td.n{text-align:right;font-variant-numeric:tabular-nums}
+.ms-table th:last-child,.ms-table td:last-child{padding-right:0}
+.ms-table td{
+  font:400 12.5px/18px var(--font);color:var(--ink-700);
+  padding:10px 10px 10px 0;border-bottom:1px solid var(--line-soft);
+  vertical-align:middle;
+}
+.ms-table tr:last-child td{border-bottom:none}
+.ms-plat{font-weight:500;color:var(--ink-900);white-space:nowrap}
+/* The one place a number is called out. Weight and colour, not a
+   background, so a table of them does not turn into a quilt. */
+.ms-better{color:var(--pos);font-weight:500}
+/* Capped, not greedy. As the last column it was taking every spare pixel,
+   so a bar of four counts stretched halfway across the page while the
+   numbers beside it were squeezed. */
+.ms-mixcell{width:300px;min-width:210px;padding-top:8px;padding-bottom:8px}
+.ms-table-cut td{border-bottom:1px solid var(--line-soft)}
+.ms-cut-k{white-space:nowrap;padding-right:16px}
+.ms-cut-n{font:400 11px/15px var(--font);color:var(--ink-400);margin-top:2px}
+
+.ms-link{
+  border:0;background:none;padding:0;cursor:pointer;
+  font:400 12.5px/18px var(--font);color:var(--navy);
+  border-bottom:1px solid var(--line);
+}
+.ms-link:hover{border-bottom-color:var(--navy)}
+
+@media (max-width:1240px){
+  .ms-tiles.cols-5{grid-template-columns:repeat(3,1fr)}
+  .ms-grid.cols-3{grid-template-columns:repeat(2,1fr)}
+}
+@media (max-width:860px){
+  .ms-tiles.cols-5,.ms-tiles.cols-4,.ms-tiles.cols-3{grid-template-columns:1fr 1fr}
+  .ms-grid.cols-3,.ms-grid.cols-2{grid-template-columns:1fr}
+}
 
 /* ---------- Loading skeleton ---------------------------------------
    Placeholders in the shape of the real content. The sweep runs on a
