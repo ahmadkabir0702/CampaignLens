@@ -15,6 +15,7 @@ const os = require('os');
 const fs = require('fs');
 const bcrypt = require('bcryptjs');
 const { query, brandsForUser, assertBrandAllowed } = require('./db');
+const { loadFeatures, ALL_ON } = require('./server/features');
 const { checkLinks } = require('./link-check');
 const { checkContent } = require('./content-check');
 const { buildValidation } = require('./organic-validation');
@@ -93,11 +94,7 @@ module.exports = function mountRoutes(app, deps = {}) {
       // Read once at login rather than per request. A change to someone's
       // access takes effect on their next sign-in, which is the same way
       // their brand list already behaves.
-      req.session.features = {
-        askLens:     rows[0].can_ask_lens     !== false,
-        addCreative: rows[0].can_add_creative !== false,
-        pretest:     rows[0].can_pretest      !== false,
-      };
+      req.session.features = await loadFeatures(username);
       req.session.activeBrand = access.brands[0];
       req.session.mustChangePassword = rows[0].must_change_password === true;
 
@@ -293,8 +290,7 @@ app.get('/api/brands', async (req, res) => {
         // What this account may use. The server refuses these endpoints
         // regardless; this is so the UI does not offer a button that
         // would only return 403.
-        features: req.session.features
-               || { askLens: true, addCreative: true, pretest: true }
+        features: req.session.features || ALL_ON
       });
     } catch (err) {
       res.status(500).json({ error: err.message });
@@ -406,7 +402,12 @@ app.get('/api/brands', async (req, res) => {
   app.get('/api/dashboard-data', async (req, res) => {
     try {
       const brand = resolveBrand(req);
-      res.json(await buildPayload(brand));
+      const payload = await buildPayload(brand);
+      // Account-level media numbers (spend, reach, KPIs) feed only the
+      // Media Summary. An account without it does not receive them.
+      const f = req.session.features;
+      if (f && f.media === false) payload.account = [];
+      res.json(payload);
     } catch (err) {
       console.error('[dashboard-data]', err.message);
       res.status(err.message.startsWith('Access denied') ? 403 : 500)
