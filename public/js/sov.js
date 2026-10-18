@@ -21,16 +21,16 @@
     ['tiktok', 'TikTok', '#ff0050'],
   ];
   const MEASURES = [
-    ['shareOfVoice', 'All mentions'],
-    ['shareNoContest', 'Without contests'],
+    ['shareOfVoice', 'Total voice'],
+    ['shareNoContest', 'Excl. promotions'],
     ['shareEngagement', 'Engagement'],
-    ['shareEarned', 'Outside brand pages'],
+    ['shareEarned', 'Earned voice'],
   ];
   const MEASURE_NOTE = {
-    shareOfVoice: 'Share of everything said about the category’s brands: brand posts, comments on them, and posts and comments by the public.',
-    shareNoContest: 'The same, leaving out contest entries and friend tags.',
-    shareEngagement: 'Share of likes, comments and shares on posts that name each brand.',
-    shareEarned: 'Share of posts and comments made outside the brands’ own pages.',
+    shareOfVoice: 'Share of all brand conversation in the category, owned and earned.',
+    shareNoContest: 'Share of brand conversation, excluding contest and giveaway activity.',
+    shareEngagement: 'Share of total engagement on brand-related content.',
+    shareEarned: 'Share of earned conversation, driven by consumers, creators and communities rather than the brands.',
   };
   const GROUP_COLOR = {
     'Unilever': 'var(--navy)',
@@ -110,15 +110,15 @@
       <div class="sov-kpi-val">${val}</div><div class="sov-kpi-sub">${esc(sub)}</div></div>`;
     if (!brand) {
       return `<div class="sov-kpis">${tile('Unilever share of voice', pct(uni), 'All Unilever brands in the category')}
-        ${tile('Unilever share of public conversation', pct(uniPublic), 'Outside brand pages, every brand counted')}</div>`;
+        ${tile('Unilever share of earned voice', pct(uniPublic), 'Across every brand in earned conversation')}</div>`;
     }
     const pos = brand.sentiment ? pct(brand.sentiment.positive, 0) : '–';
     return `<div class="sov-kpis">
       ${tile(`${brand.name} share of voice`, pct(brand.shareOfVoice), rank ? `${ordinal(rank)} in ${cat.name.toLowerCase()}` : '')}
-      ${tile(`${brand.name} share of engagement`, pct(brand.shareEngagement), 'Likes, comments and shares on posts naming the brand')}
-      ${tile(`${brand.name} share of public conversation`, pct(brand.sharePublic), 'Outside brand pages, every brand counted')}
+      ${tile(`${brand.name} share of engagement`, pct(brand.shareEngagement), 'Of total engagement on brand-related content')}
+      ${tile(`${brand.name} share of earned voice`, pct(brand.sharePublic), 'Across every brand in earned conversation')}
       ${tile('Unilever share of voice', pct(uni), 'All Unilever brands in the category')}
-      ${tile(`Positive sentiment on ${brand.name}`, pos, 'Of comments and public posts about the brand')}
+      ${tile(`${brand.name} positive sentiment`, pos, 'Of consumer conversation about the brand')}
     </div>`;
   }
 
@@ -241,7 +241,7 @@
         </div>
         <div class="sov-card" id="sov-trend">
           <h3>Share of voice by week</h3>
-          <p class="sov-note">Each week's share of everything said about the category's brands. Spikes follow campaign moments.</p>
+          <p class="sov-note">Weekly share of category conversation. Peaks follow campaign moments.</p>
           <div class="sov-chart"><canvas id="sov-weekly" aria-label="Share of voice by week"></canvas></div>
         </div>
       </div>
@@ -249,29 +249,29 @@
       <div class="sov-grid">
         <div class="sov-card" id="sov-platforms">
           <h3>Share of voice by platform</h3>
-          <p class="sov-note">Each brand's share within each platform. Columns add up to 100%.</p>
+          <p class="sov-note">Each brand's share of voice within each platform. Columns add up to 100%.</p>
           ${platformTable(cat)}
         </div>
         <div class="sov-card" id="sov-sentiment">
           <h3>Sentiment</h3>
-          <p class="sov-note">Tone of comments and public posts about each brand, not counting the brand's own posts.</p>
+          <p class="sov-note">Tone of consumer conversation about each brand. Brand-published content is excluded.</p>
           ${sentiment(cat)}
         </div>
       </div>
 
       ${cat.publicBrands.length ? `<div class="sov-card" id="sov-public">
-        <h3>Who leads public conversation</h3>
-        <p class="sov-note">Share of posts and comments outside brand pages that name a brand, counting every brand people mention, not only the ones tracked here.</p>
+        <h3>Who leads earned conversation</h3>
+        <p class="sov-note">Share of earned voice by brand, including brands outside this tracker.</p>
         ${publicBrands(cat)}
       </div>` : ''}
 
       <div class="sov-grid-3">
-        ${cat.topics.length ? `<div class="sov-card" id="sov-topics"><h3>What people talk about</h3>
-          <p class="sov-note">Share of topic mentions in public posts and comments.</p>${simpleBars(cat.topics)}</div>` : ''}
-        ${cat.commentTypes.length ? `<div class="sov-card" id="sov-comment-types"><h3>What comments do</h3>
-          <p class="sov-note">Share of public comments.</p>${simpleBars(cat.commentTypes)}</div>` : ''}
-        ${cat.authorTypes.length ? `<div class="sov-card" id="sov-authors"><h3>Who posts</h3>
-          <p class="sov-note">Share of public posts about the category.</p>${simpleBars(cat.authorTypes)}</div>` : ''}
+        ${cat.topics.length ? `<div class="sov-card" id="sov-topics"><h3>Conversation themes</h3>
+          <p class="sov-note">Share of category conversation by theme.</p>${simpleBars(cat.topics)}</div>` : ''}
+        ${cat.commentTypes.length ? `<div class="sov-card" id="sov-comment-types"><h3>Conversation intent</h3>
+          <p class="sov-note">What consumers are doing in the conversation.</p>${simpleBars(cat.commentTypes)}</div>` : ''}
+        ${cat.authorTypes.length ? `<div class="sov-card" id="sov-authors"><h3>Voice by source</h3>
+          <p class="sov-note">Share of earned content by type of source.</p>${simpleBars(cat.authorTypes)}</div>` : ''}
       </div>
     </div>`;
     drawWeekly(cat);
