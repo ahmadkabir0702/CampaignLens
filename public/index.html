@@ -288,11 +288,13 @@
     </div>
 
     <div class="nav-tabs">
+      <!-- Every tab but the Creative Hub starts hidden. dashboard.js shows
+           the ones this account may use once the server has said which. -->
       <div class="nav-item active" data-press onclick="setNav('creatives',this)">Creative Hub</div>
-      <div class="nav-item" data-press onclick="setNav('kpi',this)">Media Summary</div>
-      <div class="nav-item" data-press onclick="setNav('creators',this)">Creators</div>
-      <div class="nav-item" data-press onclick="setNav('pretests',this)">Pre-tests</div>
-      <div class="nav-item" data-press onclick="setNav('sov',this)">Share of voice</div>
+      <div class="nav-item hidden" data-press onclick="setNav('kpi',this)">Media Summary</div>
+      <div class="nav-item hidden" data-press onclick="setNav('creators',this)">Creators</div>
+      <div class="nav-item hidden" data-press onclick="setNav('pretests',this)">Pre-tests</div>
+      <div class="nav-item hidden" data-press onclick="setNav('sov',this)">Share of voice</div>
       <!-- Temporarily hidden, uncomment to restore:
       <div class="nav-item" data-press onclick="setNav('signoff',this)">Campaign Sign-Off</div>
       -->
@@ -592,6 +594,9 @@ window.addEventListener('load', () => setTimeout(syncFilterPills, 400));
   (function(){
     const orig = window.setNav;
     window.setNav = function(page, el){
+      // Same refusal as setNav() itself, so a page this account may not
+      // use is never shown or loaded from here either.
+      if (typeof allowedPage === 'function') page = allowedPage(page);
       if (typeof orig === 'function') orig(page, el);
       const kpi = page === 'kpi';
       const creatives = page === 'creatives';

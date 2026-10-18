@@ -118,7 +118,17 @@ let AGENCIES = [], CURRENT_USER = '', CURRENT_ROLE = '', CURRENT_IS_INTERNAL = f
 // What this account may use. Starts closed: the controls are only put on
 // the page once the server has said so, so a failed or slow /api/brands
 // shows nothing rather than briefly offering a button that would 403.
-let FEATURES = { askLens: false, addCreative: false, pretest: false };
+let FEATURES = { askLens: false, addCreative: false, pretest: false, media: false, creators: false, sov: false };
+
+// Pages that need a feature. A page not listed here (the Creative Hub) is
+// open to every account.
+const PAGE_FEATURE = { pretests: 'pretest', kpi: 'media', creators: 'creators', sov: 'sov' };
+
+/** The page to show for a request: the one asked for, or the Creative Hub if this account may not see it. */
+function allowedPage(page) {
+  const flag = PAGE_FEATURE[page];
+  return flag && FEATURES[flag] === false ? 'creatives' : page;
+}
 
 /**
  * Put the page in the shape this account's access allows.
@@ -128,9 +138,13 @@ let FEATURES = { askLens: false, addCreative: false, pretest: false };
  * there is no reason to ship markup for something nobody can use.
  */
 function applyFeatures() {
-  if (!FEATURES.pretest) {
-    document.querySelector('.nav-item[onclick*="pretests"]')?.remove();
+  for (const [page, flag] of Object.entries(PAGE_FEATURE)) {
+    const nav = document.querySelector(`.nav-item[onclick*="setNav('${page}'"]`);
+    if (FEATURES[flag] === false) nav?.remove();
+    else nav?.classList.remove('hidden');
   }
+  // If a removed page was open, go back to the Creative Hub.
+  if (typeof currentPage !== 'undefined' && allowedPage(currentPage) !== currentPage) setNav('creatives');
   if (!FEATURES.addCreative) {
     document.querySelector('.topbar-right button[onclick*="openAddCreativeModal"]')?.remove();
     document.getElementById('addCreativeModal')?.remove();
@@ -152,7 +166,7 @@ async function loadBrands() {
     CURRENT_USER = (user && user.displayName) || '';
     CURRENT_ROLE = (user && user.role) || '';
     CURRENT_IS_INTERNAL = !!isInternal;
-    FEATURES = Object.assign({ askLens: true, addCreative: true, pretest: true }, features || {});
+    FEATURES = Object.assign({ askLens: true, addCreative: true, pretest: true, media: true, creators: true, sov: true }, features || {});
     applyFeatures();
     const sel = document.getElementById('brand-switcher');
     if (!sel) return;
@@ -336,10 +350,11 @@ function populateFilters() {
 }
 
 function setNav(page, element) {
-    // The nav item is removed for accounts without pre-tests, but setNav
-    // is also reachable from code and from a bookmarked state, so the
-    // page itself refuses rather than relying on the link being gone.
-    if (page === 'pretests' && !FEATURES.pretest) page = 'creatives';
+    // Nav items are removed for pages an account may not use, but setNav
+    // is also reachable from code (links inside other pages), so the page
+    // itself refuses rather than relying on the link being gone.
+    page = allowedPage(page);
+    if (element && !element.matches(`[onclick*="setNav('${page}'"]`)) element = null;
     ['page-creatives', 'page-kpi', 'page-creators', 'page-pretests'].forEach(id => {
         const el = document.getElementById(id);
         if (el) el.classList.add('hidden');

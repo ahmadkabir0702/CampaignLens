@@ -8,6 +8,7 @@ const { GoogleGenAI } = require('@google/genai');
 const session = require('express-session');
 const bcrypt = require('bcryptjs');
 const { query } = require('./db');
+const { loadFeatures } = require('./server/features');
 
 const app = express();
 app.use(cors({ origin: '*' }));
@@ -135,11 +136,27 @@ const FEATURE_GATES = [
     covers: p => p === '/api/add-creative' || p === '/api/check-links' },
   { flag: 'pretest',     label: 'Pre-tests',
     covers: p => p.startsWith('/api/pretests') || p.startsWith('/api/pretest-scores/') },
+  { flag: 'sov',         label: 'Share of voice',
+    covers: p => p === '/api/sov' },
+  // Media Summary and Creators are drawn from the same creative data the
+  // Creative Hub uses, so there is no endpoint of their own to refuse.
+  // The page removes them, and /api/dashboard-data leaves out the
+  // account-level media numbers for accounts without Media Summary.
 ];
 
-app.use((req, res, next) => {
-  const f = (req.session && req.session.features) || null;
+app.use(async (req, res, next) => {
+  let f = (req.session && req.session.features) || null;
   if (!f) return next();
+  // A session signed in before the media, creators and share of voice
+  // flags existed has no value for them. Read the account's flags once so
+  // a change of access applies now, not only at the next sign-in.
+  if (f.sov === undefined && req.session.user) {
+    try {
+      f = req.session.features = await loadFeatures(req.session.user);
+    } catch (e) {
+      console.warn('[features] could not refresh flags:', e.message);
+    }
+  }
   for (const g of FEATURE_GATES) {
     if (f[g.flag] === false && g.covers(req.path)) {
       return res.status(403).json({ error: `${g.label} is not available on this account.` });
