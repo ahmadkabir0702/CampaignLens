@@ -32,6 +32,7 @@
     'Local herbal and home brand': 'var(--pos)',
     'Imported': 'var(--warn)',
     'Laundry soap used on skin': 'var(--neg)',
+    'Other brand': 'var(--s5)',
   };
 
   const state = { data: null, page: null, cat: 0, measure: 'shareOfVoice', chart: null };
