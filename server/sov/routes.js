@@ -7,7 +7,8 @@
  *                   to, with its latest published period
  *
  * The tables hold shares only (0 to 1). No post, comment or mention counts
- * exist in the database, so none can reach the browser from here.
+ * exist in the database, so none can reach the browser from here. Platform
+ * splits are stored but not sent: the product speaks of social as a whole.
  */
 const { query, assertBrandAllowed } = require('../../db');
 
@@ -27,7 +28,7 @@ function send(res, err) {
 async function categoryPayload(category, brandId) {
   const { rows: periods } = await query(
     `select period_id, label, to_char(period_start, 'YYYY-MM-DD') as period_start,
-            to_char(period_end, 'YYYY-MM-DD') as period_end, platforms, insights
+            to_char(period_end, 'YYYY-MM-DD') as period_end, insights
        from sov_periods
       where category_id = $1 and is_published
       order by period_end desc, period_id desc
@@ -40,8 +41,7 @@ async function categoryPayload(category, brandId) {
     query(
       `select cb.brand_name, cb.brand_id, cb.owner, cb.is_unilever, cb.sort_order,
               m.share_of_voice, m.share_no_contest, m.share_engagement, m.share_earned, m.share_public,
-              m.sentiment_positive, m.sentiment_neutral, m.sentiment_negative,
-              m.share_facebook, m.share_instagram, m.share_tiktok
+              m.sentiment_positive, m.sentiment_neutral, m.sentiment_negative
          from sov_category_brands cb
          left join sov_brand_metrics m on m.period_id = $2 and m.brand_name = cb.brand_name
         where cb.category_id = $1
@@ -62,7 +62,6 @@ async function categoryPayload(category, brandId) {
       label: p.label,
       start: p.period_start,
       end: p.period_end,
-      platforms: p.platforms || [],
     },
     insights: Array.isArray(p.insights) ? p.insights : [],
     brands: brands.rows.map(r => ({
@@ -79,11 +78,6 @@ async function categoryPayload(category, brandId) {
         positive: num(r.sentiment_positive),
         neutral: num(r.sentiment_neutral),
         negative: num(r.sentiment_negative),
-      },
-      platforms: {
-        facebook: num(r.share_facebook),
-        instagram: num(r.share_instagram),
-        tiktok: num(r.share_tiktok),
       },
     })),
     weekly: by('weekly_share').map(r => ({ week: r.key, brand: r.brand_name, value: num(r.value) })),
