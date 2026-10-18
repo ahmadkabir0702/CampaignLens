@@ -21,8 +21,14 @@ const { generateAll: generateInsights } = require('./insights');
 const rateLimitMod = require('./rateLimit');
 
 module.exports = function mountChatRoutes(app) {
-  require('./keepwarm').start();
-  require('./scheduler').start();
+  // Load the brand list from the database before anything reads it. The
+  // keepwarm and scheduler loops below both iterate S.brands, so starting
+  // them first would warm whatever stale list the config happened to hold.
+  const { startBrandRegistry } = require('./brand-registry');
+  startBrandRegistry().then(() => {
+    require('./keepwarm').start();
+    require('./scheduler').start();
+  });
   // ---- Optional pipeline hook, no session. -----------------------------
   // Snapshots refresh themselves on first use after new data lands, so
   // this endpoint is NOT required. Wiring n8n to call it after each run
