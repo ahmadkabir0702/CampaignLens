@@ -1,7 +1,7 @@
 -- =====================================================================
 --  018 — Share of voice: skin cleansing, 20 Jul to 18 Oct 2026
 --
---  Facebook, Instagram and TikTok, Sri Lanka only. Shares only. Run after 017. Safe to re-run: it replaces this period.
+--  Social, Sri Lanka only. Shares only. Run after 017. Safe to re-run: it replaces this period.
 -- =====================================================================
 
 begin;
@@ -30,7 +30,7 @@ delete from sov_periods where category_id = 'skin_cleansing' and period_start = 
 
 insert into sov_periods (category_id, period_start, period_end, label, insights)
 values ('skin_cleansing', '2026-07-20', '2026-10-18', '20 Jul to 18 Oct 2026',
-        '["Unilever brands hold 61.8% of skin cleansing share of voice. Lux leads at 34.2%, followed by Lifebuoy (14.7%) and Rani (14.1%).", "Unilever''s voice is mostly owned: brand content and the conversation it generates. In earned conversation, Unilever brands hold 2.3% of voice.", "Earned conversation is led by small home herbal sellers, with Sha Herbal''s Magic Soap at 46.1% and Thinu Soapy Co at 17.6%. Rani''s 11.5% earned voice is driven almost entirely by a viral \"Rani soap\" meme on TikTok.", "Small sellers generate 56.1% of earned content in the category. 24.7% of consumer conversation is questions, mostly on price and how to buy. Price, fairness and glow, and herbal ingredients are the leading themes.", "Negative sentiment toward Lux and Lifebuoy is aimed mostly at their campaigns, the film tie-in and the Mister Sri Lanka pageant, not the products. Product complaints in the category are few, led by skin reactions linked to Calin."]'::jsonb);
+        '["Unilever brands hold 61.8% of skin cleansing share of voice. Lux leads at 34.2%, followed by Lifebuoy (14.7%) and Rani (14.1%).", "Unilever''s voice is mostly owned: brand content and the conversation it generates. In earned conversation, Unilever brands hold 2.3% of voice.", "Earned conversation is led by small home herbal sellers, with Sha Herbal''s Magic Soap at 46.1% and Thinu Soapy Co at 17.6%. Rani''s 11.5% earned voice is driven almost entirely by a viral \"Rani soap\" meme on social.", "Small sellers generate 56.1% of earned content in the category. 24.7% of consumer conversation is questions, mostly on price and how to buy. Price, fairness and glow, and herbal ingredients are the leading themes.", "Negative sentiment toward Lux and Lifebuoy is aimed mostly at their campaigns, the film tie-in and the Mister Sri Lanka pageant, not the products. Product complaints in the category are few, led by skin reactions linked to Calin."]'::jsonb);
 
 insert into sov_brand_metrics (period_id, brand_name, share_of_voice, share_no_contest, share_engagement, share_earned, share_public,
   sentiment_positive, sentiment_neutral, sentiment_negative, share_facebook, share_instagram, share_tiktok) values

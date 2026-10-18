@@ -1,7 +1,7 @@
 /**
  * sov.js — Share of voice page.
  *
- * Shows the share of voice for the category the active brand belongs to:
+ * Shows the social share of voice for the category the active brand belongs to:
  * Lux, Lifebuoy and Pears all open skin cleansing, each with its own bar
  * highlighted. A brand in more than one category gets a switch between them.
  *
@@ -14,12 +14,6 @@
   const esc = s => String(s == null ? '' : s).replace(/[&<>"']/g,
     c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
 
-  // Platform colours stay the platforms' own in charts.
-  const PLATFORM = [
-    ['facebook', 'Facebook', '#1877f2'],
-    ['instagram', 'Instagram', '#e1306c'],
-    ['tiktok', 'TikTok', '#ff0050'],
-  ];
   const MEASURES = [
     ['shareOfVoice', 'Total voice'],
     ['shareNoContest', 'Excl. promotions'],
@@ -114,20 +108,12 @@
     }
     const pos = brand.sentiment ? pct(brand.sentiment.positive, 0) : '–';
     return `<div class="sov-kpis">
-      ${tile(`${brand.name} share of voice`, pct(brand.shareOfVoice), rank ? `${ordinal(rank)} in ${cat.name.toLowerCase()}` : '')}
+      ${tile(`${brand.name} social share of voice`, pct(brand.shareOfVoice), rank ? `${ordinal(rank)} in ${cat.name.toLowerCase()}` : '')}
       ${tile(`${brand.name} share of engagement`, pct(brand.shareEngagement), 'Of total engagement on brand-related content')}
       ${tile(`${brand.name} share of earned voice`, pct(brand.sharePublic), 'Across every brand in earned conversation')}
-      ${tile('Unilever share of voice', pct(uni), 'All Unilever brands in the category')}
+      ${tile('Unilever social share of voice', pct(uni), 'All Unilever brands in the category')}
       ${tile(`${brand.name} positive sentiment`, pos, 'Of consumer conversation about the brand')}
     </div>`;
-  }
-
-  function platformTable(cat) {
-    const rows = [...cat.brands].sort((a, b) => (b.shareOfVoice || 0) - (a.shareOfVoice || 0));
-    return `<div class="sov-table-wrap"><table class="sov-table">
-      <thead><tr><th>Brand</th>${PLATFORM.map(([, n, c]) => `<th><span class="sov-dot" style="background:${c}"></span>${n}</th>`).join('')}</tr></thead>
-      <tbody>${rows.map(b => `<tr class="${b.isActive ? 'is-active' : ''}"><td>${esc(b.name)}</td>
-        ${PLATFORM.map(([k]) => `<td>${pct(b.platforms[k])}</td>`).join('')}</tr>`).join('')}</tbody></table></div>`;
   }
 
   function sentiment(cat) {
@@ -215,11 +201,10 @@
       return;
     }
     const brand = cat.brands.find(b => b.isActive);
-    const platforms = (cat.period.platforms || []).join(', ').replace(/, ([^,]*)$/, ' and $1');
 
     page.innerHTML = `<div class="sov-page">
       <div class="sov-head">
-        <p class="sov-lede"><b>${esc(cat.name)}</b> share of voice in Sri Lanka, ${esc(cat.period.label)}, across ${esc(platforms)}.
+        <p class="sov-lede"><b>${esc(cat.name)}</b> social share of voice, Sri Lanka, ${esc(cat.period.label)}.
           ${brand ? `${esc(brand.name)} is highlighted.` : ''}</p>
         ${switcher}
       </div>
@@ -247,23 +232,17 @@
       </div>
 
       <div class="sov-grid">
-        <div class="sov-card" id="sov-platforms">
-          <h3>Share of voice by platform</h3>
-          <p class="sov-note">Each brand's share of voice within each platform. Columns add up to 100%.</p>
-          ${platformTable(cat)}
-        </div>
         <div class="sov-card" id="sov-sentiment">
           <h3>Sentiment</h3>
           <p class="sov-note">Tone of consumer conversation about each brand. Brand-published content is excluded.</p>
           ${sentiment(cat)}
         </div>
+        ${cat.publicBrands.length ? `<div class="sov-card" id="sov-public">
+          <h3>Who leads earned conversation</h3>
+          <p class="sov-note">Share of earned voice by brand, including brands outside this tracker.</p>
+          ${publicBrands(cat)}
+        </div>` : ''}
       </div>
-
-      ${cat.publicBrands.length ? `<div class="sov-card" id="sov-public">
-        <h3>Who leads earned conversation</h3>
-        <p class="sov-note">Share of earned voice by brand, including brands outside this tracker.</p>
-        ${publicBrands(cat)}
-      </div>` : ''}
 
       <div class="sov-grid-3">
         ${cat.topics.length ? `<div class="sov-card" id="sov-topics"><h3>Conversation themes</h3>
