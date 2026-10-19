@@ -143,6 +143,16 @@ function applyFeatures() {
     if (FEATURES[flag] === false) nav?.remove();
     else nav?.classList.remove('hidden');
   }
+  // A group label with no sections left under it goes too.
+  document.querySelectorAll('.nav-label').forEach(label => {
+    let n = label.nextElementSibling, any = false;
+    while (n && !n.classList.contains('nav-label')) {
+      if (n.classList.contains('nav-item') && !n.classList.contains('hidden')) any = true;
+      n = n.nextElementSibling;
+    }
+    label.classList.toggle('is-empty', !any);
+  });
+  placeNavInk(false);
   // If a removed page was open, go back to the Creative Hub.
   if (typeof currentPage !== 'undefined' && allowedPage(currentPage) !== currentPage) setNav('creatives');
   if (!FEATURES.addCreative) {
@@ -349,6 +359,31 @@ function populateFilters() {
   if (ctSel) { ctSel.innerHTML = '<option value="all">All content types</option>'; contentTypes.forEach(ct => { const o = document.createElement('option'); o.value=ct; o.textContent=ct; ctSel.appendChild(o); }); }
 }
 
+// Each page opens with its title and one line on what it shows.
+const PAGE_HEADS = {
+  creatives: { title: 'Creative Hub',   sub: 'Every creative for the brand, newest first, with its rating.' },
+  kpi:       { title: 'Media Summary',  sub: 'What went out, how it did organically, and what the paid creative taught us.' },
+  creators:  { title: 'Creators',       sub: 'Every creator and community page that has posted about the brand.' },
+  pretests:  { title: 'Pre-tests',      sub: 'Score a video before it goes live.' },
+  sov:       { title: 'Share of voice', sub: 'The brand\'s share of the conversation in its category.' },
+  signoff:   { title: 'Campaign Sign-Off', sub: 'One record per campaign, cleared before it goes live.' },
+};
+
+// The white tab behind the active section slides to it.
+function placeNavInk(animate) {
+  const ink = document.getElementById('nav-ink');
+  const on = document.querySelector('.nav-tabs .nav-item.active');
+  if (!ink) return;
+  if (!on || !on.offsetHeight) { ink.classList.remove('on'); return; }
+  if (!animate) ink.style.transition = 'none';
+  ink.style.top = on.offsetTop + 'px';
+  ink.style.height = on.offsetHeight + 'px';
+  ink.classList.add('on');
+  if (!animate) { ink.offsetHeight; ink.style.transition = ''; }
+}
+window.addEventListener('resize', () => placeNavInk(false));
+if (document.fonts) document.fonts.ready.then(() => placeNavInk(false));
+
 function setNav(page, element) {
     // Nav items are removed for pages an account may not use, but setNav
     // is also reachable from code (links inside other pages), so the page
@@ -361,9 +396,10 @@ function setNav(page, element) {
     });
     const selectedPage = document.getElementById(`page-${page}`);
     if (selectedPage) selectedPage.classList.remove('hidden');
-    const titles = { 'creatives': 'Creative Hub', 'kpi': 'Media Summary', 'creators': 'Creators', 'pretests': 'Pre-tests' };
     const titleEl = document.getElementById('topbar-title');
-    if (titleEl) titleEl.innerText = titles[page] || '';
+    if (titleEl) titleEl.innerText = (PAGE_HEADS[page] || {}).title || '';
+    const subEl = document.getElementById('page-sub');
+    if (subEl) subEl.innerText = (PAGE_HEADS[page] || {}).sub || '';
     document.querySelectorAll('.nav-item').forEach(el => el.classList.remove('active'));
     if (element) {
         element.classList.add('active');
@@ -372,6 +408,7 @@ function setNav(page, element) {
         if (navLink) navLink.classList.add('active');
     }
     currentPage = page;
+    placeNavInk(true);
     // Only the Creative Hub uses the topbar filter row. The KPI tab has
     // its own filter state and the Creators tab has its own controls, so
     // showing it on either would give two competing filter systems.
@@ -502,7 +539,7 @@ function ts(v) {
   return Number.isNaN(t) ? (sortAscending ? Infinity : -Infinity) : t;
 }
 
-function hookColor(v) { return v>=40?'#04785C':v>=20?'#8A5A12':'#A32040'; }
+function hookColor(v) { return v>=40?'#1F8A5B':v>=20?'#8A5E0F':'#C2414B'; }
 function cqrClass(c)  { return {Good:'good-bg',Average:'avg-bg',Poor:'poor-bg',Invalid:'inv-bg'}[c]||'inv-bg'; }
 
 /**
@@ -1640,7 +1677,7 @@ function getMetricsHTML(item, titleLabel) {
         <div class="dm"><div class="dm-label">CQR</div><div class="dm-val big-cqr ${cqrColorClass}">${item.cqr||'—'}</div>${durLabel}</div>
         <div class="dm"><div class="dm-label">Spend &amp; Reach</div><div class="dm-val">${fmt(item.spend)}</div><div style="font-size:10px;color:var(--c-muted);margin-top:2px;">Reach: ${fmtN(item.reach)} | Impr: ${fmtN(item.impressions)}</div></div>
         <div class="dm"><div class="dm-label">Hook Rate</div><div class="dm-val" style="color:${hookColor(item.hookRate)}">${(item.hookRate||0).toFixed(1)}%</div><div><span class="kpi-pill ${cqrClass(item.hookQual)}">${item.hookQual||'—'}</span></div></div>
-        <div class="dm"><div class="dm-label">Hold Rate</div><div class="dm-val" style="color:#000050">${hlValFormatted}</div><div><span class="kpi-pill ${cqrClass(item.holdQual)}">${item.holdQual||'—'}</span></div></div>
+        <div class="dm"><div class="dm-label">Hold Rate</div><div class="dm-val" style="color:var(--ink-900)">${hlValFormatted}</div><div><span class="kpi-pill ${cqrClass(item.holdQual)}">${item.holdQual||'—'}</span></div></div>
       </div>
     </div>`;
 }
@@ -1936,7 +1973,7 @@ function buildValidationHTML(v) {
   // What a planner needs from this panel is the same three things either
   // way: what the audience did, where it places against the brand's own
   // output, and whether to act. All three survive without the arithmetic.
-  const DIM_COLOUR = (pct) => pct >= 70 ? '#04785C' : pct >= 40 ? '#C07A12' : '#A32040';
+  const DIM_COLOUR = (pct) => pct >= 70 ? '#1F8A5B' : pct >= 40 ? '#C4891A' : '#C2414B';
   const ord = (n) => ordinal(n);
 
   // Each dimension as a rank. The faint mark at the midpoint is the
@@ -2344,8 +2381,8 @@ function renderDetail(d) {
   if (retChart)   retChart.destroy();
   if (radarChart) radarChart.destroy();
 
-  const gc = '#DCDCE6';   // gridlines, line-200
-  const tc = '#6B6B90';   // axis labels, ink-400
+  const gc = '#E4E6EA';   // gridlines, line-200
+  const tc = '#8A909B';   // axis labels, ink-400
   const norm = v => Math.min(Math.round(v), 100);
 
   const retDatasets = [], radDatasets = [];
@@ -2925,17 +2962,17 @@ async function submitCreative(e) {
 
   const setProgress = (pct, msg, color) => {
     progressBar.style.width = pct + '%';
-    progressBar.style.background = color || '#000050';
+    progressBar.style.background = color || '#0F6E8C';
     progressText.innerText = msg;
   };
 
-  setProgress(10, 'Submitting creative details...', '#000050');
+  setProgress(10, 'Submitting creative details...', '#0F6E8C');
 
   try {
-    const t1 = setTimeout(() => setProgress(30, 'Downloading video...', '#000050'), 800);
-    const t2 = setTimeout(() => setProgress(55, 'AI is analysing content...', '#000050'), 4000);
-    const t3 = setTimeout(() => setProgress(75, 'Generating hook & segment descriptions...', '#000050'), 15000);
-    const t4 = setTimeout(() => setProgress(90, 'Saving to database...', '#000050'), 35000);
+    const t1 = setTimeout(() => setProgress(30, 'Downloading video...', '#0F6E8C'), 800);
+    const t2 = setTimeout(() => setProgress(55, 'AI is analysing content...', '#0F6E8C'), 4000);
+    const t3 = setTimeout(() => setProgress(75, 'Generating hook & segment descriptions...', '#0F6E8C'), 15000);
+    const t4 = setTimeout(() => setProgress(90, 'Saving to database...', '#0F6E8C'), 35000);
 
     const res = await fetch('/api/add-creative', {
       method: 'POST',
@@ -2967,14 +3004,14 @@ async function submitCreative(e) {
       backToEdit();
       Object.entries(result.fieldErrors).forEach(([k, msg]) => acSetErr(k, msg));
     } else {
-      setProgress(100, 'Failed: ' + (result.error || 'Unknown error'), '#A32040');
-      progressBar.style.background = '#A32040';
+      setProgress(100, 'Failed: ' + (result.error || 'Unknown error'), '#C2414B');
+      progressBar.style.background = '#C2414B';
       resetSubmitUI(3000);
     }
   } catch (err) {
     console.error(err);
-    setProgress(100, 'Network error — could not reach server.', '#A32040');
-    progressBar.style.background = '#A32040';
+    setProgress(100, 'Network error — could not reach server.', '#C2414B');
+    progressBar.style.background = '#C2414B';
     resetSubmitUI(3000);
   }
 }
