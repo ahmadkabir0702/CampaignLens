@@ -347,6 +347,11 @@ select:focus,.search-input:focus,.modal-input:focus{outline:none;border-color:va
 
 /* ---------- Creative cards ---------------------------------------- */
 .card-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(300px,1fr));gap:14px}
+.card-more{display:flex;align-items:center;justify-content:center;gap:12px;margin:20px 0 8px;
+  font:400 13px var(--font);color:var(--ink-500);font-variant-numeric:tabular-nums}
+.card-more-btn{height:36px;padding:0 18px;border-radius:var(--r-btn);border:1px solid var(--line);
+  background:var(--white);font:500 13.5px var(--font);color:var(--ink-900);cursor:pointer}
+.card-more-btn:hover{border-color:var(--ink-300)}
 
 .card-grid{gap:16px}
 .card{

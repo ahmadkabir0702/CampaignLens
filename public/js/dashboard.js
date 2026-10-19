@@ -452,7 +452,8 @@ function getData() {
   }
   if (af === 'not_actioned') {
     data = data.filter(d => {
-      const hasRec  = d.recommendation || (d._meta && d._meta.recommendation) || (d._tt && d._tt.recommendation);
+      // The list carries whether a recommendation exists, not its text.
+      const hasRec  = d.hasRec || d.recommendation || (d._meta && d._meta.recommendation) || (d._tt && d._tt.recommendation);
       const actRoot = d.actionStatus ? d.actionStatus.toLowerCase() : '';
       const actMeta = (d._meta && d._meta.actionStatus) ? d._meta.actionStatus.toLowerCase() : '';
       const actTt   = (d._tt && d._tt.actionStatus) ? d._tt.actionStatus.toLowerCase() : '';
@@ -1184,9 +1185,56 @@ function validationStrip(d, platformNames) {
   </div>`;
 }
 
+// ---------------------------------------------------------------------
+//  The grid, a page at a time
+//
+//  Drawing every card at once was fine at a hundred and not at a few
+//  thousand: the browser builds and lays out every node before showing
+//  any. The first CARD_PAGE cards are drawn, and the next page follows as
+//  the end of the grid comes into view, or from the button under it.
+// ---------------------------------------------------------------------
+const CARD_PAGE = 48;
+let CARD_DATA = [], CARD_SHOWN = 0, cardObserver = null;
+
 function renderCards(data) {
   document.getElementById('grid-count').textContent = `${data.length} creatives`;
-  document.getElementById('card-grid').innerHTML = data.map(d => {
+  CARD_DATA = data;
+  CARD_SHOWN = 0;
+  document.getElementById('card-grid').innerHTML = '';
+  appendCards();
+}
+
+function appendCards() {
+  const grid = document.getElementById('card-grid');
+  if (!grid) return;
+  const next = CARD_DATA.slice(CARD_SHOWN, CARD_SHOWN + CARD_PAGE);
+  grid.insertAdjacentHTML('beforeend', next.map(cardHTML).join(''));
+  CARD_SHOWN += next.length;
+
+  let more = document.getElementById('card-more');
+  if (CARD_SHOWN >= CARD_DATA.length) {
+    if (more) more.remove();
+    return;
+  }
+  if (!more) {
+    more = document.createElement('div');
+    more.id = 'card-more';
+    more.className = 'card-more';
+    grid.after(more);
+  }
+  more.innerHTML = `<button class="card-more-btn" data-press onclick="appendCards()">Show more</button>
+    <span>Showing ${CARD_SHOWN} of ${CARD_DATA.length}</span>`;
+  if ('IntersectionObserver' in window) {
+    if (!cardObserver) cardObserver = new IntersectionObserver(entries => {
+      if (entries.some(e => e.isIntersecting) && CARD_SHOWN < CARD_DATA.length) appendCards();
+    }, { rootMargin: '600px 0px' });
+    cardObserver.disconnect();
+    cardObserver.observe(more);
+  }
+}
+
+function cardHTML(d) {
+  {
 
 
     const kidCount = repurposesOf(d.id).length;
@@ -1319,7 +1367,7 @@ function renderCards(data) {
       ${typeof PreTest !== 'undefined' ? PreTest.cardBadge(d) : ''}
     </div>
     </div>`;
-  }).join('');
+  }
 }
 
 let retChart = null, radarChart = null;
@@ -1410,9 +1458,53 @@ function showCreativePanel(trigger) {
   installModalDrag();
 }
 
+// ---------------------------------------------------------------------
+//  Panel-only fields, fetched when needed
+//
+//  The list leaves out the scene timeline, the brief and the
+//  recommendation text, which only the panel reads. They are fetched the
+//  first time a creative is opened and merged into its entry in ALL, so a
+//  second open is instant and everything downstream sees one object.
+// ---------------------------------------------------------------------
+async function ensureDetails(ids) {
+  const want = ids.filter(id => { const d = ALL.find(x => x.id === id); return d && !d._detail; });
+  if (!want.length) return;
+  for (let i = 0; i < want.length; i += 200) {
+    const chunk = want.slice(i, i + 200);
+    const r = await fetch('/api/creative-details?ids=' + chunk.map(encodeURIComponent).join(','));
+    if (!r.ok) throw new Error(`details ${r.status}`);
+    const { details } = await r.json();
+    for (const id of chunk) {
+      const d = ALL.find(x => x.id === id);
+      if (!d) continue;
+      // Marked fetched even when the server had nothing for it, so a
+      // creative with no details is not asked for again on every open.
+      d._detail = true;
+      const det = details[id];
+      if (!det) continue;
+      const { _meta, _tt, ...rest } = det;
+      Object.assign(d, rest);
+      if (_meta && d._meta) Object.assign(d._meta, _meta);
+      if (_tt && d._tt) Object.assign(d._tt, _tt);
+    }
+  }
+}
+
+function panelSkeleton() {
+  return `<div class="cm-body" aria-busy="true">
+    <div class="sk" style="height:22px;width:45%;margin-bottom:10px"></div>
+    <div class="sk" style="height:14px;width:30%;margin-bottom:22px"></div>
+    <div class="sk" style="height:84px;margin-bottom:16px"></div>
+    <div class="sk" style="height:220px;margin-bottom:16px"></div>
+    <div class="sk" style="height:160px"></div>
+  </div>`;
+}
+
+let panelFor = null;
 function selectCard(id, trigger) {
   const item = ALL.find(d => d.id === id);
   if (!item) return;
+  panelFor = id;
   const { overlay } = modalEls();
   overlay.style.display = 'flex';
   // The panel opens whatever happens while filling it. renderDetail
@@ -1420,10 +1512,18 @@ function selectCard(id, trigger) {
   // throw in there used to abort this function before the animation
   // started, leaving a panel on screen at scale 0.94 with a transparent
   // scrim: invisible, but covering the page and swallowing clicks.
-  try {
-    renderDetail(item);
-  } catch (err) {
-    console.error('[hub] renderDetail failed, panel still opened', err);
+  const fill = () => {
+    if (panelFor !== id) return;   // another creative was opened meanwhile
+    try {
+      renderDetail(item);
+    } catch (err) {
+      console.error('[hub] renderDetail failed, panel still opened', err);
+    }
+  };
+  if (item._detail) fill();
+  else {
+    document.getElementById('creativeModalContent').innerHTML = panelSkeleton();
+    ensureDetails([id]).catch(err => console.error('[hub] details failed, showing what the list has', err)).then(fill);
   }
   showCreativePanel(trigger);
 }
