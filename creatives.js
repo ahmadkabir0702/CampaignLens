@@ -450,4 +450,77 @@ async function buildPayload(brandId) {
   };
 }
 
-module.exports = { buildPayload };
+// ---------------------------------------------------------------------
+//  Serving it
+//
+//  The payload used to go to the browser whole: every creative with its
+//  scene timeline, brief and recommendation text, which only the creative
+//  panel reads and which is most of the weight. The list now carries what
+//  cards, filters and summaries need, and the rest is fetched when a
+//  creative is opened.
+//
+//  A built payload is reused for a short while per brand, so the list and
+//  the details opened from it come from one build rather than nine
+//  queries each. Writes made through the app clear it at once; data that
+//  arrives from n8n straight into the database shows within CACHE_MS.
+// ---------------------------------------------------------------------
+const CACHE_MS = 30 * 1000;
+const cache = new Map();   // brandId -> { at, promise }
+
+function getPayload(brandId) {
+  const hit = cache.get(brandId);
+  if (hit && Date.now() - hit.at < CACHE_MS) return hit.promise;
+  const promise = buildPayload(brandId);
+  cache.set(brandId, { at: Date.now(), promise });
+  // A failed build is not kept, so the next request tries again.
+  promise.catch(() => { if (cache.get(brandId)?.promise === promise) cache.delete(brandId); });
+  return promise;
+}
+
+/** Drop the cached payload for one brand, or for every brand. */
+function invalidatePayload(brandId) {
+  if (brandId) cache.delete(brandId); else cache.clear();
+}
+
+// Read only by the creative panel.
+const DETAIL_KEYS = ['timeline', 'segments', 'contentHook', 'formatNote', 'format', 'productRole',
+                     'recommendation', 'rec', 'slides'];
+const PAID_DETAIL_KEYS = ['recommendation', 'rec'];
+
+function slimCreative(c) {
+  const out = { ...c };
+  // The "not actioned" filter needs to know a recommendation exists, not
+  // what it says.
+  out.hasRec = !!(c.recommendation || (c._meta && c._meta.recommendation) || (c._tt && c._tt.recommendation));
+  for (const k of DETAIL_KEYS) delete out[k];
+  for (const p of ['_meta', '_tt']) {
+    if (!out[p]) continue;
+    out[p] = { ...out[p] };
+    for (const k of PAID_DETAIL_KEYS) delete out[p][k];
+  }
+  return out;
+}
+
+function detailOf(c) {
+  const pick = (o, keys) => Object.fromEntries(keys.filter(k => o[k] !== undefined).map(k => [k, o[k]]));
+  const out = pick(c, DETAIL_KEYS);
+  for (const p of ['_meta', '_tt']) if (c[p]) out[p] = pick(c[p], PAID_DETAIL_KEYS);
+  return out;
+}
+
+/** The dashboard payload without the panel-only fields. */
+async function listPayload(brandId) {
+  const p = await getPayload(brandId);
+  return { ...p, creatives: p.creatives.map(slimCreative) };
+}
+
+/** Panel-only fields for the given creatives, keyed by id. Unknown ids are left out. */
+async function creativeDetails(brandId, ids) {
+  const p = await getPayload(brandId);
+  const want = new Set(ids);
+  const out = {};
+  for (const c of p.creatives) if (want.has(c.id)) out[c.id] = detailOf(c);
+  return out;
+}
+
+module.exports = { buildPayload, listPayload, creativeDetails, invalidatePayload, slimCreative, detailOf };

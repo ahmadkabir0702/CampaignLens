@@ -169,11 +169,11 @@
     try {
       const res = await fetch(`/api/signoffs/${id}/approve`, { method: 'POST' });
       const data = await res.json();
-      if (!res.ok) { alert(data.error || 'Could not approve this sign-off.'); return; }
+      if (!res.ok) { toast(data.error || 'Could not approve this sign-off.', 'error'); return; }
       await renderList();
       openDetail(id);
     } catch (e) {
-      alert('Could not reach the server. Try again.');
+      toast('Could not reach the server. Try again.', 'error');
     }
   }
 
@@ -387,11 +387,11 @@
   async function submit() {
     const meta = collectMeta();
     if (!meta.campaignName.trim()) {
-      alert('Campaign name is required before this can be submitted.');
+      toast('Campaign name is required before this can be submitted.', 'error');
       return;
     }
     if (!meta.brand) {
-      alert('Pick a brand before submitting.');
+      toast('Pick a brand before submitting.', 'error');
       return;
     }
     const fields = collectFields();
@@ -402,11 +402,11 @@
         body: JSON.stringify({ brand_id: meta.brand, meta, fields }),
       });
       const data = await res.json();
-      if (!res.ok) { alert(data.error || 'Could not submit this sign-off.'); return; }
+      if (!res.ok) { toast(data.error || 'Could not submit this sign-off.', 'error'); return; }
       draft = null;
       backToList();
     } catch (e) {
-      alert('Could not reach the server. Try again.');
+      toast('Could not reach the server. Try again.', 'error');
     }
   }
 

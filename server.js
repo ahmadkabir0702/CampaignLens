@@ -11,6 +11,10 @@ const { query } = require('./db');
 const { loadFeatures } = require('./server/features');
 
 const app = express();
+// Gzip every response. The dashboard payload is repetitive JSON and
+// shrinks several times over, which is most of what a first load costs.
+try { app.use(require('compression')()); }
+catch (e) { console.warn('[server] compression not installed, responses go uncompressed'); }
 app.use(cors({ origin: '*' }));
 app.use(express.json());
 app.use(express.urlencoded({ extended: true }));

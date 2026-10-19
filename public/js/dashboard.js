@@ -102,6 +102,34 @@ const parseNum = (val) => {
 };
 
 let ALL = [];
+
+// ---------------------------------------------------------------------
+//  Toasts
+//
+//  One short line at the foot of the screen that something worked or did
+//  not, in place of the browser's alert box, which stops the page and
+//  looks like a different product. Errors stay up longer and are read
+//  out straight away by screen readers.
+// ---------------------------------------------------------------------
+let toastTimer = null;
+function toast(message, tone) {
+  let el = document.getElementById('cl-toast');
+  if (!el) {
+    el = document.createElement('div');
+    el.id = 'cl-toast';
+    el.className = 'cl-toast';
+    document.body.appendChild(el);
+  }
+  const err = tone === 'error';
+  el.setAttribute('role', err ? 'alert' : 'status');
+  el.classList.toggle('is-error', err);
+  el.textContent = String(message || '');
+  el.classList.remove('show');
+  el.offsetHeight;
+  el.classList.add('show');
+  clearTimeout(toastTimer);
+  toastTimer = setTimeout(() => el.classList.remove('show'), err ? 6000 : 3200);
+}
 let ACCOUNT_OVERVIEW = [];
 let CAMPAIGNS = [];
 // How long a post is left alone before its organic numbers are read. Sent
@@ -143,6 +171,16 @@ function applyFeatures() {
     if (FEATURES[flag] === false) nav?.remove();
     else nav?.classList.remove('hidden');
   }
+  // A group label with no sections left under it goes too.
+  document.querySelectorAll('.nav-label').forEach(label => {
+    let n = label.nextElementSibling, any = false;
+    while (n && !n.classList.contains('nav-label')) {
+      if (n.classList.contains('nav-item') && !n.classList.contains('hidden')) any = true;
+      n = n.nextElementSibling;
+    }
+    label.classList.toggle('is-empty', !any);
+  });
+  placeNavInk(false);
   // If a removed page was open, go back to the Creative Hub.
   if (typeof currentPage !== 'undefined' && allowedPage(currentPage) !== currentPage) setNav('creatives');
   if (!FEATURES.addCreative) {
@@ -197,7 +235,7 @@ async function switchBrand(brandId) {
     }
     if (typeof PreTest !== 'undefined') PreTest.onBrandChange(currentPage);
   } catch (e) {
-    alert('Could not switch brand: ' + e.message);
+    toast('Could not switch brand: ' + e.message, 'error');
   }
 }
 
@@ -349,6 +387,31 @@ function populateFilters() {
   if (ctSel) { ctSel.innerHTML = '<option value="all">All content types</option>'; contentTypes.forEach(ct => { const o = document.createElement('option'); o.value=ct; o.textContent=ct; ctSel.appendChild(o); }); }
 }
 
+// Each page opens with its title and one line on what it shows.
+const PAGE_HEADS = {
+  creatives: { title: 'Creative Hub',   sub: 'Every creative for the brand, newest first, with its rating.' },
+  kpi:       { title: 'Media Summary',  sub: 'What went out, how it did organically, and what the paid creative taught us.' },
+  creators:  { title: 'Creators',       sub: 'Every creator and community page that has posted about the brand.' },
+  pretests:  { title: 'Pre-tests',      sub: 'Score a video before it goes live.' },
+  sov:       { title: 'Share of voice', sub: 'The brand\'s share of the conversation in its category.' },
+  signoff:   { title: 'Campaign Sign-Off', sub: 'One record per campaign, cleared before it goes live.' },
+};
+
+// The white tab behind the active section slides to it.
+function placeNavInk(animate) {
+  const ink = document.getElementById('nav-ink');
+  const on = document.querySelector('.nav-tabs .nav-item.active');
+  if (!ink) return;
+  if (!on || !on.offsetHeight) { ink.classList.remove('on'); return; }
+  if (!animate) ink.style.transition = 'none';
+  ink.style.top = on.offsetTop + 'px';
+  ink.style.height = on.offsetHeight + 'px';
+  ink.classList.add('on');
+  if (!animate) { ink.offsetHeight; ink.style.transition = ''; }
+}
+window.addEventListener('resize', () => placeNavInk(false));
+if (document.fonts) document.fonts.ready.then(() => placeNavInk(false));
+
 function setNav(page, element) {
     // Nav items are removed for pages an account may not use, but setNav
     // is also reachable from code (links inside other pages), so the page
@@ -361,9 +424,10 @@ function setNav(page, element) {
     });
     const selectedPage = document.getElementById(`page-${page}`);
     if (selectedPage) selectedPage.classList.remove('hidden');
-    const titles = { 'creatives': 'Creative Hub', 'kpi': 'Media Summary', 'creators': 'Creators', 'pretests': 'Pre-tests' };
     const titleEl = document.getElementById('topbar-title');
-    if (titleEl) titleEl.innerText = titles[page] || '';
+    if (titleEl) titleEl.innerText = (PAGE_HEADS[page] || {}).title || '';
+    const subEl = document.getElementById('page-sub');
+    if (subEl) subEl.innerText = (PAGE_HEADS[page] || {}).sub || '';
     document.querySelectorAll('.nav-item').forEach(el => el.classList.remove('active'));
     if (element) {
         element.classList.add('active');
@@ -372,6 +436,7 @@ function setNav(page, element) {
         if (navLink) navLink.classList.add('active');
     }
     currentPage = page;
+    placeNavInk(true);
     // Only the Creative Hub uses the topbar filter row. The KPI tab has
     // its own filter state and the Creators tab has its own controls, so
     // showing it on either would give two competing filter systems.
@@ -452,7 +517,8 @@ function getData() {
   }
   if (af === 'not_actioned') {
     data = data.filter(d => {
-      const hasRec  = d.recommendation || (d._meta && d._meta.recommendation) || (d._tt && d._tt.recommendation);
+      // The list carries whether a recommendation exists, not its text.
+      const hasRec  = d.hasRec || d.recommendation || (d._meta && d._meta.recommendation) || (d._tt && d._tt.recommendation);
       const actRoot = d.actionStatus ? d.actionStatus.toLowerCase() : '';
       const actMeta = (d._meta && d._meta.actionStatus) ? d._meta.actionStatus.toLowerCase() : '';
       const actTt   = (d._tt && d._tt.actionStatus) ? d._tt.actionStatus.toLowerCase() : '';
@@ -501,7 +567,7 @@ function ts(v) {
   return Number.isNaN(t) ? (sortAscending ? Infinity : -Infinity) : t;
 }
 
-function hookColor(v) { return v>=40?'#04785C':v>=20?'#8A5A12':'#A32040'; }
+function hookColor(v) { return v>=40?'#1F8A5B':v>=20?'#8A5E0F':'#C2414B'; }
 function cqrClass(c)  { return {Good:'good-bg',Average:'avg-bg',Poor:'poor-bg',Invalid:'inv-bg'}[c]||'inv-bg'; }
 
 /**
@@ -1199,9 +1265,56 @@ function validationStrip(d, platformNames) {
   </div>`;
 }
 
+// ---------------------------------------------------------------------
+//  The grid, a page at a time
+//
+//  Drawing every card at once was fine at a hundred and not at a few
+//  thousand: the browser builds and lays out every node before showing
+//  any. The first CARD_PAGE cards are drawn, and the next page follows as
+//  the end of the grid comes into view, or from the button under it.
+// ---------------------------------------------------------------------
+const CARD_PAGE = 48;
+let CARD_DATA = [], CARD_SHOWN = 0, cardObserver = null;
+
 function renderCards(data) {
   document.getElementById('grid-count').textContent = `${data.length} creatives`;
-  document.getElementById('card-grid').innerHTML = data.map(d => {
+  CARD_DATA = data;
+  CARD_SHOWN = 0;
+  document.getElementById('card-grid').innerHTML = '';
+  appendCards();
+}
+
+function appendCards() {
+  const grid = document.getElementById('card-grid');
+  if (!grid) return;
+  const next = CARD_DATA.slice(CARD_SHOWN, CARD_SHOWN + CARD_PAGE);
+  grid.insertAdjacentHTML('beforeend', next.map(cardHTML).join(''));
+  CARD_SHOWN += next.length;
+
+  let more = document.getElementById('card-more');
+  if (CARD_SHOWN >= CARD_DATA.length) {
+    if (more) more.remove();
+    return;
+  }
+  if (!more) {
+    more = document.createElement('div');
+    more.id = 'card-more';
+    more.className = 'card-more';
+    grid.after(more);
+  }
+  more.innerHTML = `<button class="card-more-btn" data-press onclick="appendCards()">Show more</button>
+    <span>Showing ${CARD_SHOWN} of ${CARD_DATA.length}</span>`;
+  if ('IntersectionObserver' in window) {
+    if (!cardObserver) cardObserver = new IntersectionObserver(entries => {
+      if (entries.some(e => e.isIntersecting) && CARD_SHOWN < CARD_DATA.length) appendCards();
+    }, { rootMargin: '600px 0px' });
+    cardObserver.disconnect();
+    cardObserver.observe(more);
+  }
+}
+
+function cardHTML(d) {
+  {
 
 
     const kidCount = repurposesOf(d.id).length;
@@ -1218,8 +1331,8 @@ function renderCards(data) {
     // used to sit as three separate chips saying one thing between them.
     const isBS = d.type === 'Brand Say';
     const typeText = isBS
-      ? (d.creatorLed ? 'BS · Creator-led' : 'BS')
-      : (d.source === 'community' ? 'OS · Community' : 'OS');
+      ? (d.creatorLed ? 'Brand Say · Creator-led' : 'Brand Say')
+      : (d.source === 'community' ? 'Others Say · Community' : 'Others Say · Creator');
 
     // Per platform: what it did, and how it was rated.
     //
@@ -1302,41 +1415,36 @@ function renderCards(data) {
     // indistinguishable until you opened them.
     const ci = (d.type === 'Others Say' || d.creatorLed) && typeof extractCreatorInfo === 'function'
       ? extractCreatorInfo(d.creatorProfile, d.ttLink) : null;
-    const creatorTag = ci && ci.username
-      ? `<div class="card-creator" title="${escapeHtml(ci.username)}">${escapeHtml(ci.username)}</div>` : '';
+    // Always drawn, empty when there is no creator, so every card keeps the
+    // same rows and the grid stays even.
+    const creatorTag = `<div class="card-creator"${ci && ci.username ? ` title="${escapeHtml(ci.username)}"` : ''}>${
+      ci && ci.username ? escapeHtml(ci.username) : ''}</div>`;
 
 
+    // Three fixed zones (who and what, the ratings, the state) so every card
+    // in the grid is the same height whatever it carries.
+    const ratings = (orgBlock || paidVals) ? `<div class="card-ratings">
+        <div class="card-cqr"><div class="card-cqr-head">Organic</div>${orgBlock || '<span class="card-cqr-state">No numbers yet</span>'}</div>
+        <div class="card-cqr"><div class="card-cqr-head">Paid</div>${paidVals || '<span class="card-cqr-state">Not on paid</span>'}</div>
+      </div>` : '';
     return `<div class="card ${d.id===selectedId?'selected':''}" data-press onclick="selectCard('${d.id}', this)">
-      <div class="card-top">
-        <div style="display:flex;align-items:center;gap:6px;flex-wrap:wrap">
-          <span class="card-type ${isBS?'bs-tag':'os-tag'}">${typeText}</span>${repTag}
-        </div>
-      </div>
       <div class="card-head">
         ${cardMediaHTML(d)}
         <div class="card-ident">
-          <div class="card-name">${d.short || d.id}</div>
-          <div class="card-id" title="${escapeHtml(d.id)}">${d.short && d.short !== d.id ? d.id : ''}</div>
+          <div class="card-type-line">${typeText}${repTag}</div>
+          <div class="card-name" title="${escapeHtml(d.id)}">${d.short || d.id}</div>
           <div class="card-campaign">${d.campaign} · ${d.month}</div>
           ${creatorTag}
           <div class="card-tags">${durTag}${ctTag}${valTag}</div>
         </div>
       </div>
-      ${validating}
-      ${orgBlock ? `<div class="card-cqr">
-        <div class="card-cqr-head">Organic</div>
-        ${orgBlock}
-      </div>` : ''}
-      ${paidVals ? `<div class="card-cqr">
-        <div class="card-cqr-head">Paid</div>
-        ${paidVals}
-      </div>` : ''}
+      <div class="card-mid">${validating || ratings || '<div class="card-mid-empty">No numbers yet</div>'}</div>
     <div class="card-footer">
       ${statusPill(d)}
       ${typeof PreTest !== 'undefined' ? PreTest.cardBadge(d) : ''}
     </div>
     </div>`;
-  }).join('');
+  }
 }
 
 let retChart = null, radarChart = null;
@@ -1427,6 +1535,102 @@ function showCreativePanel(trigger) {
   installModalDrag();
 }
 
+// ---------------------------------------------------------------------
+//  Panel-only fields, fetched when needed
+//
+//  The list leaves out the scene timeline, the brief and the
+//  recommendation text, which only the panel reads. They are fetched the
+//  first time a creative is opened and merged into its entry in ALL, so a
+//  second open is instant and everything downstream sees one object.
+// ---------------------------------------------------------------------
+async function ensureDetails(ids) {
+  const want = ids.filter(id => { const d = ALL.find(x => x.id === id); return d && !d._detail; });
+  if (!want.length) return;
+  for (let i = 0; i < want.length; i += 200) {
+    const chunk = want.slice(i, i + 200);
+    const r = await fetch('/api/creative-details?ids=' + chunk.map(encodeURIComponent).join(','));
+    if (!r.ok) throw new Error(`details ${r.status}`);
+    const { details } = await r.json();
+    for (const id of chunk) {
+      const d = ALL.find(x => x.id === id);
+      if (!d) continue;
+      // Marked fetched even when the server had nothing for it, so a
+      // creative with no details is not asked for again on every open.
+      d._detail = true;
+      const det = details[id];
+      if (!det) continue;
+      const { _meta, _tt, ...rest } = det;
+      Object.assign(d, rest);
+      if (_meta && d._meta) Object.assign(d._meta, _meta);
+      if (_tt && d._tt) Object.assign(d._tt, _tt);
+    }
+  }
+}
+
+function panelSkeleton() {
+  return `<div class="cm-body" aria-busy="true">
+    <div class="sk" style="height:22px;width:45%;margin-bottom:10px"></div>
+    <div class="sk" style="height:14px;width:30%;margin-bottom:22px"></div>
+    <div class="sk" style="height:84px;margin-bottom:16px"></div>
+    <div class="sk" style="height:220px;margin-bottom:16px"></div>
+    <div class="sk" style="height:160px"></div>
+  </div>`;
+}
+
+// Previous and next step through the grid as it is filtered and sorted
+// now, without closing the panel.
+function panelNavHTML(id) {
+  const i = CARD_DATA.findIndex(x => x.id === id);
+  if (i < 0 || CARD_DATA.length < 2) return '';
+  const btn = (dir, label, on, path) => `<button class="detail-step" data-press aria-label="${label}" ${on ? '' : 'disabled'}
+      onclick="panelStep(${dir})"><svg viewBox="0 0 12 12" width="14" height="14"><path d="${path}"/></svg></button>`;
+  return btn(-1, 'Previous creative', i > 0, 'M7.5 2.5 4 6l3.5 3.5') +
+    `<span class="detail-pos">${(i + 1).toLocaleString()} of ${CARD_DATA.length.toLocaleString()}</span>` +
+    btn(1, 'Next creative', i < CARD_DATA.length - 1, 'M4.5 2.5 8 6 4.5 9.5');
+}
+
+function panelStep(dir) {
+  const i = CARD_DATA.findIndex(x => x.id === panelFor);
+  const next = CARD_DATA[i + dir];
+  if (i < 0 || !next) return;
+  // Keep the grid behind the panel in step, so closing lands on it.
+  while (CARD_SHOWN <= i + dir && CARD_SHOWN < CARD_DATA.length) appendCards();
+  selectedId = next.id;
+  document.querySelectorAll('#card-grid .card.selected').forEach(c => c.classList.remove('selected'));
+  const card = document.querySelector(`#card-grid .card[onclick*="selectCard('${next.id}'"]`);
+  if (card) card.classList.add('selected');
+  openPanelFor(next);
+  const panel = document.getElementById('creativeModalContent');
+  if (panel) panel.scrollTop = 0;
+}
+
+document.addEventListener('keydown', (e) => {
+  const overlay = document.getElementById('creativeModalOverlay');
+  if (!overlay || overlay.style.display !== 'flex' || !panelFor) return;
+  if (e.target.closest && e.target.closest('input,textarea,select,[contenteditable]')) return;
+  if (e.key === 'ArrowRight') { e.preventDefault(); panelStep(1); }
+  if (e.key === 'ArrowLeft') { e.preventDefault(); panelStep(-1); }
+});
+
+let panelFor = null;
+function openPanelFor(item) {
+  const id = item.id;
+  panelFor = id;
+  const fill = () => {
+    if (panelFor !== id) return;   // another creative was opened meanwhile
+    try {
+      renderDetail(item);
+    } catch (err) {
+      console.error('[hub] renderDetail failed, panel still opened', err);
+    }
+  };
+  if (item._detail) fill();
+  else {
+    document.getElementById('creativeModalContent').innerHTML = panelSkeleton();
+    ensureDetails([id]).catch(err => console.error('[hub] details failed, showing what the list has', err)).then(fill);
+  }
+}
+
 function selectCard(id, trigger) {
   const item = ALL.find(d => d.id === id);
   if (!item) return;
@@ -1437,11 +1641,7 @@ function selectCard(id, trigger) {
   // throw in there used to abort this function before the animation
   // started, leaving a panel on screen at scale 0.94 with a transparent
   // scrim: invisible, but covering the page and swallowing clicks.
-  try {
-    renderDetail(item);
-  } catch (err) {
-    console.error('[hub] renderDetail failed, panel still opened', err);
-  }
+  openPanelFor(item);
   showCreativePanel(trigger);
 }
 
@@ -1571,7 +1771,7 @@ function getMetricsHTML(item, titleLabel, isStatic) {
         <div class="dm"><div class="dm-label">CQR</div><div class="dm-val big-cqr ${cqrColorClass}">${item.cqr||'—'}</div>${durLabel}</div>
         <div class="dm"><div class="dm-label">Spend &amp; Reach</div><div class="dm-val">${fmt(item.spend)}</div><div style="font-size:10px;color:var(--c-muted);margin-top:2px;">Reach: ${fmtN(item.reach)} | Impr: ${fmtN(item.impressions)}</div></div>
         <div class="dm"><div class="dm-label">Hook Rate</div><div class="dm-val" style="color:${hookColor(item.hookRate)}">${(item.hookRate||0).toFixed(1)}%</div><div><span class="kpi-pill ${cqrClass(item.hookQual)}">${item.hookQual||'—'}</span></div></div>
-        <div class="dm"><div class="dm-label">Hold Rate</div><div class="dm-val" style="color:#000050">${hlValFormatted}</div><div><span class="kpi-pill ${cqrClass(item.holdQual)}">${item.holdQual||'—'}</span></div></div>
+        <div class="dm"><div class="dm-label">Hold Rate</div><div class="dm-val" style="color:var(--ink-900)">${hlValFormatted}</div><div><span class="kpi-pill ${cqrClass(item.holdQual)}">${item.holdQual||'—'}</span></div></div>
       </div>
     </div>`;
 }
@@ -1869,7 +2069,7 @@ function buildValidationHTML(v) {
   // What a planner needs from this panel is the same three things either
   // way: what the audience did, where it places against the brand's own
   // output, and whether to act. All three survive without the arithmetic.
-  const DIM_COLOUR = (pct) => pct >= 70 ? '#04785C' : pct >= 40 ? '#C07A12' : '#A32040';
+  const DIM_COLOUR = (pct) => pct >= 70 ? '#1F8A5B' : pct >= 40 ? '#C4891A' : '#C2414B';
   const ord = (n) => ordinal(n);
 
   // Each dimension as a rank. The faint mark at the midpoint is the
@@ -2280,7 +2480,9 @@ function renderDetail(d) {
           ${creatorHTML}${repText}${linkBtns}
         </div>
         ${previewHTML}
-        <button class="close-btn" data-press onclick="closeCreativeModal({target:{id:'creativeModalOverlay'}})">×</button>
+        <div class="detail-nav">${panelNavHTML(d.id)}
+          <button class="close-btn" data-press aria-label="Close" onclick="closeCreativeModal({target:{id:'creativeModalOverlay'}})">×</button>
+        </div>
       </div>
 
       ${detailSummaryHTML(d)}
@@ -2322,8 +2524,8 @@ function renderDetail(d) {
   // A photo or carousel has no retention curve and no hook or hold rate.
   if (d.isStatic) return;
 
-  const gc = '#DCDCE6';   // gridlines, line-200
-  const tc = '#6B6B90';   // axis labels, ink-400
+  const gc = '#E4E6EA';   // gridlines, line-200
+  const tc = '#8A909B';   // axis labels, ink-400
   const norm = v => Math.min(Math.round(v), 100);
 
   const retDatasets = [], radDatasets = [];
@@ -2399,7 +2601,7 @@ function closeActionModal() {
 async function confirmAction() {
   const name   = CURRENT_USER;
   const agency = document.getElementById('actionAgencyInput').value;
-  if (!agency) return alert("Please select an agency.");
+  if (!agency) return toast("Please select an agency.", 'error');
   const btn = document.getElementById('modalConfirmBtn');
   const origText = btn.innerText;
   btn.innerText = 'Updating...'; btn.disabled = true;
@@ -2430,8 +2632,9 @@ async function confirmAction() {
     sourceItem.agency = agency;
     closeActionModal();
     renderDetail(creative);
+    toast('Marked as actioned.');
   } catch(err) {
-    alert("Failed to update: " + err.message);
+    toast("Couldn't update it: " + err.message, 'error');
   } finally {
     btn.innerText = origText; btn.disabled = false;
   }
@@ -2610,7 +2813,7 @@ async function regenerateDescription() {
   } catch (err) {
     // yt-dlp writes warnings to stderr; the real cause is the last line.
     const lines = String(err.message).split('\n').filter(l => l.trim() && !/^\s*(WARNING|It is strongly|Run "yt-dlp|To suppress|Pre-merged|To prioritize)/.test(l));
-    alert('Analysis failed: ' + (lines.pop() || err.message).trim());
+    toast('Analysis failed: ' + (lines.pop() || err.message).trim(), 'error');
   } finally {
     btn.innerText = orig; btn.disabled = false;
   }
@@ -2795,7 +2998,7 @@ async function acServerCheck(f) {
     data = await r.json();
     if (!r.ok) throw new Error(data.error || 'HTTP ' + r.status);
   } catch (e) {
-    alert('Could not check the links: ' + e.message);
+    toast('Could not check the links: ' + e.message, 'error');
     return false;
   }
   for (const p of AC_PLATS) {
@@ -2878,7 +3081,7 @@ async function submitCreative(e) {
   // First press validates and shows the review. Nothing is sent yet.
   if (!AC_REVIEWED) {
     const err = acValidate(f);
-    if (err) { if (err !== 'Fix the highlighted links.') alert(err); return; }
+    if (err) { if (err !== 'Fix the highlighted links.') toast(err, 'error'); return; }
     const btn = document.getElementById('ac-confirm-btn');
     const label = btn.innerText;
     btn.disabled = true; btn.innerText = 'Checking links…';
@@ -2926,17 +3129,17 @@ async function submitCreative(e) {
 
   const setProgress = (pct, msg, color) => {
     progressBar.style.width = pct + '%';
-    progressBar.style.background = color || '#000050';
+    progressBar.style.background = color || '#0F6E8C';
     progressText.innerText = msg;
   };
 
-  setProgress(10, 'Submitting creative details...', '#000050');
+  setProgress(10, 'Submitting creative details...', '#0F6E8C');
 
   try {
-    const t1 = setTimeout(() => setProgress(30, 'Downloading video...', '#000050'), 800);
-    const t2 = setTimeout(() => setProgress(55, 'AI is analysing content...', '#000050'), 4000);
-    const t3 = setTimeout(() => setProgress(75, 'Generating hook & segment descriptions...', '#000050'), 15000);
-    const t4 = setTimeout(() => setProgress(90, 'Saving to database...', '#000050'), 35000);
+    const t1 = setTimeout(() => setProgress(30, 'Downloading video...', '#0F6E8C'), 800);
+    const t2 = setTimeout(() => setProgress(55, 'AI is analysing content...', '#0F6E8C'), 4000);
+    const t3 = setTimeout(() => setProgress(75, 'Generating hook & segment descriptions...', '#0F6E8C'), 15000);
+    const t4 = setTimeout(() => setProgress(90, 'Saving to database...', '#0F6E8C'), 35000);
 
     const res = await fetch('/api/add-creative', {
       method: 'POST',
@@ -2968,92 +3171,16 @@ async function submitCreative(e) {
       backToEdit();
       Object.entries(result.fieldErrors).forEach(([k, msg]) => acSetErr(k, msg));
     } else {
-      setProgress(100, 'Failed: ' + (result.error || 'Unknown error'), '#A32040');
-      progressBar.style.background = '#A32040';
+      setProgress(100, 'Failed: ' + (result.error || 'Unknown error'), '#C2414B');
+      progressBar.style.background = '#C2414B';
       resetSubmitUI(3000);
     }
   } catch (err) {
     console.error(err);
-    setProgress(100, 'Network error — could not reach server.', '#A32040');
-    progressBar.style.background = '#A32040';
+    setProgress(100, 'Network error — could not reach server.', '#C2414B');
+    progressBar.style.background = '#C2414B';
     resetSubmitUI(3000);
   }
-}
-
-function showQueuedConfirmation(result) {
-  const form = document.getElementById('addCreativeForm');
-  if (!form) return;
-
-  // The confirmation has to live OUTSIDE the form: hiding the form to show it
-  // would hide the confirmation too, leaving an empty modal.
-  let box = document.getElementById('ac-queued-box');
-  if (!box) {
-    box = document.createElement('div');
-    box.id = 'ac-queued-box';
-    form.parentNode.insertBefore(box, form.nextSibling);
-  }
-
-  const queued = result.queued !== false;
-  box.innerHTML = queued ? `
-    <div class="ac-queued">
-      <div class="ac-queued-head">
-        <span class="ac-queued-icon" aria-hidden="true">
-          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7"
-               stroke-linecap="round" stroke-linejoin="round">
-            <circle cx="12" cy="12" r="9"/><path d="M12 7v5l3 2"/>
-          </svg>
-        </span>
-        <div>
-          <div class="ac-queued-title">Added to the queue</div>
-          <p class="ac-queued-body">
-            The video is being downloaded and analysed. This usually takes a few minutes.
-          </p>
-        </div>
-      </div>
-
-      <ul class="ac-queued-steps">
-        <li>You will get an email with the creative ID once it is done</li>
-        <li>The creative appears in the Creative Hub at the same time</li>
-        <li>If it fails you will get an email explaining why, and nothing is added</li>
-      </ul>
-
-      <p class="ac-queued-note">You can close this and keep working.</p>
-
-      <div class="ac-queued-actions">
-        <button type="button" class="btn-outline" onclick="closeAddCreativeModal()">Close</button>
-        <button type="button" class="btn-outline primary" onclick="resetAddCreativeForm()">Add another</button>
-      </div>
-    </div>` : `
-    <div class="ac-queued">
-      <div class="ac-queued-title">Creative added</div>
-      <p class="ac-queued-body">${result.message || 'Added.'}</p>
-      <div class="ac-queued-actions">
-        <button type="button" class="btn-outline" onclick="closeAddCreativeModal()">Close</button>
-        <button type="button" class="btn-outline primary" onclick="resetAddCreativeForm()">Add another</button>
-      </div>
-    </div>`;
-  box.style.display = 'block';
-  box.innerHTML = `
-    <div class="brief-hook" style="margin-bottom:12px">
-      <span class="brief-hook-label">Creative ID</span>
-      <div class="brief-hook-text" style="font-family:var(--font-mono);font-size:13px">${result.creativeId}</div>
-      <div style="font:400 12px/16px var(--font-ui);color:var(--ink-500);margin-top:6px">
-        Add this after the pipe in the ad name when the asset is boosted.
-      </div>
-    </div>
-    ${a.duration ? `<div class="organic-stat-row"><span class="organic-stat-label">Duration</span><span class="organic-stat-val">${fmtDur(a.duration)}</span></div>` : ''}
-    ${failed ? `
-      <div class="warning-badge" style="display:block;margin-top:12px">
-        Analysis did not complete
-      </div>
-      <div style="font:400 13px/18px var(--font-ui);color:var(--ink-500);margin-top:8px">
-        The creative is saved. Descriptions can be generated again without re-entering anything.
-      </div>` : `
-      ${a.hook ? `<div class="brief-hook" style="margin-top:12px"><span class="brief-hook-label">Hook</span><div class="brief-hook-text">${a.hook}</div></div>` : ''}
-      ${segs.length ? `<div class="brief-segs" style="margin-top:12px">${
-        segs.map((s,i)=>`<div class="seg-row"><div class="seg-label">${labels[i]||''}</div><div class="seg-text">${s}</div></div>`).join('')
-      }</div>` : ''}`}
-  `;
 }
 
 function showQueuedConfirmation(result) {
@@ -3087,6 +3214,7 @@ function showQueuedConfirmation(result) {
   box.style.display = 'block';
   form.style.display = 'none';
   document.getElementById('addCreativeModal').style.pointerEvents = 'auto';
+  toast(queued ? 'Added to the queue. Analysis has started.' : 'Creative added.');
 }
 
 function resetAddCreativeForm() {

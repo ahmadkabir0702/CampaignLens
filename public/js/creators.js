@@ -143,7 +143,29 @@ function crSorted(list) {
 // ---------------------------------------------------------------------
 //  State changes
 // ---------------------------------------------------------------------
-function setCreatorView(v) { CR.view = v; CR.search = ''; CR.shown = CR_PAGE; renderCreatorTab(); }
+function setCreatorView(v) {
+  if (v === CR.view) return;
+  CR.view = v; CR.search = ''; CR.shown = CR_PAGE;
+  const reduced = window.matchMedia && matchMedia('(prefers-reduced-motion: reduce)').matches;
+  if (document.startViewTransition && !reduced) document.startViewTransition(renderCreatorTab);
+  else renderCreatorTab();
+}
+
+// The highlight behind Creators | Community slides from where it was.
+let crPillAt = null;
+function crPlacePill() {
+  const pill = document.getElementById('cr-view-pill');
+  const on = document.querySelector('.cr-view.on');
+  if (!pill || !on) return;
+  const to = { left: on.offsetLeft, width: on.offsetWidth };
+  pill.style.transition = 'none';
+  const from = crPillAt || to;
+  pill.style.left = from.left + 'px'; pill.style.width = from.width + 'px';
+  pill.offsetHeight;
+  pill.style.transition = '';
+  pill.style.left = to.left + 'px'; pill.style.width = to.width + 'px';
+  crPillAt = to;
+}
 function setCreatorFilter(key, v) { CR[key] = v; CR.shown = CR_PAGE; renderCreatorTab(); }
 function setCreatorSort(v) { CR.sort = v; CR.shown = CR_PAGE; crRenderRoster(); }
 function showMoreCreators() { CR.shown += CR_PAGE; crRenderRoster(); }
@@ -188,6 +210,7 @@ function renderCreatorTab() {
   page.innerHTML = `
   <div class="content">
     <div class="cr-views" role="tablist">
+      <span class="cr-view-pill" id="cr-view-pill" aria-hidden="true"></span>
       ${Object.entries(CR_VIEWS).map(([k, x]) => `
         <button role="tab" aria-selected="${CR.view === k}" class="cr-view ${CR.view === k ? 'on' : ''}"
           onclick="setCreatorView('${k}')">${x.label}<span class="cr-view-n">${counts[k]}</span></button>`).join('')}
@@ -215,6 +238,7 @@ function renderCreatorTab() {
   </div>`;
 
   if (typeof enhanceSelectsIn === 'function') enhanceSelectsIn(page);
+  crPlacePill();
   crRenderSummary();
   crRenderRoster();
 }
@@ -265,9 +289,11 @@ function crRenderSummary() {
       </tbody>
     </table>`, 'organic rating, one vote per post') : '';
 
+  const before = typeof msMotionSnapshot === 'function' ? msMotionSnapshot(el) : null;
   el.innerHTML = `
     <div class="ms-tiles cols-4">${tiles}</div>
     ${crPatterns(posts, v, compareCard)}`;
+  if (typeof msMotionPlay === 'function') msMotionPlay(el, before);
 }
 
 /** What works: the rating mix by length, platform and content type. */
@@ -386,6 +412,9 @@ let crPanelShown = CR_POSTS_PAGE;
 
 function openCreatorDetail(name, trigger) {
   crPanelShown = CR_POSTS_PAGE;
+  // The arrow keys step through Creative Hub creatives while its panel is
+  // open; this panel shares the same overlay, so switch that off.
+  if (typeof panelFor !== 'undefined') panelFor = null;
   crRenderDetail(name);
   // Through the shared opener in dashboard.js, so this panel arrives the
   // same way the Creative Hub's does and picks up the same spring state.
@@ -480,4 +509,14 @@ function crRenderDetail(name) {
       ${postBlocks}
       ${more}
     </div>`;
+
+  // The hook line is a panel-only field the list leaves out. Fetch it for
+  // the posts on show and draw again once, if any were missing.
+  const shown = p.posts.slice(0, crPanelShown).filter(a => !a._detail).map(a => a.id);
+  if (shown.length && typeof ensureDetails === 'function') {
+    ensureDetails(shown).then(() => {
+      const open = document.querySelector('#creativeModalContent .detail-title');
+      if (open && open.textContent.trim() === p.name) crRenderDetail(name);
+    }).catch(err => console.error('[creators] details failed', err));
+  }
 }

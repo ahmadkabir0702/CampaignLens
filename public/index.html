@@ -13,65 +13,65 @@
   .plat-rows { margin-bottom: 10px; }
   .plat-row { display: flex; align-items: center; gap: 10px; margin-bottom: 8px; }
   .plat-row .plat-input { flex: 1; margin: 0; }
-  .plat-row .plat-input:disabled { background: #F4F6F8; color: #A0A0B8; }
+  .plat-row .plat-input:disabled { background: var(--canvas-2); color: var(--ink-300); }
   .tgl { position: relative; display: inline-block; width: 38px; height: 22px; flex: none; cursor: pointer; }
   .tgl input { opacity: 0; width: 0; height: 0; position: absolute; }
-  .tgl-track { position: absolute; inset: 0; background: #DCDCE6; border-radius: 999px; transition: background .15s; }
+  .tgl-track { position: absolute; inset: 0; background: var(--line); border-radius: 999px; transition: background .15s; }
   .tgl-track::before { content: ''; position: absolute; width: 16px; height: 16px; left: 3px; top: 3px;
                        background: #fff; border-radius: 50%; transition: transform .15s; }
-  .tgl input:checked + .tgl-track { background: #000050; }
+  .tgl input:checked + .tgl-track { background: var(--primary); }
   .tgl input:checked + .tgl-track::before { transform: translateX(16px); }
-  .plat-hint { font-size: 12px; color: #6B6B8A; margin-top: 2px; }
-  .rv { border: 1px solid #DCDCE6; border-radius: 8px; padding: 14px; background: #F9F9FC; margin-top: 4px; }
-  .rv h4 { margin: 0 0 10px; font-size: 13px; color: #000050; }
-  .rv-line { display: flex; justify-content: space-between; gap: 12px; padding: 6px 0; border-bottom: 1px solid #ECECF3; font-size: 13px; }
+  .plat-hint { font-size: 12px; color: var(--ink-400); margin-top: 2px; }
+  .rv { border: 1px solid var(--line); border-radius: 8px; padding: 14px; background: var(--canvas-2); margin-top: 4px; }
+  .rv h4 { margin: 0 0 10px; font-size: 13px; color: var(--ink-900); }
+  .rv-line { display: flex; justify-content: space-between; gap: 12px; padding: 6px 0; border-bottom: 1px solid var(--line-soft); font-size: 13px; }
   .rv-line:last-child { border-bottom: 0; }
-  .rv-k { color: #6B6B8A; }
+  .rv-k { color: var(--ink-400); }
   .rv-v { text-align: right; word-break: break-all; max-width: 62%; }
-  .rv-off { color: #A0A0B8; }
-  .rv-warn { margin-top: 10px; font-size: 12px; color: #B7791F; }
+  .rv-off { color: var(--ink-300); }
+  .rv-warn { margin-top: 10px; font-size: 12px; color: var(--warn); }
   /* Structured recommendations */
   .sheet-rec-head { display:flex; align-items:center; justify-content:space-between; gap:12px; flex-wrap:wrap; }
   .rec-chips { display:flex; gap:6px; flex-wrap:wrap; }
   .rec-chip { font-size:11px; font-weight:600; padding:3px 9px; border-radius:999px; white-space:nowrap; }
-  .rec-chip-high { background:#FCEBEA; color:#B3261E; }
-  .rec-chip-med  { background:#FCF3E3; color:#8A5A12; }
-  .rec-chip-low  { background:#EEF1F6; color:#4A4A75; }
-  .rec-chip-type { background:#E8F0FE; color:#1552B0; }
-  .rec-chip-low-conf { background:#F4F4F8; color:#6B6B8A; }
-  .rec-verdict { font-size:14px; font-weight:600; color:#000050; margin:10px 0 12px; line-height:1.45; }
-  .rec-part { padding:9px 0 9px 11px; border-left:3px solid #DCDCE6; margin-bottom:9px; }
-  .rec-part.rec-good   { border-left-color:#04785C; }
-  .rec-part.rec-bad    { border-left-color:#A32040; }
-  .rec-part.rec-action { border-left-color:#000050; background:#F7F7FB; border-radius:0 6px 6px 0; }
-  .rec-part-label { font-size:10.5px; font-weight:700; letter-spacing:.06em; text-transform:uppercase; color:#6B6B8A; margin-bottom:3px; }
-  .rec-part-text { font-size:13px; line-height:1.55; color:#22224A; }
+  .rec-chip-high { background:var(--neg-bg); color:var(--neg); }
+  .rec-chip-med  { background:var(--warn-bg); color:var(--warn); }
+  .rec-chip-low  { background:var(--canvas); color:var(--ink-600); }
+  .rec-chip-type { background:var(--sel); color:var(--primary); }
+  .rec-chip-low-conf { background:var(--canvas); color:var(--ink-400); }
+  .rec-verdict { font-size:14px; font-weight:600; color:var(--ink-900); margin:10px 0 12px; line-height:1.45; }
+  .rec-part { padding:9px 0 9px 11px; border-left:3px solid var(--line); margin-bottom:9px; }
+  .rec-part.rec-good   { border-left-color:var(--pos); }
+  .rec-part.rec-bad    { border-left-color:var(--neg); }
+  .rec-part.rec-action { border-left-color:var(--primary); background:var(--canvas-2); border-radius:0 6px 6px 0; }
+  .rec-part-label { font-size:10.5px; font-weight:700; letter-spacing:0; color:var(--ink-400); margin-bottom:3px; }
+  .rec-part-text { font-size:13px; line-height:1.55; color:var(--ink-900); }
   .rec-evidence { display:flex; align-items:center; gap:6px; flex-wrap:wrap; margin-top:10px; }
   .rec-ts { font-size:11px; font-family:ui-monospace,Menlo,monospace; padding:2px 7px; border-radius:4px;
-            background:#EEF1F6; color:#4A4A75; cursor:help; }
-  .ac-id-preview { font-size: 11px; color: #6B6B8A; margin-bottom: 10px; min-height: 14px;
+            background:var(--canvas); color:var(--ink-600); cursor:help; }
+  .ac-id-preview { font-size: 11px; color: var(--ink-400); margin-bottom: 10px; min-height: 14px;
                    font-family: ui-monospace, Menlo, monospace; }
-  .ac-id-preview b { color: #000050; font-weight: 600; }
+  .ac-id-preview b { color: var(--ink-900); font-weight: 600; }
   /* Creative brief — scene timeline */
   .brief-tags { display:flex; gap:6px; flex-wrap:wrap; margin-bottom:10px; }
   .brief-tag { font-size:11px; font-weight:600; padding:3px 9px; border-radius:999px;
-               background:#E8F0FE; color:#1552B0; white-space:nowrap; }
-  .brief-tag-quiet { background:#F1F1F6; color:#4A4A75; }
-  .brief-note { font-size:12.5px; line-height:1.5; color:#4A4A75; margin-bottom:12px; font-style:italic; }
+               background:var(--sel); color:var(--primary); white-space:nowrap; }
+  .brief-tag-quiet { background:#F1F1F6; color:var(--ink-600); }
+  .brief-note { font-size:12.5px; line-height:1.5; color:var(--ink-600); margin-bottom:12px; font-style:italic; }
   .brief-timeline-head { display:flex; align-items:baseline; justify-content:space-between;
                          gap:10px; margin:16px 0 8px; }
   .brief-count { font-size:11px; color:#8A8AA3; }
   .brief-timeline { border-left:2px solid #E4E4EC; margin-left:4px; padding-left:0; }
   .brief-group { margin-bottom:14px; }
   .brief-group:last-child { margin-bottom:0; }
-  .brief-group-label { font-size:10.5px; font-weight:700; letter-spacing:.05em; text-transform:uppercase;
-                       color:#6B6B8A; margin:0 0 6px -2px; padding-left:12px; }
-  .brief-group-range { font-weight:400; letter-spacing:0; text-transform:none; color:#A0A0B8; }
+  .brief-group-label { font-size:10.5px; font-weight:700; letter-spacing:0;
+                       color:var(--ink-400); margin:0 0 6px -2px; padding-left:12px; }
+  .brief-group-range { font-weight:400; letter-spacing:0; text-transform:none; color:var(--ink-300); }
   .brief-scene { display:flex; gap:10px; padding:4px 0 4px 12px; align-items:baseline; }
-  .brief-scene:hover { background:#F7F7FB; }
+  .brief-scene:hover { background:var(--canvas-2); }
   .brief-ts { font-size:11px; font-family:ui-monospace,Menlo,monospace; color:#8A8AA3;
               flex:none; min-width:34px; }
-  .brief-scene-text { font-size:12.5px; line-height:1.5; color:#22224A; }
+  .brief-scene-text { font-size:12.5px; line-height:1.5; color:var(--ink-900); }
   /* Photos and carousels: one row per slide, picture beside its description. */
   .brief-slides { display:flex; flex-direction:column; gap:10px; }
   .brief-slide { display:flex; gap:12px; align-items:flex-start; }
@@ -79,12 +79,11 @@
     overflow:hidden; background:var(--canvas-2); border:1px solid var(--line-soft); }
   .brief-slide-img img { width:100%; height:100%; object-fit:cover; display:block; }
   .brief-slide-vid { position:absolute; left:4px; bottom:4px; font-size:9px; font-weight:600; padding:1px 5px;
-    border-radius:var(--r-pill); background:rgba(0,0,80,.78); color:#fff; }
+    border-radius:var(--r-pill); background:var(--ink-900); color:#fff; }
   .brief-slide-body { min-width:0; }
-  .brief-slide-n { font-size:10.5px; font-weight:700; letter-spacing:.05em; text-transform:uppercase;
-    color:var(--ink-400); margin-bottom:2px; }
+  .brief-slide-n { font-size:10.5px; font-weight:700; letter-spacing:0; color:var(--ink-400); margin-bottom:2px; }
   .card-thumb-stack { position:absolute; right:5px; top:5px; min-width:18px; height:18px; padding:0 5px;
-    border-radius:var(--r-pill); background:rgba(0,0,80,.78); color:#fff; font-size:10px; font-weight:600;
+    border-radius:var(--r-pill); background:var(--ink-900); color:#fff; font-size:10px; font-weight:600;
     display:flex; align-items:center; justify-content:center; }
   @media (max-width:520px) { .brief-slide-img { flex-basis:56px; width:56px; } }
 </style>
@@ -284,12 +283,12 @@
 
            <div id="ac-review" style="display:none"></div>
            
-         <div id="ac-progress-container" style="display:none; margin-top: 15px; padding: 15px; background: #F4F6F8; border-radius: 6px; border: 1px solid #DCDCE6;">
-             <div style="font-weight: bold; color: #000050; margin-bottom: 8px; font-size: 13px;">Processing Creative</div>
+         <div id="ac-progress-container" style="display:none; margin-top: 15px; padding: 15px; background: var(--canvas-2); border-radius: 6px; border: 1px solid var(--line);">
+             <div style="font-weight: bold; color: var(--ink-900); margin-bottom: 8px; font-size: 13px;">Processing Creative</div>
              <div style="background: #EAEFF3; border-radius: 6px; height: 8px; overflow: hidden; margin-bottom: 8px;">
-                 <div id="ac-progress-bar" style="height: 8px; width: 0%; border-radius: 6px; background: #000050; transition: width 0.6s ease, background 0.3s;"></div>
+                 <div id="ac-progress-bar" style="height: 8px; width: 0%; border-radius: 6px; background: var(--primary); transition: width 0.6s ease, background 0.3s;"></div>
              </div>
-             <div id="ac-progress-text" style="font-size: 12px; color: #4A4A75;">Starting...</div>
+             <div id="ac-progress-text" style="font-size: 12px; color: var(--ink-600);">Starting...</div>
          </div>
 
         <div id="ac-summary" style="display:none; margin-top:15px;"></div>
@@ -307,34 +306,37 @@
   
 <div class="app">
 
-  <!-- ── Top bar: product, sections, brand, actions ────────────────── -->
-  <div class="topbar">
-    <div class="topbar-brand">
+  <!-- ── Sidebar: product, brand, sections, actions ─────────────────── -->
+  <aside class="sidebar" aria-label="Campaign Lens">
+    <div class="sb-brand">
+      <svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="9"/><circle cx="12" cy="12" r="4.2"/></svg>
       <span class="topbar-product">Campaign Lens</span>
     </div>
 
-    <div class="nav-tabs">
-      <!-- Every tab but the Creative Hub starts hidden. dashboard.js shows
-           the ones this account may use once the server has said which. -->
-      <div class="nav-item active" data-press onclick="setNav('creatives',this)">Creative Hub</div>
-      <div class="nav-item hidden" data-press onclick="setNav('kpi',this)">Media Summary</div>
-      <div class="nav-item hidden" data-press onclick="setNav('creators',this)">Creators</div>
-      <div class="nav-item hidden" data-press onclick="setNav('pretests',this)">Pre-tests</div>
-      <div class="nav-item hidden" data-press onclick="setNav('sov',this)">Share of voice</div>
-      <!-- Temporarily hidden, uncomment to restore:
-      <div class="nav-item" data-press onclick="setNav('signoff',this)">Campaign Sign-Off</div>
-      -->
-    </div>
+    <div id="brand-switcher-ui"></div>
+    <select id="brand-switcher" onchange="switchBrand(this.value)" class="dd-native" aria-hidden="true" tabindex="-1"></select>
 
-    <div class="topbar-right">
-      <div id="brand-switcher-ui"></div>
-      <select id="brand-switcher" onchange="switchBrand(this.value)" class="dd-native" aria-hidden="true" tabindex="-1"></select>
-      <button class="btn-outline" data-press onclick="openAddCreativeModal()">
-        <svg viewBox="0 0 24 24"><path d="M12 5v14M5 12h14"/></svg>Add creative
-      </button>
+    <nav class="nav-tabs" id="nav-tabs">
+      <span class="nav-ink" id="nav-ink" aria-hidden="true"></span>
+      <!-- Every item but the Creative Hub starts hidden. dashboard.js shows
+           the ones this account may use once the server has said which. -->
+      <div class="nav-label">Performance</div>
+      <div class="nav-item active" data-press onclick="setNav('creatives',this)"><svg viewBox="0 0 24 24"><rect x="3" y="3" width="7" height="7" rx="1.5"/><rect x="14" y="3" width="7" height="7" rx="1.5"/><rect x="3" y="14" width="7" height="7" rx="1.5"/><rect x="14" y="14" width="7" height="7" rx="1.5"/></svg>Creative Hub</div>
+      <div class="nav-item hidden" data-press onclick="setNav('kpi',this)"><svg viewBox="0 0 24 24"><path d="M4 20V10M10 20V4M16 20v-7M22 20H2"/></svg>Media Summary</div>
+      <div class="nav-item hidden" data-press onclick="setNav('creators',this)"><svg viewBox="0 0 24 24"><circle cx="9" cy="8" r="3.5"/><path d="M2.5 20c.8-3.6 3.4-5.5 6.5-5.5s5.7 1.9 6.5 5.5"/><circle cx="17.5" cy="9" r="2.5"/><path d="M17 14.5c2.4.2 4 1.8 4.5 4.5"/></svg>Creators</div>
+      <div class="nav-label">Planning</div>
+      <div class="nav-item hidden" data-press onclick="setNav('pretests',this)"><svg viewBox="0 0 24 24"><path d="M9 3h6M10 3v6L4.5 19a1.5 1.5 0 0 0 1.3 2h12.4a1.5 1.5 0 0 0 1.3-2L14 9V3"/></svg>Pre-tests</div>
+      <div class="nav-item hidden" data-press onclick="setNav('sov',this)"><svg viewBox="0 0 24 24"><path d="M12 3a9 9 0 1 0 9 9h-9z"/><path d="M15 3.5A9 9 0 0 1 20.5 9H15z"/></svg>Share of voice</div>
+      <!-- Temporarily hidden, uncomment to restore:
+      <div class="nav-item" data-press onclick="setNav('signoff',this)"><svg viewBox="0 0 24 24"><path d="M5 12.5l4.5 4.5L19 7.5"/></svg>Campaign Sign-Off</div>
+      -->
+    </nav>
+
+    <div class="topbar-right sb-foot">
+      <button class="btn-primary" data-press onclick="openAddCreativeModal()">Add creative</button>
       <button class="masthead-signout" onclick="window.location='/logout'">Sign out</button>
     </div>
-  </div>
+  </aside>
 
   <div class="shell">
     <div class="main">
@@ -342,7 +344,10 @@
 
         <!-- ── Page head: title, search, platform, filters ─────────── -->
         <div class="page-head">
-          <h1 id="topbar-title">Creative Hub</h1>
+          <div class="page-title">
+            <h1 id="topbar-title">Creative Hub</h1>
+            <p id="page-sub">Every creative for the brand, newest first, with its rating.</p>
+          </div>
           <div class="spacer"></div>
 
           <div class="cf-group" id="creative-filters">
@@ -619,7 +624,16 @@ window.addEventListener('load', () => setTimeout(syncFilterPills, 400));
      #kpi-filters-bar slot that now lives in the page head. */
   (function(){
     const orig = window.setNav;
+    // Section switches crossfade where the browser supports it; elsewhere,
+    // and under reduced motion, the page simply changes.
+    const reduced = () => window.matchMedia && matchMedia('(prefers-reduced-motion: reduce)').matches;
     window.setNav = function(page, el){
+      if (document.startViewTransition && !reduced() && window.__navReady) {
+        document.startViewTransition(() => go(page, el));
+      } else go(page, el);
+    };
+    addEventListener('load', () => { window.__navReady = true; });
+    function go(page, el){
       // Same refusal as setNav() itself, so a page this account may not
       // use is never shown or loaded from here either.
       if (typeof allowedPage === 'function') page = allowedPage(page);
@@ -636,12 +650,8 @@ window.addEventListener('load', () => setTimeout(syncFilterPills, 400));
       // it is shown, hidden and titled here.
       const sovEl = document.getElementById('page-sov');
       if (sovEl) sovEl.classList.toggle('hidden', page !== 'sov');
-      if (page === 'sov') {
-        const t = document.getElementById('topbar-title');
-        if (t) t.innerText = 'Share of voice';
-      }
       if (typeof SOV !== 'undefined') SOV.onPage(page);
-    };
+    }
   })();
   </script>
 </body>

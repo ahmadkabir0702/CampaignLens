@@ -48,6 +48,17 @@ const DESCRIPTION_MAX = 20;
 
 
 module.exports = function mountRoutes(app, deps = {}) {
+  // Any successful write through the API may change what the dashboard
+  // shows, so the cached payload goes. Cheaper than naming every route that
+  // writes, and it cannot miss one added later.
+  app.use('/api', (req, res, next) => {
+    if (req.method !== 'GET') {
+      res.on('finish', () => {
+        if (res.statusCode < 400) require('./creatives').invalidatePayload();
+      });
+    }
+    next();
+  });
   const { ai, youtubedl } = deps;
 
   // Resolve which brand this request is for: explicit ?brand=, else the
@@ -397,12 +408,12 @@ app.get('/api/brands', async (req, res) => {
   // -------------------------------------------------------------------
   //  DASHBOARD DATA — same 11-array shape the frontend already parses
   // -------------------------------------------------------------------
-  const { buildPayload } = require('./creatives');
+  const { listPayload, creativeDetails, invalidatePayload } = require('./creatives');
 
   app.get('/api/dashboard-data', async (req, res) => {
     try {
       const brand = resolveBrand(req);
-      const payload = await buildPayload(brand);
+      const payload = await listPayload(brand);
       // Account-level media numbers (spend, reach, KPIs) feed only the
       // Media Summary. An account without it does not receive them.
       const f = req.session.features;
@@ -412,6 +423,20 @@ app.get('/api/brands', async (req, res) => {
       console.error('[dashboard-data]', err.message);
       res.status(err.message.startsWith('Access denied') ? 403 : 500)
          .json({ error: err.message });
+    }
+  });
+
+  // The fields only the creative panel reads, for one or more creatives:
+  // /api/creative-details?ids=A,B. Same brand scoping as the list.
+  app.get('/api/creative-details', async (req, res) => {
+    try {
+      const brand = resolveBrand(req);
+      const ids = String(req.query.ids || '').split(',').map(s => s.trim()).filter(Boolean).slice(0, 200);
+      if (!ids.length) return res.status(400).json({ error: 'No creative ids given.' });
+      res.json({ details: await creativeDetails(brand, ids) });
+    } catch (err) {
+      console.error('[creative-details]', err.message);
+      res.status(err.message.startsWith('Access denied') ? 403 : 500).json({ error: err.message });
     }
   });
 

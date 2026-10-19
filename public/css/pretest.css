@@ -169,10 +169,10 @@ figcaption{font:400 12.5px/18px var(--font);color:var(--ink-600);margin-top:4px}
   #pt-print *{-webkit-print-color-adjust:exact;print-color-adjust:exact}
 
   .pt-head{border-bottom:2px solid var(--navy);padding-bottom:10px;margin-bottom:14px}
-  .pt-kicker{font:500 11px/14px var(--font);color:var(--navy);text-transform:uppercase;letter-spacing:.06em}
+  .pt-kicker{font:500 12px/14px var(--font);color:var(--navy);text-transform:none;letter-spacing:.06em}
   .pt-title{font:500 22px/28px var(--font);color:var(--ink-900);margin:4px 0 4px}
   .pt-meta{font:400 12px/17px var(--font);color:var(--ink-600)}
-  .pt-foot{margin-top:16px;padding-top:8px;border-top:1px solid var(--line);font:400 10.5px/15px var(--font);color:var(--ink-400)}
+  .pt-foot{margin-top:16px;padding-top:8px;border-top:1px solid var(--line);font:400 12px/15px var(--font);color:var(--ink-400)}
 
   #pt-print .bs-report{gap:10px}
   #pt-print .bs-hero,#pt-print .bs-sec,#pt-print .bs-all{background:#F4F6F8}

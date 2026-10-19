@@ -168,12 +168,12 @@
         responsive: true, maintainAspectRatio: false, animation: false,
         interaction: { mode: 'index', intersect: false },
         plugins: {
-          legend: { position: 'bottom', labels: { boxWidth: 10, boxHeight: 10, font: { family: 'Rubik', size: 12 }, color: c('--ink-500') } },
+          legend: { position: 'bottom', labels: { boxWidth: 10, boxHeight: 10, font: { family: 'Onest', size: 12 }, color: c('--ink-500') } },
           tooltip: { callbacks: { label: ctx => `${ctx.dataset.label}: ${pct(ctx.parsed.y)}` } },
         },
         scales: {
-          y: { min: 0, ticks: { callback: v => Math.round(v * 100) + '%', font: { family: 'Rubik', size: 11 }, color: c('--ink-400') }, grid: { color: c('--line-soft') } },
-          x: { ticks: { maxTicksLimit: 7, font: { family: 'Rubik', size: 11 }, color: c('--ink-400') }, grid: { display: false } },
+          y: { min: 0, ticks: { callback: v => Math.round(v * 100) + '%', font: { family: 'Onest', size: 11 }, color: c('--ink-400') }, grid: { color: c('--line-soft') } },
+          x: { ticks: { maxTicksLimit: 7, font: { family: 'Onest', size: 11 }, color: c('--ink-400') }, grid: { display: false } },
         },
       },
     });
