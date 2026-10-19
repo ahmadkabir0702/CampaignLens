@@ -1643,8 +1643,26 @@ function applyDetail(d, det) {
   d._detail = true;
 }
 
+// A creative can be held twice: as a hub card (LOADED) and in the library
+// Media Summary and Creators use (ALL). Details go on every copy, or a
+// caller waiting on its own copy never sees them arrive.
+function copiesOf(id) {
+  const out = [];
+  const hub = LOADED.get(id);
+  if (hub) out.push(hub);
+  const lib = (ALL || []).find(x => x.id === id);
+  if (lib && lib !== hub) out.push(lib);
+  return out;
+}
+
 async function ensureDetails(ids) {
-  const want = ids.filter(id => { const d = LOADED.get(id); return d && !d._detail; });
+  const want = ids.filter(id => {
+    if (DETAILS.has(id)) {
+      for (const d of copiesOf(id)) if (!d._detail) applyDetail(d, DETAILS.get(id));
+      return false;
+    }
+    return copiesOf(id).some(d => !d._detail);
+  });
   if (!want.length) return;
   for (let i = 0; i < want.length; i += 200) {
     const chunk = want.slice(i, i + 200);
@@ -1656,8 +1674,7 @@ async function ensureDetails(ids) {
       // creative with no details is not asked for again on every open.
       const det = details[id] || {};
       DETAILS.set(id, det);
-      const d = LOADED.get(id);
-      if (d) applyDetail(d, det);
+      for (const d of copiesOf(id)) applyDetail(d, det);
       if (det.lineage) remember([det.lineage.origin, ...(det.lineage.repurposes || [])].filter(Boolean));
     }
   }
