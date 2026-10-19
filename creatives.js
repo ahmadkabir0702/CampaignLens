@@ -123,7 +123,7 @@ async function paidExtras(brandId) {
     for (const r of rows) (((byId[r.creative_id] ||= {})[r.platform] ||= {}))[r.window_name] = r;
     const RANK = { Good: 0, Average: 1, Poor: 2 };
     for (const [id, plats] of Object.entries(byId)) {
-      let faded = false, from = null, to = null;
+      let faded = false, from = null, to = null, checked = false;
       // Which platform faded, not just that one did. The card has to say
       // "fatiguing on TikTok", and this loop already knows.
       const fadedOn = [];
@@ -134,12 +134,13 @@ async function paidExtras(brandId) {
         if (runDays < 14) continue;                       // no two windows to compare
         if (Number(last.impressions) < 1000) continue;    // too thin to read
         if (RANK[first.cqr] === undefined || RANK[last.cqr] === undefined) continue;
+        checked = true;
         if (RANK[last.cqr] > RANK[first.cqr]) {
           faded = true; from = first.cqr; to = last.cqr;
           fadedOn.push(plat);
         }
       }
-      out.window[id] = { ...(out.window[id] || {}), faded, fadedFrom: from, fadedTo: to, fadedOn };
+      out.window[id] = { ...(out.window[id] || {}), faded, fadedFrom: from, fadedTo: to, fadedOn, checked };
     }
   } catch (err) { if (err.code !== '42P01') throw err; }
   return out;
@@ -316,6 +317,10 @@ async function buildPayload(brandId) {
       fatigueFrom: (extras.window[id] || {}).fadedFrom || null,
       fatigueTo: (extras.window[id] || {}).fadedTo || null,
       fatigueOn: (extras.window[id] || {}).fadedOn || [],
+      // Ran long enough, with enough last-week delivery, for the first and
+      // last weeks to be compared at all. The summary's wear-out pattern
+      // needs the denominator, not only the creatives that slipped.
+      fatigueChecked: !!(extras.window[id] || {}).checked,
 
       // The same three facts per platform rather than collapsed across
       // both. A creative running on Meta and stopped on TikTok reads as
