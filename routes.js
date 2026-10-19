@@ -501,10 +501,10 @@ app.get('/api/brands', async (req, res) => {
       }
       normalised = lc.links;
       ig = normalised.ig || null; fb = normalised.fb || null; tt = normalised.tt || null;
-      // A community page's Facebook post can be a photo. The validator
-      // already worked that out, so the row is typed from it rather than
-      // assuming every creative is a video.
-      if (lc.fields.fb && lc.fields.fb.kind && lc.fields.fb.kind !== 'video') contentType = 'Photo';
+      // A first guess only. Whether the post is a video, a single image or a
+      // carousel is settled by the worker when it fetches the post, since an
+      // Instagram /p/ link or a Facebook post can be any of them.
+      if (Object.values(lc.fields).some(f => f && f.kind === 'photo')) contentType = 'Photo';
     } catch (err) {
       console.error('[add-creative] link check failed:', err.message);
       return res.status(500).json({ error: 'Could not verify the links. Try again.' });
@@ -516,7 +516,7 @@ app.get('/api/brands', async (req, res) => {
     const content = await contentFor({ ig, fb, tt });
     if (content.verdict === 'different' && !req.body.content_confirmed) {
       return res.status(409).json({
-        error: 'These links look like different videos.',
+        error: 'These links look like different posts.',
         contentWarning: content.warning, content });
     }
     // Overriding a mismatch lets the creative in, but it is not treated as

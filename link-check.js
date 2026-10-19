@@ -83,7 +83,7 @@ async function findDuplicate(query, field, id, { excludeId, pendingJobs }) {
            limit 1`;
   } else if (field === 'tt') {
     sql = `select creative_id, brand_id from creatives
-           where (tiktok_item_id = $1 or tt_link ~ ('/video/' || $1 || '([/?]|$)'))
+           where (tiktok_item_id = $1 or tt_link ~ ('/(video|photo)/' || $1 || '([/?]|$)'))
              and creative_id is distinct from $2
            limit 1`;
   } else {

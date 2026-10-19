@@ -134,4 +134,33 @@ async function storeThumbnail(creativeId, sourceUrl) {
   return null;
 }
 
-module.exports = { storeThumbnail, configured, _sniff: sniff };
+/**
+ * Download the first displayable image from a list of candidates.
+ * Returns { buf, ext, mime } or null. Used for carousel slides, which are
+ * both stored and sent for analysis, so they are fetched once.
+ */
+async function fetchImage(candidates) {
+  for (const url of (Array.isArray(candidates) ? candidates : [candidates]).filter(Boolean)) {
+    try {
+      const buf = await download(url);
+      const kind = sniff(buf);
+      if (kind && DISPLAYABLE.has(kind.ext)) return { buf, ext: kind.ext, mime: kind.mime };
+    } catch (e) { /* try the next one */ }
+  }
+  return null;
+}
+
+/** Store an image already in memory. Returns the permanent URL, or null. */
+async function storeImage(name, img) {
+  if (!img || !configured()) return null;
+  try {
+    const safe = String(name).replace(/[^A-Za-z0-9_-]/g, '_');
+    const publicUrl = await upload(`${safe}.${img.ext}`, img.buf, img.mime);
+    return `${publicUrl}?v=${Date.now()}`;
+  } catch (e) {
+    console.error(`[thumbnails] ${name}: ${e.message}`);
+    return null;
+  }
+}
+
+module.exports = { storeThumbnail, fetchImage, storeImage, configured, _sniff: sniff };
