@@ -328,7 +328,7 @@ If in doubt between fix and reject, reject. Your fixes are published without any
 Always give a one-sentence reason, even for pass.
 
 What the terms mean:
-- Brand Say is brand-made content. Others Say is creator or influencer-made content.
+- Brand Say is brand-made content. Others Say is content made by creators or posted by community.
 - CQR is the creative quality rating; Good, Average and Poor are its tiers.
 - "Against the brand average" and "ranking against the other groups" are two different comparisons. A group can rank best and still be similar to the average: not a contradiction.
 - Where the evidence states which tier gets the most spend, or gives a head-to-head, that statement is authoritative.

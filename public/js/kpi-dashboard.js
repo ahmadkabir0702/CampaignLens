@@ -67,14 +67,14 @@ const msViews = (o) => o ? msNum(o.views || o.videoViews) : 0;
  * Who posted it, as one dimension rather than two overlapping ones.
  *
  * Content type and "posted by" were separate filters that could be set to
- * contradict each other (Brand Say plus Community page selects nothing).
+ * contradict each other (Brand Say plus Community selects nothing).
  * They are one axis with three values.
  */
 function msBucket(d) {
   if (d.type === 'Brand Say') return 'brand';
-  return d.source === 'community' ? 'community' : 'influencer';
+  return d.source === 'community' ? 'community' : 'creator';
 }
-const MS_BUCKET_LABEL = { brand: 'Brand Say', influencer: 'Influencer', community: 'Community' };
+const MS_BUCKET_LABEL = { brand: 'Brand Say', creator: 'Creators', community: 'Community' };
 
 // ---------------------------------------------------------------------
 //  Filters
@@ -133,7 +133,7 @@ function msRenderFilters() {
     sel('month', 'Month', months.map(m => [m, m === 'all' ? 'All months' : m])) +
     sel('platform', 'Platform', [['all', 'All platforms'], ...MS_PLATFORMS.map(p => [p.code, p.label])]) +
     sel('bucket', 'Posted by', [['all', 'Everything'], ['brand', 'Brand Say'],
-                                ['influencer', 'Influencers'], ['community', 'Community pages']]);
+                                ['creator', 'Creators'], ['community', 'Community']]);
 
   if (typeof enhanceSelectsIn === 'function') enhanceSelectsIn(wrap);
 }
@@ -255,7 +255,7 @@ function msRenderBody() {
 
 // ---------- 1. What went out ----------------------------------------
 function msSectionOutput(data) {
-  const by = { brand: 0, influencer: 0, community: 0 };
+  const by = { brand: 0, creator: 0, community: 0 };
   data.forEach(d => by[msBucket(d)]++);
   const rep = data.filter(d => d.isRepurposed).length;
   const boosted = data.filter(d => d.boostState !== 'never').length;
@@ -263,10 +263,10 @@ function msSectionOutput(data) {
 
   const tiles =
     msTile('Creatives published', data.length,
-           `${by.brand} Brand Say · ${by.influencer + by.community} Others Say`) +
-    msTile('Influencer', by.influencer,
-           `${msPct(by.influencer, data.length)}% of everything published`) +
-    msTile('Community pages', by.community,
+           `${by.brand} Brand Say · ${by.creator + by.community} Others Say`) +
+    msTile('Creators', by.creator,
+           `${msPct(by.creator, data.length)}% of everything published`) +
+    msTile('Community', by.community,
            `${msPct(by.community, data.length)}% of everything published`) +
     msTile('Repurposed', rep,
            rep ? `${msPct(rep, data.length)}% reworked from earlier content` : 'All original') +
@@ -596,7 +596,7 @@ function msPaidWhatWorks(rated) {
   const cards = [
     cut('Length', bands.map(b => ({ label: b.label, items: rated.filter(d => b.test(msNum(d.duration))) })), true),
     cut('Content type', typeNames.map(t => ({ label: t, items: rated.filter(d => d.contentType === t) }))),
-    cut('Who posted it', ['brand', 'influencer', 'community'].map(b => ({
+    cut('Who posted it', ['brand', 'creator', 'community'].map(b => ({
       label: MS_BUCKET_LABEL[b], items: rated.filter(d => msBucket(d) === b),
     }))),
   ].filter(Boolean);
@@ -763,7 +763,7 @@ function msSectionWhatWorked(data) {
       </table>`);
   };
 
-  const byBucket = cut('Who posted it', ['brand', 'influencer', 'community'].map(b => ({
+  const byBucket = cut('Who posted it', ['brand', 'creator', 'community'].map(b => ({
     label: MS_BUCKET_LABEL[b], items: data.filter(d => msBucket(d) === b),
   })));
 
@@ -793,64 +793,54 @@ function msSectionWhatWorked(data) {
   </div>`;
 }
 
-// ---------- 6. Creators ---------------------------------------------
+// ---------- 6. Creators and Community ------------------------------
+//
+//  No ranking and no list. The Creators page holds every profile; this
+//  section only says how Others Say content is doing against Brand Say,
+//  which stays one card however many creators a brand works with.
 function msSectionCreators(data) {
-  const os = data.filter(d => d.type === 'Others Say' && d.creatorProfile);
+  const os = data.filter(d => d.type === 'Others Say');
   if (!os.length) return '';
 
-  const byCreator = {};
-  os.forEach(d => {
-    const info = (typeof extractCreatorInfo === 'function')
+  const handle = (d) => {
+    const info = typeof extractCreatorInfo === 'function'
       ? extractCreatorInfo(d.creatorProfile, d.ttLink) : null;
-    const n = (info && info.username) || d.creatorProfile;
-    if (!n) return;
-    (byCreator[n] ||= { name: n, posts: 0, good: 0, scored: 0, views: 0 });
-    byCreator[n].posts++;
-    MS_PLATFORMS.forEach(p => {
-      const o = d[p.key];
-      if (!o) return;
-      byCreator[n].views += msViews(o);
-      if (typeof isGrade === 'function' && isGrade(o.cqr)) {
-        byCreator[n].scored++;
-        if (o.cqr === 'Good') byCreator[n].good++;
-      }
-    });
-  });
+    return (info && info.username) || d.creatorProfile || null;
+  };
+  const profiles = (arr) => new Set(arr.map(handle).filter(Boolean)).size;
+  const views = (arr) => arr.reduce((s, d) => s + MS_PLATFORMS.reduce((t, p) => t + msViews(d[p.key]), 0), 0);
 
-  const ranked = Object.values(byCreator)
-    .sort((a, b) => (b.scored ? b.good / b.scored : -1) - (a.scored ? a.good / a.scored : -1)
-                 || b.views - a.views)
-    .slice(0, 8);
-  if (!ranked.length) return '';
-
-  const osViews = os.reduce((s, d) => s + MS_PLATFORMS.reduce((t, p) => t + msViews(d[p.key]), 0), 0);
-  const allViews = data.reduce((s, d) => s + MS_PLATFORMS.reduce((t, p) => t + msViews(d[p.key]), 0), 0);
+  const creators = os.filter(d => msBucket(d) === 'creator');
+  const community = os.filter(d => msBucket(d) === 'community');
+  const brand = data.filter(d => msBucket(d) === 'brand');
 
   const tiles =
-    msTile('Creators active', Object.keys(byCreator).length, `${os.length} posts between them`) +
-    msTile('Share of organic views', msPct(osViews, allViews) + '%',
-           `${fmtN(osViews)} of ${fmtN(allViews)}`) +
-    msTile('Top creator', ranked[0].name,
-           ranked[0].scored ? `${msPct(ranked[0].good, ranked[0].scored)}% rated Good` : `${fmtN(ranked[0].views)} views`);
+    msTile('Creators', profiles(creators), `${creators.length} post${creators.length === 1 ? '' : 's'} between them`) +
+    msTile('Community', profiles(community), `${community.length} post${community.length === 1 ? '' : 's'} between them`) +
+    msTile('Share of organic views', msPct(views(os), views(data)) + '%',
+           'from creators and community together');
 
-  const table = `
-    <table class="ms-table">
-      <thead><tr><th>Creator</th><th class="n">Posts</th><th class="n">Views</th><th class="n">Rated Good</th></tr></thead>
-      <tbody>${ranked.map(c => `
+  const rows = [
+    { label: 'Creators', items: creators },
+    { label: 'Community', items: community },
+    { label: 'Brand Say', items: brand },
+  ].filter(r => r.items.length);
+
+  const table = rows.length > 1 ? msCard('Against Brand Say', `
+    <table class="ms-table ms-table-cut">
+      <tbody>${rows.map(r => `
         <tr>
-          <td class="ms-plat">${msEsc(c.name)}</td>
-          <td class="n">${c.posts}</td>
-          <td class="n">${fmtN(c.views)}</td>
-          <td class="n">${c.scored ? msPct(c.good, c.scored) + '%' : '—'}</td>
+          <td class="ms-cut-k">${r.label}<div class="ms-cut-n">${r.items.length} post${r.items.length === 1 ? '' : 's'}</div></td>
+          <td class="ms-mixcell">${msCqrBar(msMix(r.items), r.items.length)}</td>
         </tr>`).join('')}
       </tbody>
     </table>
-    <div class="ms-foot"><button class="ms-link" onclick="setNav('creators')">Open Creators</button></div>`;
+    <div class="ms-foot"><button class="ms-link" onclick="setNav('creators')">Open Creators</button></div>`,
+    'organic rating, one vote per post') : '';
 
   return `<div class="ms-sec">
-    <div class="ms-sec-h">Creators</div>
+    <div class="ms-sec-h">Creators and Community</div>
     <div class="ms-tiles cols-3">${tiles}</div>
-    ${msCard('Ranked on how often their posts are rated Good', table,
-             'views as the tie-break, not the ranking')}
+    ${table ? `<div class="ms-grid cols-1">${table}</div>` : ''}
   </div>`;
 }
