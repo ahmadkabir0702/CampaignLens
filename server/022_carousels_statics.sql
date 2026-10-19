@@ -48,6 +48,44 @@ begin
   end loop;
 end $$;
 
+-- Others Say Instagram syncs pick creatives by ig_shortcode. Fill it for
+-- /p/ links too (photos and carousels), now and on every new creative, in
+-- case whatever fills it today only reads /reel/ links. A trigger named
+-- zz_ runs after any existing one and only fills a value that is missing.
+do $$
+declare gen "char";
+begin
+  select attgenerated into gen from pg_attribute
+   where attrelid = 'creatives'::regclass and attname = 'ig_shortcode' and not attisdropped;
+  if not found then
+    raise notice 'creatives.ig_shortcode does not exist; skipped';
+    return;
+  end if;
+  if gen <> '' then
+    raise notice 'creatives.ig_shortcode is a generated column; check its expression reads /p/ links';
+    return;
+  end if;
+
+  update creatives
+     set ig_shortcode = substring(ig_link from 'instagram\.com/(?:[^/]+/)?(?:p|reels?|tv)/([A-Za-z0-9_-]+)')
+   where ig_shortcode is null and ig_link is not null;
+
+  create or replace function zz_fill_ig_shortcode() returns trigger language plpgsql as $f$
+  declare sc text;
+  begin
+    sc := substring(new.ig_link from 'instagram\.com/(?:[^/]+/)?(?:p|reels?|tv)/([A-Za-z0-9_-]+)');
+    if new.ig_shortcode is null
+       or (tg_op = 'UPDATE' and new.ig_link is distinct from old.ig_link and sc is not null) then
+      new.ig_shortcode := coalesce(sc, new.ig_shortcode);
+    end if;
+    return new;
+  end $f$;
+
+  drop trigger if exists zz_fill_ig_shortcode on creatives;
+  create trigger zz_fill_ig_shortcode before insert or update of ig_link on creatives
+    for each row execute function zz_fill_ig_shortcode();
+end $$;
+
 -- Rating bands for statics, in percent. Brand rows (brand_id set) win over
 -- the global ones. These are starting values: tune them once a few weeks
 -- of statics are in.

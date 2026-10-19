@@ -1,79 +1,57 @@
 # n8n changes for carousels and static posts
 
-Campaign Lens now accepts photo and carousel posts for Brand Say and Others Say (migration 022). It reads the slides itself, stores them and rates the post on engagement. The organic numbers still come from n8n, and these changes let the syncs fill them for statics too.
+Campaign Lens accepts photo and carousel posts for Brand Say and Others Say (migration 022). These are the changes made to the **Brand Sync (child)** workflow so the syncs fill their numbers. The edited workflow was delivered as `Brand_Sync_child_statics.json`. It is not kept in this repo because it carries API keys.
 
-Until they are made:
-- **Others Say statics** work already: they get their numbers when they are added, and the 12-hour sync refreshes them if it passes the stored link to ScrapeCreators. Check that in step 3.
-- **Brand Say statics** get public likes and comments when they are added. Reach, saves and shares only arrive once step 1 or 2 is done, and Brand Say statics are rated on reach.
+Run migration 022 **before** importing the workflow, because two of the write nodes now set `organic_perf.followers`.
 
 ---
 
-## 1. Brand Say Instagram: include photo and carousel posts
+## Brand Say Instagram
 
-**Now.** The media pull either keeps only reels or asks every post for reel metrics. A photo or carousel then either never reaches `organic_perf` or makes the insights call fail.
+| Node | Change |
+|---|---|
+| Get IG Media Page | Also asks for `media_type` and `media_product_type`. |
+| Resolve IG Media IDs | Passes the type on, plus `is_reel` (true for `REELS`). Matching on the shortcode already covered `/p/` links. |
+| Get IG Insights | Photos and carousels (`FEED`) are asked only `reach,saved,shares,total_interactions,views`. Instagram rejects the whole request if one metric does not apply, so asking a carousel for reel watch time would fail it. Errors are now let through, so one post cannot stop the brand. |
+| Process IG Insights | Watch time and hook rate are null for photos and carousels, not zero. Errors are logged and skipped. |
 
-**Change.**
+## Brand Say Facebook
 
-1. **List every type of post.** On the media list, request
-   `id,media_type,media_product_type,permalink,shortcode,timestamp,like_count,comments_count`.
-   Keep `IMAGE`, `CAROUSEL_ALBUM` and `VIDEO` (reels).
-2. **Split the insights call by type,** because Instagram rejects the whole request if one metric does not apply to that post:
-   - Reels (`media_product_type = REELS`): the metrics already requested.
-   - Photos and carousels (`media_product_type = FEED`, `media_type` `IMAGE` or `CAROUSEL_ALBUM`): `reach,views,likes,comments,saved,shares,total_interactions`. Never ask these for `ig_reels_avg_watch_time` or other reel-only metrics.
-3. **Match on the shortcode.** A static's link is stored as `https://www.instagram.com/p/{shortcode}/` and a reel's as `/reel/{shortcode}/`. Match the shortcode from `permalink` (or `shortcode`) against the end of `creatives.ig_link`, whichever of the two forms it uses.
-4. **Write the row** to `organic_perf` as for reels: `views`, `reach`, `likes`, `comments`, `saves` (from `saved`), `shares`, `total_interactions`, `time_posted`. Leave `avg_watch_time` null.
+| Node | Change |
+|---|---|
+| Get FB Sheet Rows | Also returns `content_type`. |
+| Match & Filter FB Posts | Videos only. Photos and carousels go to the new branch. |
+| **Match FB Statics** (new) | Reads the photo id (`fbid=`), or the post id from `/posts/{id}` or `permalink.php`. |
+| **Get FB Static Post** (new) | For a photo, finds its post (`page_story_id`), where the numbers live. |
+| **Get FB Static Insights** (new) | Fetches reactions, comments, shares, `post_total_media_view_unique` (people reached) and `post_media_view` (views), plus the reaction breakdown. These are Meta's replacements for the retired `post_impressions_unique` and `post_impressions`. Only counts are requested, never who reacted. |
+| **Process FB Static** (new) | Shapes the numbers like the video branch. |
+| Map organic fb | Writes `reach` when there is one. |
 
-`v_organic_scored` will give these posts a state such as "No Duration". That is expected. Campaign Lens works out the rating for photos and carousels itself from these numbers (`server/static-rating.js`).
+A Facebook post link with a `pfbid…` token cannot be read through the Graph API. Campaign Lens now stores those links in numeric form when the creative is added.
 
----
+## Brand Say TikTok
 
-## 2. Brand Say Facebook: include photo and album posts
+| Node | Change |
+|---|---|
+| Extract TT Video IDs, Process TT Insights | Match `/photo/{id}` as well as `/video/{id}`. |
+| Get TT Refresh Due | Also picks Brand Say photo posts. If the business API does not return photo posts, the public numbers keep them current. If it does, its numbers are kept. |
 
-**Now.** The Facebook branch matches video ids. A photo post's id is a different number from its photo's id, so nothing matches.
+## Others Say
 
-**What Campaign Lens stores for a static:**
-- `https://www.facebook.com/photo/?fbid={photo id}` for a photo link
-- `https://www.facebook.com/{page}/posts/{post id}` for a post link. A `pfbid…` link is replaced with this numeric form when the post is fetched.
+| Node | Change |
+|---|---|
+| map_ig_scrape, Write IG NonCollab | Save the creator's follower count to `organic_perf.followers`. Creators' photos have no public views, so they are rated per follower. |
+| tt_scrape_map, Write TT Organic | The same for TikTok. |
 
-**Change.**
-
-1. **Request the attachments** on the page posts call, so each post carries the ids of its photos:
-   `attachments{media_type,target{id},subattachments{target{id}}}`
-2. **Match** a creative when the numeric id at the end of `creatives.fb_link` (the `fbid=` value for a photo link) equals any of:
-   - the post id: the part of `id` after the underscore;
-   - `attachments.target.id`, which is the photo for a single-photo post;
-   - any `subattachments.target.id`, which are the photos in an album.
-3. **Request the post's numbers** with the same reach metric the video branch already uses, plus reactions, comments and shares. Write them to `organic_perf` with `platform = 'fb'`. Video views are null for a photo, which is fine.
-
----
-
-## 3. Others Say sync (every 12 hours): check it covers statics
-
-It should need no change if it calls ScrapeCreators with the creative's stored link. Two things to check:
-
-1. **The link filter.** If the node picks creatives with a pattern such as `ig_link like '%/reel/%'` or `tt_link like '%/video/%'`, widen it to include `/p/` and `/photo/`.
-2. **Instagram photo views.** For a photo, `video_play_count` is absent. Map it to null, not 0, the same as hidden like counts.
-
-**Optional:** write the follower count to `organic_perf.followers`. Instagram has it at `data.xdt_shortcode_media.owner.edge_followed_by.count`, TikTok at `aweme_detail.author.follower_count`. Others Say photos on Instagram are rated per follower. The count is saved when the creative is added, so this only keeps it current.
-
----
-
-## 4. Brand Say TikTok: photo posts
-
-TikTok photo posts are stored as `https://www.tiktok.com/@{handle}/photo/{item id}`.
-
-- **If the TikTok business pull returns photo posts:** match their item id against the id after `/photo/`, the same way `/video/` ids are matched now.
-- **If it does not:** those creatives keep the public numbers saved when they were added, which include views, likes, comments, shares and saves.
+Instagram Others Say rows are chosen by `creatives.ig_shortcode`. Migration 022 fills it for `/p/` links too, and adds a trigger that fills it for every new creative.
 
 ---
 
 ## Ratings for statics (for reference)
 
-Statics are rated on engagement and compared only with other statics. The bands live in `static_thresholds`, created by migration 022, and can be tuned per brand without a deploy:
+Statics are rated on engagement and compared only with other statics. The bands live in `static_thresholds` and can be tuned per brand without a deploy:
 
 | Type | Read on |
 |---|---|
-| Brand Say | engagement per person reached, or per view where a platform gives views but no reach |
+| Brand Say | engagement per person reached, or per view where there is no reach |
 | Others Say | likes plus twice the comments, per view where there are views (TikTok), otherwise per follower |
-
-The starting bands are a judgement, not a benchmark. Review them once a few weeks of statics are in.

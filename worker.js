@@ -1234,9 +1234,17 @@ function makeProcessor(ai) {
       // the Brand Say matcher needs one at the end of the link. When the
       // post was fetched from that link, store the numeric form instead.
       let fbLink = d.fb;
-      if (fbLink && /\/posts\/pfbid/i.test(fbLink) && platformOf(mediaUrl) === 'fb'
-          && meta.post_id && /^\d+$/.test(meta.post_id) && meta.handle) {
-        fbLink = `https://www.facebook.com/${meta.handle}/posts/${meta.post_id}`;
+      if (fbLink && /\/posts\/pfbid/i.test(fbLink)) {
+        // The analysed post is usually Instagram; then the Facebook post is
+        // fetched once more just for its id (one scraper credit).
+        let fm = platformOf(mediaUrl) === 'fb' ? meta : null;
+        if (!fm) {
+          try { fm = await resolveMediaUrl(fbLink); }
+          catch (e) { console.warn(`[worker] ${creativeId}: Facebook post id not resolved: ${e.message}`); }
+        }
+        if (fm && fm.post_id && /^\d+$/.test(fm.post_id) && fm.handle) {
+          fbLink = `https://www.facebook.com/${fm.handle}/posts/${fm.post_id}`;
+        }
       }
 
       await query(
