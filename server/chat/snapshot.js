@@ -21,7 +21,9 @@ const { getPool } = require('./db');
 // predating that is wrong, not merely thinner, so none should survive.
 // Bumped to 7: the pre-flight score is presented as the "Pre-test Score"
 // and the vendor is never named, so stored digests using the old label go.
-const SNAPSHOT_SCHEMA_VERSION = 7;
+// Bumped to 8: Others Say is described as Creators and Community, so stored
+// digests saying "Community page" or "briefed" go.
+const SNAPSHOT_SCHEMA_VERSION = 8;
 
 const T = S.tables, C = S.creative, P = S.paidView, O = S.organicView, OR = S.organicRawCols;
 const OB = S.organicBest, B = S.boost, TH = S.thresholds, CR = S.creator;

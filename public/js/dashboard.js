@@ -2199,7 +2199,7 @@ function renderDetail(d) {
     <div class="cm-body">
       <div class="detail-header">
         <div>
-          <div class="detail-title">${d.short}<span class="card-type ${d.type==='Brand Say'?'bs-tag':'os-tag'}" style="margin-left:6px">${d.type}</span>${d.source==='community'?'<span class="card-type community-tag" style="margin-left:4px">Community page</span>':''}${d.creatorLed?'<span class="card-type creator-led-tag" style="margin-left:4px">Creator-led</span>':''}${valUI}</div>
+          <div class="detail-title">${d.short}<span class="card-type ${d.type==='Brand Say'?'bs-tag':'os-tag'}" style="margin-left:6px">${d.type}</span>${d.source==='community'?'<span class="card-type community-tag" style="margin-left:4px">Community</span>':''}${d.creatorLed?'<span class="card-type creator-led-tag" style="margin-left:4px">Creator-led</span>':''}${valUI}</div>
           <div class="detail-meta">${metaParts.join(' · ')}</div>
           ${creatorHTML}${repText}${linkBtns}
         </div>
@@ -2731,7 +2731,7 @@ function acRenderReview(f) {
     ${f.description ? line('Description', f.description) : ''}
     ${line('Campaign', f.campaign)}
     ${line('Category', f.type)}
-    ${f.type === 'Others Say' ? line('Posted by', f.source === 'community' ? 'Community page' : 'Creator') : ''}
+    ${f.type === 'Others Say' ? line('Posted by', f.source === 'community' ? 'Community' : 'Creator') : ''}
     ${f.type === 'Brand Say' ? line('Led by a creator', f.creatorLed ? 'Yes' : 'No') : ''}
     ${f.type === 'Brand Say' ? line('Repurposed', f.repurposed) : ''}
     ${f.repurposed === 'Yes' && f.originalId ? line('Original creative', f.originalId) : ''}

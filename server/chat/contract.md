@@ -171,8 +171,8 @@ these fields exist to reveal, so compare within a format as well as across.
 Others Say is content posted by someone other than the brand.
 
 **Posted by** splits Others Say in two, because the two are acted on
-differently. A briefed creator was paid and can be briefed again, so a
-finding about creator content is a production decision. Community content
+differently. Creator content was commissioned and the creator can be
+worked with again, so a finding about it is a production decision. Community content
 was posted by a member of the public with no brief, so a finding about it
 is a signal about how people are responding, not something to commission.
 Never pool the two in one group, and never present a community post as

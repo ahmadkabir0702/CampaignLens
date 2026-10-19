@@ -181,7 +181,7 @@
     // Past this point the link is not a video. Say which setting would make
     // it acceptable, rather than only that it is not.
     var asCommunity = ' Post and photo links are accepted for Others Say'
-      + ' content posted by a community page; set "Posted by" to "Community page"'
+      + ' content posted by community; set "Posted by" to "Community"'
       + ' if that is what this is.';
 
     if (/pfbid/i.test(p) || /^\/[^/]+\/posts\//.test(p)) {
