@@ -202,8 +202,8 @@
     return null;
   }
 
-  var SWITCH_TO_STATIC = ' If it is a photo or carousel, change Format to Static image or Carousel.';
-  var SWITCH_TO_VIDEO = ' If it is a reel or video, change Format to Reel or video.';
+  var SWITCH_TO_STATIC = ' If it is a photo or carousel, set the kind of post to Static image or Carousel.';
+  var SWITCH_TO_VIDEO = ' If it is a reel or video, set the kind of post to Reel or video.';
 
   function checkFormat(field, r, format, opts) {
     if (!r.ok || !format) return r;
