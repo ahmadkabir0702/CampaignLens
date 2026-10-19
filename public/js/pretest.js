@@ -456,7 +456,7 @@
       await api(`/api/pretests/${encodeURIComponent(id)}`, { method: 'DELETE' });
       closeReport();
       refresh({ quiet: true });
-    } catch (e) { alert(`Could not delete: ${e.message}`); }
+    } catch (e) { toast(`Could not delete: ${e.message}`, 'error'); }
   }
 
   // ── New pre-test form ──────────────────────────────────────────────────────
@@ -468,7 +468,7 @@
 
   async function openForm() {
     if (!state.data) {
-      try { state.data = await api('/api/pretests'); } catch (e) { alert(`Pre-tests are unavailable: ${e.message}`); return; }
+      try { state.data = await api('/api/pretests'); } catch (e) { toast(`Pre-tests are unavailable: ${e.message}`, 'error'); return; }
     }
     const d = state.data, s = d.settings || {}, b = d.brand || {};
     resetForm();

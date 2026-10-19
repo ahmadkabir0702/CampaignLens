@@ -852,7 +852,7 @@ select:focus,.search-input:focus,.modal-input:focus{outline:none;border-color:va
 .hidden{display:none!important}
 
 /* ---------- Responsive --------------------------------------------- */
-@media (max-width:1400px){ .kpi-row{grid-template-columns:repeat(3,1fr)} }
+
 @media (max-width:1100px){
   .filters{width:min(92vw,520px)}
 }
@@ -870,7 +870,10 @@ select:focus,.search-input:focus,.modal-input:focus{outline:none;border-color:va
   .shell{padding:0 6px 6px}
 }
 @media (max-width:768px){
-  .kpi-row{grid-template-columns:repeat(2,1fr)}
+  .kpi-row{grid-template-columns:repeat(2,minmax(0,1fr))}
+  .kpi-row > .kpi{grid-column:span 1}
+  .kpi-row > .kpi-wide{grid-column:span 2}
+  .kpi-row .kpi-val{font-size:24px;line-height:30px}
   .charts-row{grid-template-columns:1fr}
   .content{padding:16px}
   .search-input{min-width:0;flex:1}
@@ -965,7 +968,11 @@ select:focus,.search-input:focus,.modal-input:focus{outline:none;border-color:va
    under colour-blindness without adding a line to the drawing. */
 .ms-bar{display:flex;height:9px;border-radius:var(--r-pill);
   overflow:hidden;background:var(--canvas-2);gap:2px}
-.ms-seg{display:block;height:9px}
+.ms-seg{display:block;height:9px;transition:width var(--t-slow) var(--ease-move)}
+/* A rolling digit: a clipped window onto a column of 0-9. */
+.roll-d{font-variant-numeric:tabular-nums;display:inline-block;height:1.2em;line-height:1.2em;overflow:hidden;vertical-align:bottom}
+.roll-d>span{display:flex;flex-direction:column;transition:transform var(--t-slow) var(--ease-move)}
+.roll-d i{font-style:normal;height:1.2em;text-align:center}
 .ms-keys{display:flex;flex-wrap:wrap;gap:3px 13px;margin-top:8px}
 .ms-key{display:inline-flex;align-items:center;gap:5px;
   font:400 11.5px/16px var(--font);color:var(--ink-600);
@@ -984,7 +991,7 @@ select:focus,.search-input:focus,.modal-input:focus{outline:none;border-color:va
    empty rather than full of grey. The baseline carries the axis instead. */
 .ms-trend-track{flex:1;width:100%;display:flex;align-items:flex-end;
   border-bottom:1px solid var(--line)}
-.ms-trend-fill{width:100%;border-radius:4px 4px 0 0}
+.ms-trend-fill{width:100%;border-radius:4px 4px 0 0;transition:height var(--t-slow) var(--ease-move)}
 .ms-trend-k{font:400 12px/14px var(--font);color:var(--ink-400);
   margin-top:6px;white-space:nowrap}
 
@@ -1311,12 +1318,15 @@ select:focus,.search-input:focus,.modal-input:focus{outline:none;border-color:va
 }
 
 /* ---------- Creators: view switch, cards, profile panel ----------- */
-.cr-views{display:inline-flex;gap:4px;padding:4px;margin-bottom:16px;
+.cr-views{position:relative;display:inline-flex;gap:4px;padding:4px;margin-bottom:16px;
   background:var(--white);border-radius:var(--r-pill);box-shadow:var(--shadow-rest)}
 .cr-view{height:34px;padding:0 16px;border:0;border-radius:var(--r-pill);background:none;
   font:500 14px var(--font);color:var(--ink-600);cursor:pointer;display:inline-flex;align-items:center;gap:8px}
 .cr-view:hover{color:var(--ink-900)}
-.cr-view.on{background:var(--navy);color:var(--white)}
+.cr-view{position:relative;z-index:1;transition:color var(--t-base) var(--ease-out)}
+.cr-view.on{color:var(--white)}
+.cr-view-pill{position:absolute;top:4px;bottom:4px;left:4px;width:0;border-radius:var(--r-pill);background:var(--primary);
+  transition:left var(--t-base) var(--ease-move),width var(--t-base) var(--ease-move)}
 .cr-view-n{font:400 12px var(--font);opacity:.75}
 .cr-roster-h{margin:28px 0 12px}
 .cr-row-on .ms-cut-k{font-weight:500;color:var(--ink-900)}
@@ -1919,3 +1929,16 @@ select:focus,.search-input:focus,.modal-input:focus{outline:none;border-color:va
 .dsum-pos{color:var(--pos)}
 .dsum-warn{color:var(--warn)}
 
+
+/* ---------- Toast --------------------------------------------------
+   One line at the foot of the screen that something worked or did not.
+   Fades up in, fades out the same way. */
+.cl-toast{position:fixed;left:50%;bottom:calc(24px + env(safe-area-inset-bottom,0px));z-index:300;
+  max-width:min(520px,calc(100vw - 32px));padding:11px 16px;border-radius:10px;
+  background:var(--ink-900);color:#fff;font:400 13.5px/19px var(--font);box-shadow:var(--shadow-pop);
+  translate:-50% 0;display:none;opacity:0;transform:translateY(8px);
+  transition:opacity var(--t-base) var(--ease-out),transform var(--t-base) var(--ease-out),display var(--t-base) allow-discrete}
+.cl-toast.show{display:block;opacity:1;transform:none}
+@starting-style{.cl-toast.show{opacity:0;transform:translateY(8px)}}
+.cl-toast.is-error::before{content:"";display:inline-block;width:8px;height:8px;border-radius:50%;
+  background:#F28B92;margin-right:9px;vertical-align:1px}
