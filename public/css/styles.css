@@ -383,15 +383,35 @@ select:focus,.search-input:focus,.modal-input:focus{outline:none;border-color:va
   background:var(--white);font:500 13.5px var(--font);color:var(--ink-900);cursor:pointer}
 .card-more-btn:hover{border-color:var(--ink-300)}
 
-.card-grid{gap:16px}
+/* Every row of the grid is the height of the tallest card, and each card
+   is three fixed zones, so the grid stays even however much a card says. */
+.card-grid{gap:14px;grid-auto-rows:1fr;align-items:stretch}
 .card{
   background:var(--white);border:0;border-radius:var(--r-card);
-  padding:18px;cursor:pointer;
+  padding:14px;cursor:pointer;min-width:0;
+  display:flex;flex-direction:column;gap:12px;
   box-shadow:var(--shadow-rest);
-  transition:box-shadow .15s var(--ease);
+  transition:box-shadow var(--t-fast) var(--ease-out),transform var(--t-fast) var(--ease-out);
 }
-.card:hover{box-shadow:var(--shadow-card)}
-.card.selected{box-shadow:inset 0 0 0 1.5px var(--navy)}
+.card:hover{box-shadow:var(--shadow-card),0 0 0 1px var(--line)}
+.card.selected{box-shadow:0 0 0 1.5px var(--primary)}
+.card-mid{flex:1;min-height:112px;display:flex;flex-direction:column}
+.card-mid>*{flex:1}
+.card-mid-empty{display:grid;place-items:center;font:400 12.5px var(--font);color:var(--ink-400);
+  border-top:1px solid var(--line-soft)}
+.card-ratings{display:grid;grid-template-columns:1fr 1fr;gap:14px;padding-top:12px;border-top:1px solid var(--line-soft)}
+.card-ratings .card-cqr{padding-top:0;border-top:0;gap:6px;min-width:0}
+.card-ratings .card-cqr-main{min-width:0}
+.card-ratings .card-cqr-plat,.card-ratings .card-cqr-state{white-space:nowrap;overflow:hidden;text-overflow:ellipsis;min-width:0}
+.card-ratings .card-cqr-state{font-size:12px}
+.card-type-line{display:flex;align-items:center;gap:6px;min-width:0;white-space:nowrap;overflow:hidden;
+  font:400 12px/18px var(--font);color:var(--ink-500);margin-bottom:2px}
+/* On the card a rating is a dot and the word, not a capsule. */
+.card .cqr-badge{background:none;height:auto;padding:0;gap:6px;color:var(--ink-900);font:500 13px/18px var(--font)}
+.card .cqr-badge::before{content:"";width:8px;height:8px;border-radius:50%;background:var(--ink-300);flex:none}
+.card .cqr-badge.good-bg::before{background:var(--pos)}
+.card .cqr-badge.avg-bg::before{background:#C4891A}
+.card .cqr-badge.poor-bg::before{background:var(--neg)}
 
 .card-top{display:flex;align-items:center;gap:8px;margin-bottom:12px}
 .card-plat{
@@ -415,11 +435,11 @@ select:focus,.search-input:focus,.modal-input:focus{outline:none;border-color:va
    button is always visible rather than revealed on hover: it is the one
    thing on the card you can click through to, and hiding it would make
    it undiscoverable.                                                    */
-.card-head{display:flex;gap:13px;align-items:flex-start;margin-bottom:14px}
+.card-head{display:flex;gap:12px;align-items:flex-start;min-width:0}
 .card-ident{flex:1;min-width:0}
 .card-thumb{
-  position:relative;flex:0 0 96px;width:96px;aspect-ratio:4/5;
-  overflow:hidden;border-radius:10px;background:var(--canvas);
+  position:relative;flex:0 0 80px;width:80px;aspect-ratio:4/5;
+  overflow:hidden;border-radius:8px;background:var(--canvas);
   display:grid;place-items:center;
 }
 /* Sits under the image and shows through when there is none, so every
@@ -472,8 +492,8 @@ select:focus,.search-input:focus,.modal-input:focus{outline:none;border-color:va
    actually use rendered underneath at 9px in grey. Specific labels beat
    generic ones, and 9px is below reading size, so they swapped. */
 .card-name{
-  font:500 16px/21px var(--font);color:var(--ink-900);letter-spacing:-.009em;
-  overflow-wrap:anywhere;margin-bottom:2px;
+  font:600 14.5px/20px var(--font);color:var(--ink-900);letter-spacing:-.005em;
+  white-space:nowrap;overflow:hidden;text-overflow:ellipsis;
 }
 .card-id{
   font:400 12px/15px var(--font);color:var(--ink-400);letter-spacing:.015em;
@@ -484,15 +504,16 @@ select:focus,.search-input:focus,.modal-input:focus{outline:none;border-color:va
   white-space:nowrap;overflow:hidden;text-overflow:ellipsis;
 }
 .card-id:empty{display:none}
-.card-campaign{font:400 12.5px/18px var(--font);color:var(--ink-600);margin-bottom:12px}
+.card-campaign{font:400 12.5px/18px var(--font);color:var(--ink-500);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
 /* Who posted it, on Others Say cards. Sits between the campaign line and
    the tags, and is clipped rather than wrapped: a long handle pushing the
    tags onto a third line changes the height of one card in a grid. */
 .card-creator{
-  font:400 12px/17px var(--font);color:var(--ink-500);
-  margin:-8px 0 10px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;
+  font:500 12.5px/18px var(--font);color:var(--primary);
+  min-height:18px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;
 }
-.card-tags{display:flex;gap:6px;flex-wrap:wrap;margin-bottom:0}
+.card-tags{display:flex;gap:4px;flex-wrap:nowrap;overflow:hidden;margin-top:6px}
+.card-tags>*{flex:none}
 
 .mini-bars{display:flex;flex-direction:column;gap:9px;padding-top:13px;border-top:1px solid var(--line-soft)}
 .mini-bar-row{display:grid;grid-template-columns:44px 1fr 56px;align-items:center;gap:10px}
@@ -505,9 +526,10 @@ select:focus,.search-input:focus,.modal-input:focus{outline:none;border-color:va
 .mini-bar-val{font:400 13px var(--font);color:var(--ink-900);text-align:right}
 
 .card-footer{
-  margin-top:14px;padding-top:12px;border-top:1px solid var(--line-soft);
-  display:flex;align-items:center;gap:10px;
+  margin-top:auto;padding-top:12px;border-top:1px solid var(--line-soft);
+  display:flex;align-items:center;gap:10px;min-height:39px;overflow:hidden;white-space:nowrap;
 }
+.card-footer>:last-child:not(:first-child){margin-left:auto}
 
 /* ---------- Modals ------------------------------------------------- */
 /* The scrim dims to focus and blurs what is behind, so the page reads as
@@ -528,6 +550,10 @@ select:focus,.search-input:focus,.modal-input:focus{outline:none;border-color:va
   background:var(--white);border:0;border-radius:var(--r-card);
   box-shadow:var(--shadow-pop);max-width:900px;width:100%;max-height:88vh;overflow-y:auto;
 }
+/* The creative panel holds three platform columns, two charts and the
+   brief, so it is the one window that gets the room. */
+.creative-modal{max-width:1120px;max-height:92vh;border-radius:14px}
+.creative-modal .cm-body{padding:26px 30px 30px}
 /* Enter and exit on one path: it grows out of the card that opened it and
    shrinks back into it. Blur moves with the scale so the panel reads as a
    surface arriving, not an image cross-fading. */
@@ -554,8 +580,16 @@ select:focus,.search-input:focus,.modal-input:focus{outline:none;border-color:va
 .cm-body{padding:24px}
 
 .detail-header{display:flex;align-items:flex-start;justify-content:space-between;gap:16px;margin-bottom:20px}
+.detail-nav{display:flex;align-items:center;gap:6px;flex-shrink:0}
+.detail-step{width:34px;height:34px;border-radius:var(--r-btn);border:1px solid var(--line);background:var(--white);
+  color:var(--ink-600);cursor:pointer;display:grid;place-items:center}
+.detail-step svg{fill:none;stroke:currentColor;stroke-width:1.7;stroke-linecap:round;stroke-linejoin:round}
+.detail-step:hover:not(:disabled){background:var(--canvas-2);color:var(--ink-900)}
+.detail-step:disabled{opacity:.4;cursor:default}
+.detail-pos{font:400 12.5px var(--font);color:var(--ink-500);margin:0 4px;font-variant-numeric:tabular-nums;white-space:nowrap}
+@media (max-width:640px){ .detail-pos{display:none} .creative-modal .cm-body{padding:20px 16px 24px} }
 .detail-title{
-  font:400 26px/34px var(--font);color:var(--ink-900);letter-spacing:-.021em;
+  font:600 24px/30px var(--font);color:var(--ink-900);letter-spacing:-.02em;
   display:flex;align-items:center;gap:9px;flex-wrap:wrap;
 }
 .detail-meta{font:400 14px/20px var(--font);color:var(--ink-600);margin-top:5px}
@@ -1747,7 +1781,7 @@ select:focus,.search-input:focus,.modal-input:focus{outline:none;border-color:va
    still running and the rating is waiting for it, so this reads as
    in-progress rather than as a problem. */
 .card-validating{
-  margin-top:13px;padding-top:13px;border-top:1px solid var(--line-soft);
+  background:var(--canvas);border-radius:8px;padding:10px 12px;
   display:flex;flex-direction:column;gap:6px;
 }
 .card-validating-l{
@@ -1758,7 +1792,7 @@ select:focus,.search-input:focus,.modal-input:focus{outline:none;border-color:va
 .card-validating-track{
   height:4px;border-radius:var(--r-pill);background:var(--line-soft);overflow:hidden;
 }
-.card-validating-fill{height:4px;border-radius:var(--r-pill);background:#4747AD}
+.card-validating-fill{height:4px;border-radius:var(--r-pill);background:var(--primary)}
 .card-validating-s{font:400 11.5px/16px var(--font);color:var(--ink-400)}
 
 /* Where the panel places a rated post against the brand's own output.
@@ -1799,22 +1833,20 @@ select:focus,.search-input:focus,.modal-input:focus{outline:none;border-color:va
    TikTok" said the right thing and looked like a log line. */
 .card-status{display:flex;align-items:center;gap:7px;flex-wrap:wrap}
 .cstat{
-  display:inline-flex;align-items:center;gap:7px;
-  height:26px;padding:0 11px 0 9px;border-radius:var(--r-pill);
-  font:500 12.5px/1 var(--font);letter-spacing:.002em;
+  display:inline-flex;align-items:center;gap:6px;
+  height:auto;padding:0;border-radius:0;background:none;
+  font:400 12.5px/18px var(--font);letter-spacing:0;color:var(--ink-600);
 }
 .cstat-dot{width:7px;height:7px;border-radius:50%;flex-shrink:0}
-.cstat-plat{
-  font-weight:400;opacity:.78;
-  padding-left:7px;margin-left:1px;border-left:1px solid currentColor;
-}
-.cstat-live{background:var(--pos-bg);color:var(--pos)}
-.cstat-live .cstat-dot{background:var(--pos);box-shadow:0 0 0 3px rgba(4,120,92,.14)}
-.cstat-off{background:var(--canvas);color:var(--ink-600)}
+.cstat-plat{font-weight:500;color:var(--ink-900);margin-left:2px}
+.cstat-live{background:none;color:var(--ink-600)}
+.cstat-live .cstat-dot{background:var(--primary);box-shadow:0 0 0 3px var(--ring)}
+.cstat-off{background:none;color:var(--ink-600)}
 .cstat-off .cstat-dot{background:var(--ink-300)}
 .cstat-none{background:transparent;color:var(--ink-400);padding-left:0}
 .cstat-none .cstat-dot{background:transparent;box-shadow:inset 0 0 0 1.5px var(--ink-300)}
-.cstat-fade{background:var(--warn-bg);color:var(--warn)}
+.cstat-fade{background:none;color:var(--warn)}
+.cstat-fade .cstat-plat{color:var(--warn)}
 
 /* ---------- Organic panel: the rating leads ------------------------
    It used to be a small chip at the end of a row headed "Retention", so

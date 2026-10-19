@@ -1286,8 +1286,8 @@ function cardHTML(d) {
     // used to sit as three separate chips saying one thing between them.
     const isBS = d.type === 'Brand Say';
     const typeText = isBS
-      ? (d.creatorLed ? 'BS · Creator-led' : 'BS')
-      : (d.source === 'community' ? 'OS · Community' : 'OS');
+      ? (d.creatorLed ? 'Brand Say · Creator-led' : 'Brand Say')
+      : (d.source === 'community' ? 'Others Say · Community' : 'Others Say · Creator');
 
     // Per platform: what it did, and how it was rated.
     //
@@ -1370,35 +1370,30 @@ function cardHTML(d) {
     // indistinguishable until you opened them.
     const ci = (d.type === 'Others Say' || d.creatorLed) && typeof extractCreatorInfo === 'function'
       ? extractCreatorInfo(d.creatorProfile, d.ttLink) : null;
-    const creatorTag = ci && ci.username
-      ? `<div class="card-creator" title="${escapeHtml(ci.username)}">${escapeHtml(ci.username)}</div>` : '';
+    // Always drawn, empty when there is no creator, so every card keeps the
+    // same rows and the grid stays even.
+    const creatorTag = `<div class="card-creator"${ci && ci.username ? ` title="${escapeHtml(ci.username)}"` : ''}>${
+      ci && ci.username ? escapeHtml(ci.username) : ''}</div>`;
 
 
+    // Three fixed zones (who and what, the ratings, the state) so every card
+    // in the grid is the same height whatever it carries.
+    const ratings = (orgBlock || paidVals) ? `<div class="card-ratings">
+        <div class="card-cqr"><div class="card-cqr-head">Organic</div>${orgBlock || '<span class="card-cqr-state">No numbers yet</span>'}</div>
+        <div class="card-cqr"><div class="card-cqr-head">Paid</div>${paidVals || '<span class="card-cqr-state">Not on paid</span>'}</div>
+      </div>` : '';
     return `<div class="card ${d.id===selectedId?'selected':''}" data-press onclick="selectCard('${d.id}', this)">
-      <div class="card-top">
-        <div style="display:flex;align-items:center;gap:6px;flex-wrap:wrap">
-          <span class="card-type ${isBS?'bs-tag':'os-tag'}">${typeText}</span>${repTag}
-        </div>
-      </div>
       <div class="card-head">
         ${cardMediaHTML(d)}
         <div class="card-ident">
-          <div class="card-name">${d.short || d.id}</div>
-          <div class="card-id" title="${escapeHtml(d.id)}">${d.short && d.short !== d.id ? d.id : ''}</div>
+          <div class="card-type-line">${typeText}${repTag}</div>
+          <div class="card-name" title="${escapeHtml(d.id)}">${d.short || d.id}</div>
           <div class="card-campaign">${d.campaign} · ${d.month}</div>
           ${creatorTag}
           <div class="card-tags">${durTag}${ctTag}${valTag}</div>
         </div>
       </div>
-      ${validating}
-      ${orgBlock ? `<div class="card-cqr">
-        <div class="card-cqr-head">Organic</div>
-        ${orgBlock}
-      </div>` : ''}
-      ${paidVals ? `<div class="card-cqr">
-        <div class="card-cqr-head">Paid</div>
-        ${paidVals}
-      </div>` : ''}
+      <div class="card-mid">${validating || ratings || '<div class="card-mid-empty">No numbers yet</div>'}</div>
     <div class="card-footer">
       ${statusPill(d)}
       ${typeof PreTest !== 'undefined' ? PreTest.cardBadge(d) : ''}
@@ -1537,18 +1532,45 @@ function panelSkeleton() {
   </div>`;
 }
 
+// Previous and next step through the grid as it is filtered and sorted
+// now, without closing the panel.
+function panelNavHTML(id) {
+  const i = CARD_DATA.findIndex(x => x.id === id);
+  if (i < 0 || CARD_DATA.length < 2) return '';
+  const btn = (dir, label, on, path) => `<button class="detail-step" data-press aria-label="${label}" ${on ? '' : 'disabled'}
+      onclick="panelStep(${dir})"><svg viewBox="0 0 12 12" width="14" height="14"><path d="${path}"/></svg></button>`;
+  return btn(-1, 'Previous creative', i > 0, 'M7.5 2.5 4 6l3.5 3.5') +
+    `<span class="detail-pos">${(i + 1).toLocaleString()} of ${CARD_DATA.length.toLocaleString()}</span>` +
+    btn(1, 'Next creative', i < CARD_DATA.length - 1, 'M4.5 2.5 8 6 4.5 9.5');
+}
+
+function panelStep(dir) {
+  const i = CARD_DATA.findIndex(x => x.id === panelFor);
+  const next = CARD_DATA[i + dir];
+  if (i < 0 || !next) return;
+  // Keep the grid behind the panel in step, so closing lands on it.
+  while (CARD_SHOWN <= i + dir && CARD_SHOWN < CARD_DATA.length) appendCards();
+  selectedId = next.id;
+  document.querySelectorAll('#card-grid .card.selected').forEach(c => c.classList.remove('selected'));
+  const card = document.querySelector(`#card-grid .card[onclick*="selectCard('${next.id}'"]`);
+  if (card) card.classList.add('selected');
+  openPanelFor(next);
+  const panel = document.getElementById('creativeModalContent');
+  if (panel) panel.scrollTop = 0;
+}
+
+document.addEventListener('keydown', (e) => {
+  const overlay = document.getElementById('creativeModalOverlay');
+  if (!overlay || overlay.style.display !== 'flex' || !panelFor) return;
+  if (e.target.closest && e.target.closest('input,textarea,select,[contenteditable]')) return;
+  if (e.key === 'ArrowRight') { e.preventDefault(); panelStep(1); }
+  if (e.key === 'ArrowLeft') { e.preventDefault(); panelStep(-1); }
+});
+
 let panelFor = null;
-function selectCard(id, trigger) {
-  const item = ALL.find(d => d.id === id);
-  if (!item) return;
+function openPanelFor(item) {
+  const id = item.id;
   panelFor = id;
-  const { overlay } = modalEls();
-  overlay.style.display = 'flex';
-  // The panel opens whatever happens while filling it. renderDetail
-  // reaches for a chart library and several optional endpoints, and a
-  // throw in there used to abort this function before the animation
-  // started, leaving a panel on screen at scale 0.94 with a transparent
-  // scrim: invisible, but covering the page and swallowing clicks.
   const fill = () => {
     if (panelFor !== id) return;   // another creative was opened meanwhile
     try {
@@ -1562,6 +1584,19 @@ function selectCard(id, trigger) {
     document.getElementById('creativeModalContent').innerHTML = panelSkeleton();
     ensureDetails([id]).catch(err => console.error('[hub] details failed, showing what the list has', err)).then(fill);
   }
+}
+
+function selectCard(id, trigger) {
+  const item = ALL.find(d => d.id === id);
+  if (!item) return;
+  const { overlay } = modalEls();
+  overlay.style.display = 'flex';
+  // The panel opens whatever happens while filling it. renderDetail
+  // reaches for a chart library and several optional endpoints, and a
+  // throw in there used to abort this function before the animation
+  // started, leaving a panel on screen at scale 0.94 with a transparent
+  // scrim: invisible, but covering the page and swallowing clicks.
+  openPanelFor(item);
   showCreativePanel(trigger);
 }
 
@@ -2341,7 +2376,9 @@ function renderDetail(d) {
           ${creatorHTML}${repText}${linkBtns}
         </div>
         ${previewHTML}
-        <button class="close-btn" data-press onclick="closeCreativeModal({target:{id:'creativeModalOverlay'}})">×</button>
+        <div class="detail-nav">${panelNavHTML(d.id)}
+          <button class="close-btn" data-press aria-label="Close" onclick="closeCreativeModal({target:{id:'creativeModalOverlay'}})">×</button>
+        </div>
       </div>
 
       ${detailSummaryHTML(d)}
