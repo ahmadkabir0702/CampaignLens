@@ -698,7 +698,9 @@ async function buildValidation(brandId, creativeId) {
 
     // Others Say is rated against its own table, not cqr_thresholds.
     // A missing table is survivable: the panel then says no benchmark.
-    query(`select platform, poor_below, good_from from cqr_os_benchmarks`)
+    // select * so this reads brand_id after migration 028 and still works
+    // before it.
+    query(`select * from cqr_os_benchmarks`)
       .catch(() => ({ rows: [] })),
 
     // The brand's own organic, same window, for the standing. Like for
@@ -768,7 +770,14 @@ async function buildValidation(brandId, creativeId) {
   // row came back. A link with no row is the honest "no data" case.
   const expected = Object.keys(PLATFORM).filter((p) => c[PLATFORM[p].linkField] || orgBy[p]);
 
-  const osBench = Object.fromEntries((osBenchR.rows || []).map((r) => [r.platform, r]));
+  // The brand's own creator bar where it has one (migration 028), else the
+  // bar shared by all brands. Mirrors cqr_organic_label.
+  const osBench = {};
+  for (const r of osBenchR.rows || []) {
+    if (r.brand_id && r.brand_id !== brandId) continue;
+    const cur = osBench[r.platform];
+    if (!cur || (r.brand_id && !cur.brand_id)) osBench[r.platform] = r;
+  }
 
   const platforms = expected.map((plat) => {
     const meta = PLATFORM[plat];
@@ -792,7 +801,8 @@ async function buildValidation(brandId, creativeId) {
     const band = st ? (st.band ? { poor_lt: num(st.band.poor_lt), good_gte: num(st.band.good_gte), source: 'static' } : null)
       : isOthersSay(c.type)
       ? (osBench[plat]
-          ? { poor_lt: num(osBench[plat].poor_below), good_gte: num(osBench[plat].good_from), source: 'os' }
+          ? { poor_lt: num(osBench[plat].poor_below), good_gte: num(osBench[plat].good_from),
+              source: osBench[plat].brand_id ? 'os-brand' : 'os' }
           : null)
       : (() => {
           const th = pickThreshold(thresholdR.rows, platformKey(plat, c.type), 'retention', c.duration_s);
@@ -834,6 +844,13 @@ async function buildValidation(brandId, creativeId) {
       // And the state alongside it, never instead of it.
       state,
       state_note: state ? CQR_STATES[state.toLowerCase()] : null,
+      // Who a creator post was compared with. Says which group, never the
+      // numbers, which stay off the page.
+      rated_against: band && band.source === 'os-brand'
+        ? `Compared with this brand's other creator posts on ${meta.label}.`
+        : band && band.source === 'os'
+          ? `Compared with creator posts across all brands on ${meta.label}, until this brand has five of its own there.`
+          : null,
       boosted: isBoostedState(o.cqr),
       views: num(o.views),
       reach: num(o.reach),

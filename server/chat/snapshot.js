@@ -26,7 +26,9 @@ const { getPool } = require('./db');
 // Bumped to 9: paid CQR is the overall impression-weighted result, not the
 // best day, and the benchmark list includes the global rows a brand is
 // rated on (migration 023).
-const SNAPSHOT_SCHEMA_VERSION = 9;
+// Bumped to 10: creator posts are rated against the brand's own creators
+// (migration 028), and the rulebook says so.
+const SNAPSHOT_SCHEMA_VERSION = 10;
 
 const T = S.tables, C = S.creative, P = S.paidView, O = S.organicView, OR = S.organicRawCols;
 const OB = S.organicBest, B = S.boost, TH = S.thresholds, CR = S.creator;

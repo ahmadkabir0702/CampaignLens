@@ -8,7 +8,7 @@ Every rating rule in Campaign Lens and the benchmark it is graded against, as se
 |---|---|---|
 | Paid video, Brand Say and Others Say | Hook rate and hold rate over the whole paid run, each day weighted by its impressions | `cqr_thresholds` (`meta_paid_bs`, `meta_paid_os`, `tt_paid_bs`, `tt_paid_os`) |
 | Organic Brand Say video | Average watch time ÷ video length | `cqr_thresholds` (`ig_organic`, `fb_organic`, `tt_organic`) |
-| Organic Others Say video | (likes + 2 × comments) ÷ views | `cqr_os_benchmarks`, rebuilt from recent creator posts with no spend behind them. Each brand with at least 3 posts counts equally (migration 027), so one brand with many posts does not set the bar for everyone |
+| Organic Others Say video | (likes + 2 × comments) ÷ views | `cqr_os_benchmarks`, rebuilt from creator posts with no spend behind them. A brand with 5 or more on a platform is rated against its own creators there (migration 028); otherwise against all brands, each brand with 3 or more posts counting equally (027) |
 | Photo and carousel, Brand Say | (likes + comments + shares + saves) ÷ reach, or ÷ views where there is no reach | `static_thresholds` |
 | Photo and carousel, Others Say | (likes + 2 × comments) ÷ views, or ÷ followers where there are no public views | `static_thresholds` |
 | Paid photo and carousel | Not rated, because the paid rating is built on video watch rates | none |
