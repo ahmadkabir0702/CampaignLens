@@ -32,20 +32,19 @@
 //  Two slots for a two-way split and three for a rating. Both sets were
 //  run through the palette validator rather than picked by eye:
 //
-//    #4747AD / #A8541F   worst adjacent pair ΔE 24.4 under protanopia
-//    #04785C / #C07A12 / #A32040   worst adjacent ΔE 10.8 under protanopia
+//    #0B78A0 / #A8541F   worst adjacent pair ΔE 18.1 under protanopia
+//    #1F8A5B / #C4891A / #C2414B   worst adjacent ΔE 8.7 under protanopia,
+//                                  18.3 in normal vision
 //
-//  The Average step is lighter and more orange than the --warn token the
-//  pills use. The token pair --warn and --neg are only ΔE 5.8 apart under
-//  deuteranopia and 14.5 in normal vision, which is below the floor: side
-//  by side in one bar, Average and Poor are genuinely hard to tell apart.
-//  The tokens are left alone because they carry text elsewhere, where they
-//  sit against white and never touch each other; these are for fills.
+//  #0B78A0 is the primary pushed a step more saturated, because the
+//  primary itself sits just under the chroma floor and reads grey as a
+//  fill. The Average fill is under 3:1 against white, so every rating bar
+//  carries its counts as text beside it.
 // ---------------------------------------------------------------------
 const MS_C = {
-  a: '#4747AD', b: '#A8541F',
-  Good: '#04785C', Average: '#C07A12', Poor: '#A32040',
-  none: '#C3C3D6',
+  a: '#0B78A0', b: '#A8541F',
+  Good: '#1F8A5B', Average: '#C4891A', Poor: '#C2414B',
+  none: '#CDD1D7',
 };
 const MS_GRADES = ['Good', 'Average', 'Poor'];
 

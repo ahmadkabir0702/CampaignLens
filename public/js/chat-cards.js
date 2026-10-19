@@ -78,7 +78,7 @@
     list.forEach(function (name) {
       var p = PLATFORMS[name];
       var dot = el('span', 'al-dot');
-      dot.style.background = p ? p.color : '#A0A0BB';
+      dot.style.background = p ? p.color : '#B4B9C2';
       dot.title = p ? p.label : name;
       wrap.appendChild(dot);
     });
@@ -313,7 +313,7 @@
           var rec = store.get(id); if (!rec) return;
           labels.push(rec.name || id); values.push(Number(rec[marker.metric]));
           var cq = rec.cqr;
-          colors.push(cq === 'Good' ? '#04785C' : cq === 'Average' ? '#8A5A12' : cq === 'Poor' ? '#A32040' : '#6B6B90');
+          colors.push(cq === 'Good' ? '#1F8A5B' : cq === 'Average' ? '#8A5E0F' : cq === 'Poor' ? '#C2414B' : '#8A909B');
         });
         if (!values.length) { card.appendChild(el('div', 'al-expand-empty', 'No data for those creatives.')); return; }
       }
@@ -321,12 +321,12 @@
       new Chart(canvas.getContext('2d'), {
         type: marker.type,
         data: { labels: labels, datasets: [{ label: metricLabel(marker.metric), data: values,
-          backgroundColor: marker.series ? 'rgba(0,0,80,0.08)' : colors, borderColor: marker.series ? '#000050' : colors,
+          backgroundColor: marker.series ? 'rgba(17,19,24,0.08)' : colors, borderColor: marker.series ? '#0F6E8C' : colors,
           borderWidth: marker.series ? 2 : 0, pointRadius: marker.series ? 0 : undefined, tension: 0.25, fill: !!marker.series, borderRadius: 4 }] },
         options: { responsive: true, maintainAspectRatio: false,
           plugins: { legend: { display: false }, tooltip: { callbacks: { label: function (c) { return formatMetric(marker.metric, c.parsed.y); } } } },
-          scales: { x: { grid: { display: false }, ticks: { font: { family: 'Rubik', size: 11 }, maxRotation: 0, autoSkip: true } },
-                    y: { grid: { color: 'rgba(0,0,80,0.06)' }, ticks: { font: { family: 'Rubik', size: 11 },
+          scales: { x: { grid: { display: false }, ticks: { font: { family: 'Onest', size: 11 }, maxRotation: 0, autoSkip: true } },
+                    y: { grid: { color: 'rgba(17,19,24,0.06)' }, ticks: { font: { family: 'Onest', size: 11 },
                       callback: function (v) { return def.type === 'pct' ? v.toFixed(0) + '%' : formatCount(v); } } } } },
       });
     }
