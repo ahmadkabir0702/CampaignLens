@@ -469,6 +469,24 @@ function findCreative(id) {
   return LOADED.get(id) || (ALL || []).find(x => x.id === id) || null;
 }
 
+/**
+ * Who posted a creative: its own handle, with a link to that profile on
+ * the platform it was posted from. Falls back to the profile it is filed
+ * under for creatives synced before handles were recorded.
+ */
+const CREATOR_PROFILE_URL = {
+  ig: h => `https://www.instagram.com/${h}`,
+  tt: h => `https://www.tiktok.com/@${h}`,
+  fb: h => `https://www.facebook.com/${h}`,
+};
+function creatorInfo(d) {
+  const h = d && d.creatorHandle ? String(d.creatorHandle).replace(/^@/, '') : '';
+  if (!h) return extractCreatorInfo(d && d.creatorProfile, d && d.ttLink);
+  const hs = d.handles || {};
+  const plat = ['ig', 'tt', 'fb'].find(p => hs[p] && String(hs[p]).toLowerCase() === h.toLowerCase());
+  return { username: '@' + h, profileUrl: plat ? CREATOR_PROFILE_URL[plat](hs[plat]) : null };
+}
+
 function extractCreatorInfo(creatorProfile, ttLink) {
   if (creatorProfile) {
     const ttM = creatorProfile.match(/tiktok\.com\/(@[^/?&#\s]+)/i);
@@ -1499,8 +1517,7 @@ function cardHTML(d) {
     // creator-led Brand Say is fronted by one, so both carry a handle the
     // card never showed: two posts from very different accounts were
     // indistinguishable until you opened them.
-    const ci = (d.type === 'Others Say' || d.creatorLed) && typeof extractCreatorInfo === 'function'
-      ? extractCreatorInfo(d.creatorProfile, d.ttLink) : null;
+    const ci = (d.type === 'Others Say' || d.creatorLed) ? creatorInfo(d) : null;
     // Always drawn, empty when there is no creator, so every card keeps the
     // same rows and the grid stays even.
     const creatorTag = `<div class="card-creator"${ci && ci.username ? ` title="${escapeHtml(ci.username)}"` : ''}>${
@@ -2588,7 +2605,7 @@ function renderDetail(d) {
 
   let creatorHTML = '';
   if (d.type === 'Others Say') {
-    const creator = extractCreatorInfo(d.creatorProfile, d.ttLink);
+    const creator = creatorInfo(d);
     if (creator) {
       const linkEl = creator.profileUrl
         ? `<a href="${creator.profileUrl}" target="_blank" class="creator-link">${creator.username} ↗</a>`

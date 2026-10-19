@@ -191,7 +191,8 @@ async function buildPayload(brandId) {
       query(`select creative_id, date, campaign, type, source, creator_led, is_repurposed,
                     original_creative_id, content_hook, seg1, seg2, seg3, seg4, segments,
                     format, product_role, format_note,
-                    content_type, duration_s, creator_profile, created_at,
+                    content_type, duration_s, creator_profile, creator_handle,
+                    ig_handle, tt_handle, fb_handle, created_at,
                     ig_link, fb_link, tt_link, thumbnail_url
                from creatives where brand_id = $1
               order by date desc nulls last, created_at desc`, [brandId]),
@@ -395,6 +396,13 @@ async function buildPayload(brandId) {
       creativeLink: c.ig_link || c.tt_link || c.fb_link || '',
       igLink: c.ig_link || '', fbLink: c.fb_link || '', ttLink: c.tt_link || '',
       creatorProfile: c.creator_profile || null,
+      // The account that actually posted it, and its handle per platform.
+      // creatorProfile is who the post is filed under, which a handle-
+      // matching job outside the app sets and can get wrong: a creator's
+      // TikTok posted from the brand's own account chained every such
+      // creator into one. Grouping goes by these instead.
+      creatorHandle: c.creator_handle || null,
+      handles: { ig: c.ig_handle || null, tt: c.tt_handle || null, fb: c.fb_handle || null },
       thumbnail: c.thumbnail_url || null,
       isRepurposed: !!c.is_repurposed,
       ...parseOriginal(c.original_creative_id),
