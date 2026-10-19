@@ -467,10 +467,47 @@ async function buildPayload(brandId) {
 const CACHE_MS = 30 * 1000;
 const cache = new Map();   // brandId -> { at, promise }
 
+// ---------------------------------------------------------------------
+//  How big the payload is getting
+//
+//  The browser holds a brand's whole creative list, which is the fastest
+//  experience up to a few thousand creatives and the wrong design past
+//  that (docs/scaling.md). Each build records its size and time per
+//  brand, so the logs show the trend well before anyone feels it. A
+//  build past either threshold logs a warning.
+// ---------------------------------------------------------------------
+const WARN_CREATIVES = Number(process.env.PAYLOAD_WARN_CREATIVES || 3000);
+const WARN_BUILD_MS = Number(process.env.PAYLOAD_WARN_BUILD_MS || 1000);
+const stats = new Map();   // brandId -> { creatives, buildMs, bytes, at }
+
+/** Record the size of the list as sent, once per build, and log the build. */
+function notePayloadSent(brandId, bytes) {
+  const st = stats.get(brandId);
+  if (!st || st.bytes != null) return;
+  st.bytes = bytes;
+  const line = `[payload] brand=${brandId} creatives=${st.creatives} build=${st.buildMs}ms list=${Math.round(bytes / 1024)}KB`;
+  if (st.creatives >= WARN_CREATIVES || st.buildMs >= WARN_BUILD_MS) {
+    console.warn(`${line} WARN past the threshold (${WARN_CREATIVES} creatives or ${WARN_BUILD_MS}ms); time to move the Creative Hub to server-side paging, see docs/scaling.md`);
+  } else {
+    console.log(line);
+  }
+}
+
+/** The latest build's figures for every brand built since the server started. */
+function payloadStats() {
+  return [...stats.entries()].map(([brand, s]) => ({ brand, ...s,
+    warn: s.creatives >= WARN_CREATIVES || s.buildMs >= WARN_BUILD_MS }))
+    .sort((a, b) => b.creatives - a.creatives);
+}
+
 function getPayload(brandId) {
   const hit = cache.get(brandId);
   if (hit && Date.now() - hit.at < CACHE_MS) return hit.promise;
+  const started = Date.now();
   const promise = buildPayload(brandId);
+  promise.then(p => stats.set(brandId, {
+    creatives: p.creatives.length, buildMs: Date.now() - started, bytes: null, at: new Date().toISOString(),
+  })).catch(() => {});
   cache.set(brandId, { at: Date.now(), promise });
   // A failed build is not kept, so the next request tries again.
   promise.catch(() => { if (cache.get(brandId)?.promise === promise) cache.delete(brandId); });
@@ -523,4 +560,5 @@ async function creativeDetails(brandId, ids) {
   return out;
 }
 
-module.exports = { buildPayload, listPayload, creativeDetails, invalidatePayload, slimCreative, detailOf };
+module.exports = { buildPayload, listPayload, creativeDetails, invalidatePayload, slimCreative, detailOf,
+                   notePayloadSent, payloadStats };

@@ -408,7 +408,7 @@ app.get('/api/brands', async (req, res) => {
   // -------------------------------------------------------------------
   //  DASHBOARD DATA — same 11-array shape the frontend already parses
   // -------------------------------------------------------------------
-  const { listPayload, creativeDetails, invalidatePayload } = require('./creatives');
+  const { listPayload, creativeDetails, invalidatePayload, notePayloadSent, payloadStats } = require('./creatives');
 
   app.get('/api/dashboard-data', async (req, res) => {
     try {
@@ -418,12 +418,23 @@ app.get('/api/brands', async (req, res) => {
       // Media Summary. An account without it does not receive them.
       const f = req.session.features;
       if (f && f.media === false) payload.account = [];
-      res.json(payload);
+      // Serialised once here rather than by res.json, so the size can be
+      // recorded without doing the work twice.
+      const body = JSON.stringify(payload);
+      notePayloadSent(brand, Buffer.byteLength(body));
+      res.type('json').send(body);
     } catch (err) {
       console.error('[dashboard-data]', err.message);
       res.status(err.message.startsWith('Access denied') ? 403 : 500)
          .json({ error: err.message });
     }
+  });
+
+  // How big each brand's dashboard payload is getting. Admin only; the
+  // same figures go to the server log on every build.
+  app.get('/api/payload-stats', (req, res) => {
+    if (req.session.role !== 'admin') return res.status(403).json({ error: 'Not permitted for this role' });
+    res.json({ brands: payloadStats() });
   });
 
   // The fields only the creative panel reads, for one or more creatives:
