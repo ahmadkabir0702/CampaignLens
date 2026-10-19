@@ -1,44 +1,62 @@
 # Scaling the Creative Hub
 
-How the dashboard loads its data today, how to tell when that stops being the right design, and what to build then.
+How the dashboard loads its data, what it costs, and what to build if a brand outgrows it.
 
-## How it works today
+## How it works
 
-- `/api/dashboard-data` sends the browser a slim record of every creative for the active brand. The fields only the creative panel reads (scene timeline, brief, recommendation text) are left out and fetched from `/api/creative-details` when a creative is opened.
-- Responses are gzipped, and a built payload is cached per brand for 30 seconds. Any successful write through the API, or a finished analysis job, clears it.
-- The Creative Hub draws 48 cards at a time and draws more as the end of the grid comes into view.
-- Filters, search, sorting and every total (Creative Hub tiles, Media Summary, Creators) are worked out in the browser from that list.
+The browser does not hold a brand's creative list any more. The Creative Hub asks the server for one page at a time.
 
-This is the fastest experience while a brand has up to a few thousand creatives: every filter change is instant, with no round trip to the server.
+- `/api/dashboard-data?lite=1` sends the brand, campaigns, the Media Summary's account numbers, the hub's dropdown options and the brand's creative count. No creatives.
+- `/api/creatives` returns one page of the hub: `?platform&q&month&campaign&contentType&status&source&origin&validation&action&sort&dir&offset&limit`. The first request for a filter also asks for `summary=1`, which adds the tiles for that filter and the creatives the named tiles point at. Filters, search, sort and tiles run in `server/hub.js` with the same rules the browser used to apply.
+- `/api/creative-details?ids=` sends the panel-only fields (scene timeline, brief, recommendation text) and the creative's lineage when it is opened.
+- `/api/creatives/library` sends every creative, slim, for Media Summary and Creators, which still work their figures out in the browser. It is fetched only when one of those pages is opened.
+- `/api/creatives/ids` lists every id for the add form's "repurposed from" picker.
 
-## How to tell when it needs to change
+On the page:
 
-Every payload build writes one line to the server log:
+- Cards on screen stay there while a new filter loads, and only dim if the answer takes more than 300ms.
+- Search waits for typing to pause (250ms), or runs at once on Enter.
+- The next page is fetched as soon as one is drawn, so it is usually there before the end of the grid comes into view.
+- Answers are kept for 30 seconds, so going back to a filter you just had is instant. A write you make clears them.
+
+On the server:
+
+- A brand's payload is built once from Postgres and reused. It is fresh for 30 seconds. Between 30 seconds and 5 minutes, a request gets the last build at once and a new one is built behind it, so data that only n8n has touched never makes anyone wait. Past 5 minutes the request waits for the new build.
+- A write through the API (adding a creative, marking an action) clears the cache, so the next request waits for a fresh build and shows the change. Switching brand, checking links and Ask Lens no longer count as writes.
+- Each build keeps an index: the slim list, lookups by id, lineage, dropdown options and the last 64 filtered and sorted lists. Scrolling through one filter's pages filters and sorts once.
+
+## Measured on a synthetic brand
+
+Same machine, warm server cache, `/api` bytes before gzip.
+
+| | Before (whole list) | After (paged) |
+|---|---|---|
+| 5,000 creatives: data sent to the browser | 8.4 MB | 180 KB (first page, tiles, prefetched second page) |
+| 5,000 creatives: browser memory | 26 MB | 10 MB |
+| 20,000 creatives: cards on screen | 2.0 s | 0.7 s |
+| 20,000 creatives: browser memory | 86 MB | 10 MB |
+| 20,000 creatives: build on the server | 2.1 s | 2.1 s, hidden by the cache except after a write |
+
+The page's size in the browser no longer grows with the brand. The server build still does.
+
+## How to tell when the build needs to change
+
+Every build writes one line to the server log:
 
 ```
-[payload] brand=sunsilk creatives=1200 build=640ms list=1950KB
+[payload] brand=sunsilk creatives=1200 build=640ms
 ```
 
-- `creatives`: how many creatives the brand has.
-- `build`: how long the server took to assemble them.
-- `list`: the size of the list sent to the browser, before gzip.
-
-When a build passes either threshold, the line is logged as a warning that names this file. The thresholds are set with environment variables on Render, with no deploy needed:
+When a build passes either threshold the line is a warning that names this file. The thresholds are environment variables on Render, with no deploy needed:
 
 | Variable | Default | Meaning |
 |---|---|---|
 | `PAYLOAD_WARN_CREATIVES` | 3000 | Creatives for one brand |
 | `PAYLOAD_WARN_BUILD_MS` | 1000 | Milliseconds to build one brand's payload |
 
-An admin can see the latest figures for every brand at `/api/payload-stats`. They cover brands built since the server last started.
+An admin can see the latest figures for every brand at `/api/payload-stats`.
 
-## What to build when a brand crosses the line
+## What to build if a brand crosses the line
 
-Do them in this order. Each step is useful without the next.
-
-1. **A ready-made cards table.** Each card is assembled today from several views that work out ratings, boost state, validation and fatigue on the fly, and filtering across those views on every request would be slow. Keep a `creative_cards` table, one row per creative with exactly what a card shows, refreshed when data changes: after an n8n pull, a new creative, a finished analysis or a marked action. Index it on brand, date, campaign and rating.
-2. **The Creative Hub on the server.** `GET /api/creatives?brand&filters&q&sort&cursor&limit=48` returns one page and a total. The grid keeps its current cards on screen while the next page loads, shows a placeholder only past about 300ms, waits for typing to pause before searching, and fetches the next page before it is needed.
-3. **Totals on the server.** The Creative Hub tiles, Media Summary and Creators get their figures for the current filters from the server, cached per brand and filter.
-4. **Lookups on demand.** Repurposed lineage and pre-test names fetch what they need instead of searching the full list in the browser.
-
-Expect each filter change to take one round trip (typically 150–400ms) instead of being instant. That is the cost of not holding the library in the browser, and the reason not to make this move before it is needed.
+1. **A ready-made cards table.** Each card is assembled from several views that work out ratings, boost state, validation and fatigue on the fly, which is what makes the build slow. A `creative_cards` table, one row per creative with what a card shows, refreshed after an n8n pull, a new creative, a finished analysis or a marked action, and indexed on brand, date, campaign and rating, would let `/api/creatives` query a page straight from Postgres instead of building the whole brand first.
+2. **Media Summary and Creators on the server.** Both still load the slim list when opened. Their figures can move to endpoints that return totals for the current filters, the way the hub's tiles already do.

@@ -352,7 +352,7 @@
 
           <div class="cf-group" id="creative-filters">
           <input type="text" id="search-filter" class="search-input"
-                 placeholder="Search ID, name, creator, campaign or paste a post link" onkeyup="render()">
+                 placeholder="Search ID, name, creator, campaign or paste a post link" oninput="onSearchInput()" onkeydown="if (event.key === 'Enter') onSearchInput(event)">
 
           <div class="platform-toggle">
             <div class="pt active" id="pt-both" data-press onclick="setPlatform('both',this)">All</div>
@@ -558,14 +558,17 @@ function activeFilters(){
 }
 
 // Draft count on the Apply button — the panel covers the grid, so this is
-// the only preview of what applying would give you.
+// the only preview of what applying would give you. The server counts, so
+// only the answer to the latest change is shown.
+let draftSeq = 0;
 function updateFiltersDone(){
   const btn = document.getElementById('filters-done');
-  if (!btn || typeof getData !== 'function') return;
-  try {
-    const n = getData().length;
-    btn.textContent = n === 1 ? 'Apply · 1 creative' : `Apply · ${n} creatives`;
-  } catch (e) { btn.textContent = 'Apply'; }
+  if (!btn || typeof hubCount !== 'function') return;
+  const seq = ++draftSeq;
+  hubCount().then(n => {
+    if (seq !== draftSeq) return;
+    btn.textContent = n === 1 ? 'Apply · 1 creative' : `Apply · ${n.toLocaleString()} creatives`;
+  }).catch(() => { if (seq === draftSeq) btn.textContent = 'Apply'; });
 }
 
 function syncFilterPills(){

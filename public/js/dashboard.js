@@ -101,7 +101,18 @@ const parseNum = (val) => {
     return parseFloat(String(val).replace(/[^0-9.-]+/g, "")) || 0;
 };
 
+// The browser no longer holds the brand's whole creative list. The
+// Creative Hub asks the server for one filtered, sorted page at a time
+// (docs/scaling.md). ALL is filled only when Media Summary or Creators is
+// opened, since both still work out their figures from every creative.
 let ALL = [];
+let LIBRARY_FOR = null, LIBRARY_LOADING = null;
+// Every creative seen in a page, a tile or a lineage list, by id, so the
+// panel can open it without another round trip.
+const LOADED = new Map();
+// Panel-only fields already fetched, by id. Kept apart from LOADED so a
+// creative that comes back in a later page keeps them.
+const DETAILS = new Map();
 
 // ---------------------------------------------------------------------
 //  Sliding highlights
@@ -185,7 +196,9 @@ let CAMPAIGNS = [];
 // by the API so the card and the rating cannot disagree about it; the
 // fallback only applies if an older server is still answering.
 let VALIDATION_HOURS = 24;
-let BRAND_NAME = '';
+let BRAND_NAME = '', BRAND_ID = '';
+// The Creative Hub's dropdown options and how many creatives the brand has.
+let HUB_OPTIONS = { months: [], campaigns: [], contentTypes: [] };
 let currentPlatform = 'both', currentSort = 'date', sortAscending = false, selectedId = null;
 let currentPage = 'creatives';
 let chartsInit = {};
@@ -277,11 +290,8 @@ async function switchBrand(brandId) {
       throw new Error(e.error || `${res.status} ${res.statusText}`);
     }
     selectedId = null;
+    // Redraws whichever tab is open, Media Summary and Creators included.
     await loadData();
-    // Re-render whichever tab is open, so the switch is not lost on tab change
-    if (currentPage === 'kpi' && typeof renderKPIDashboard === 'function') {
-      renderKPIDashboard();
-    }
     if (typeof PreTest !== 'undefined') PreTest.onBrandChange(currentPage);
   } catch (e) {
     toast('Could not switch brand: ' + e.message, 'error');
@@ -353,26 +363,35 @@ function showSkeleton() {
 async function loadData() {
   isLoading = true;
   showSkeleton();
+  // A new brand, or the same one after a write: nothing kept from before
+  // can be trusted.
+  LOADED.clear(); DETAILS.clear(); HUB_CACHE.clear();
+  ALL = []; LIBRARY_FOR = null; LIBRARY_LOADING = null;
+  HUB.seq++;
+  HUB.shownFor = null;
   try {
-    const response = await fetch('/api/dashboard-data');
+    const response = await fetch('/api/dashboard-data?lite=1');
     if (!response.ok) throw new Error("Backend connection failed.");
     const data = await response.json();
-    ALL              = data.creatives;
     ACCOUNT_OVERVIEW = data.account;
     CAMPAIGNS        = data.campaigns;
     BRAND_NAME       = data.brand.name;
+    BRAND_ID         = data.brand.id;
+    HUB_OPTIONS      = data.options || HUB_OPTIONS;
     if (data.validationHours) VALIDATION_HOURS = Number(data.validationHours);
 
     const bn = document.getElementById('brand-name');
     if (bn) bn.textContent = BRAND_NAME;
 
-    if (ALL.length === 0) {
+    if (!data.total) {
       document.getElementById('kpi-row').innerHTML =
         `<div class="load-msg">No creatives added for ${BRAND_NAME} yet. Use Add creative to enter one.</div>`;
       // Clear the previous brand's cards — returning early used to leave
       // them on screen next to a message saying there were none.
       document.getElementById('card-grid').innerHTML = '';
       document.getElementById('grid-count').textContent = '0 creatives';
+      const more = document.getElementById('card-more');
+      if (more) more.remove();
       populateFilters();
       if (typeof enhanceFilterDropdowns === 'function') enhanceFilterDropdowns();
       if (typeof repaintFilterDropdowns === 'function') repaintFilterDropdowns();
@@ -382,12 +401,14 @@ async function loadData() {
       const kpEmpty = document.getElementById('page-kpi');
       if (currentPage === 'kpi' && kpEmpty) kpEmpty.innerHTML =
         `<div class="load-msg">No creatives added for ${BRAND_NAME} yet. Use Add creative to enter one.</div>`;
+      if (currentPage === 'creators' && typeof renderCreatorTab === 'function') renderCreatorTab();
       return;
     }
     populateFilters();
     if (typeof enhanceFilterDropdowns === 'function') enhanceFilterDropdowns();
     if (typeof repaintFilterDropdowns === 'function') repaintFilterDropdowns();
     if (typeof syncFilterPills === 'function') syncFilterPills();
+    isLoading = false;
     render();
   } catch(err) {
     document.getElementById('kpi-row').innerHTML =
@@ -403,6 +424,49 @@ async function loadData() {
   } finally {
     isLoading = false;
   }
+}
+
+// ---------------------------------------------------------------------
+//  The whole library, for Media Summary and Creators
+//
+//  Both pages still work their figures out from every creative, so they
+//  load the slim list the first time either is opened for a brand, and
+//  draw once it is here. The Creative Hub never waits on it.
+// ---------------------------------------------------------------------
+function ensureLibrary() {
+  if (LIBRARY_FOR === BRAND_ID) return Promise.resolve(ALL);
+  if (LIBRARY_LOADING) return LIBRARY_LOADING;
+  const brand = BRAND_ID;
+  const p = fetch('/api/creatives/library')
+    .then(r => { if (!r.ok) throw new Error(`Couldn't load the creatives (${r.status}).`); return r.json(); })
+    .then(({ creatives }) => {
+      if (LIBRARY_LOADING !== p) return ALL;   // the brand changed meanwhile
+      ALL = creatives || [];
+      LIBRARY_FOR = brand;
+      return ALL;
+    })
+    .finally(() => { if (LIBRARY_LOADING === p) LIBRARY_LOADING = null; });
+  LIBRARY_LOADING = p;
+  return p;
+}
+
+/** Draw a page that needs the library, with its skeleton until the library is here. */
+function withLibrary(page, draw) {
+  const el = document.getElementById(`page-${page}`);
+  if (LIBRARY_FOR !== BRAND_ID && el && page === 'kpi') el.innerHTML = skeletonKpiPage();
+  if (LIBRARY_FOR !== BRAND_ID && el && page === 'creators') el.innerHTML = `<div class="content">${skeletonKpiPage()}</div>`;
+  ensureLibrary().then(() => {
+    if (currentPage === page) draw();
+  }).catch(err => {
+    if (currentPage !== page || !el) return;
+    el.innerHTML = `<div class="load-msg load-msg-error">${err.message}
+      <button class="load-retry" onclick="render()">Try again</button></div>`;
+  });
+}
+
+/** A creative by id from anything this page has loaded. */
+function findCreative(id) {
+  return LOADED.get(id) || (ALL || []).find(x => x.id === id) || null;
 }
 
 function extractCreatorInfo(creatorProfile, ttLink) {
@@ -422,9 +486,9 @@ function extractCreatorInfo(creatorProfile, ttLink) {
 }
 
 function populateFilters() {
-  const months       = [...new Set(ALL.map(d=>d.month))].filter(Boolean).sort();
-  const campaigns    = [...new Set(ALL.map(d=>d.campaign))].filter(Boolean).sort();
-  const contentTypes = [...new Set(ALL.map(d=>d.contentType).filter(Boolean))].sort();
+  // Options come from the server with the page, worked out over every
+  // creative, so a filter never offers less than the brand has.
+  const { months, campaigns, contentTypes } = HUB_OPTIONS;
 
   const mSel = document.getElementById('month-filter');
   if (mSel) { mSel.innerHTML = '<option value="all">All months</option>'; months.forEach(m => { const o = document.createElement('option'); o.value=m; o.textContent=m; mSel.appendChild(o); }); }
@@ -491,12 +555,14 @@ function setNav(page, element) {
     // showing it on either would give two competing filter systems.
     const topFilters = document.querySelector('.topbar .filters');
     if (topFilters) topFilters.style.display = (page === 'creatives') ? 'flex' : 'none';
+    // A brand switched on another tab leaves the hub showing its skeleton.
+    if (page === 'creatives' && !isLoading && HUB.shownFor !== BRAND_ID) loadHub();
     if (page === 'kpi') {
         if (isLoading) showSkeleton();
-        else if (typeof renderKPIDashboard === 'function') renderKPIDashboard();
+        else if (typeof renderKPIDashboard === 'function') withLibrary('kpi', renderKPIDashboard);
     }
-    if (page === 'creators' && typeof renderCreatorTab === 'function') {
-        renderCreatorTab();
+    if (page === 'creators' && !isLoading && typeof renderCreatorTab === 'function') {
+        withLibrary('creators', renderCreatorTab);
     }
     if (typeof PreTest !== 'undefined') PreTest.onPage(page);
 }
@@ -522,98 +588,138 @@ function toggleSortDir() {
   render();
 }
 
-function getData() {
-  let data = ALL;
-  if (currentPlatform === 'meta') {
-    data = ALL.filter(d => d.platform === 'meta' || d.platform === 'both').map(d => {
-      if (d.platform === 'both' && d._meta) {
-        return { ...d, reach: d._meta.reach, hookRate: d._meta.hookRate, holdRate: d._meta.holdRate, spend: d._meta.spend, impressions: d._meta.impressions, cqr: d._meta.cqr, hookQual: d._meta.hookQual, holdQual: d._meta.holdQual, vtr: d._meta.vtr, watchTime: d._meta.watchTime, adStatus: d._meta.adStatus, ret: d._meta.ret };
-      }
-      return d;
-    });
-  }
-  if (currentPlatform === 'tiktok') {
-    data = ALL.filter(d => d.platform === 'tiktok' || d.platform === 'both').map(d => {
-      if (d.platform === 'both' && d._tt) {
-        return { ...d, reach: d._tt.reach, hookRate: d._tt.hookRate, holdRate: d._tt.holdRate, spend: d._tt.spend, impressions: d._tt.impressions, cqr: d._tt.cqr, hookQual: d._tt.hookQual, holdQual: d._tt.holdQual, vtr: d._tt.vtr, watchTime: d._tt.watchTime, adStatus: d._tt.adStatus, ret: d._tt.ret };
-      }
-      return d;
-    });
-  }
-    
-  const searchQ = (document.getElementById('search-filter')       || {}).value?.toLowerCase() || '';
-  const tf      = (document.getElementById('type-filter')         || {}).value || 'all';
-  const mf      = (document.getElementById('month-filter')        || {}).value || 'all';
-  const campf   = (document.getElementById('campaign-filter')     || {}).value || 'all';
-  const sf      = (document.getElementById('status-filter')       || {}).value || 'all';
-  const vf      = (document.getElementById('validation-filter')   || {}).value || 'all';
-  const ctf     = (document.getElementById('content-type-filter') || {}).value || 'all';
-  const af      = (document.getElementById('action-filter')       || {}).value || 'all';
-  const of      = (document.getElementById('origin-filter')       || {}).value || 'all';
-  const srcf    = (document.getElementById('source-filter')       || {}).value || 'all';
+// ---------------------------------------------------------------------
+//  The Creative Hub's query
+//
+//  Filters, search and sort are read from the controls and sent to the
+//  server, which answers with one page and the total (server/hub.js).
+// ---------------------------------------------------------------------
+const HUB_FILTERS = {
+  type: 'type-filter', month: 'month-filter', campaign: 'campaign-filter',
+  status: 'status-filter', validation: 'validation-filter', contentType: 'content-type-filter',
+  action: 'action-filter', origin: 'origin-filter', source: 'source-filter',
+};
 
-  if (tf !== 'all')   data = data.filter(d => d.type === tf);
-  if (mf !== 'all')   data = data.filter(d => d.month === mf);
-  if (campf !== 'all') data = data.filter(d => d.campaign === campf);
-  if (ctf !== 'all')  data = data.filter(d => d.contentType === ctf);
-  if (af === 'actioned') {
-    data = data.filter(d => {
-      const actRoot = d.actionStatus ? d.actionStatus.toLowerCase() : '';
-      const actMeta = (d._meta && d._meta.actionStatus) ? d._meta.actionStatus.toLowerCase() : '';
-      const actTt   = (d._tt && d._tt.actionStatus) ? d._tt.actionStatus.toLowerCase() : '';
-      return actRoot === 'actioned' || actMeta === 'actioned' || actTt === 'actioned';
-    });
+function hubParams() {
+  const p = new URLSearchParams();
+  if (currentPlatform !== 'both') p.set('platform', currentPlatform);
+  const q = ((document.getElementById('search-filter') || {}).value || '').trim();
+  if (q) p.set('q', q);
+  for (const [k, id] of Object.entries(HUB_FILTERS)) {
+    const v = (document.getElementById(id) || {}).value || 'all';
+    if (v !== 'all') p.set(k, v);
   }
-  if (af === 'not_actioned') {
-    data = data.filter(d => {
-      // The list carries whether a recommendation exists, not its text.
-      const hasRec  = d.hasRec || d.recommendation || (d._meta && d._meta.recommendation) || (d._tt && d._tt.recommendation);
-      const actRoot = d.actionStatus ? d.actionStatus.toLowerCase() : '';
-      const actMeta = (d._meta && d._meta.actionStatus) ? d._meta.actionStatus.toLowerCase() : '';
-      const actTt   = (d._tt && d._tt.actionStatus) ? d._tt.actionStatus.toLowerCase() : '';
-      const isActed = actRoot === 'actioned' || actMeta === 'actioned' || actTt === 'actioned';
-      return hasRec && !isActed;
-    });
-  }
-if (sf === 'ACTIVE')                data = data.filter(d => d.adStatus === 'ACTIVE');
-  if (sf === 'STOPPED')               data = data.filter(d => d.adStatus === 'STOPPED');
-  if (sf === 'BOOSTED')               data = data.filter(d => d.isBoosted);
-  if (sf === 'NOT_BOOSTED')           data = data.filter(d => !d.isBoosted);
-  if (sf === 'VALIDATED_NOT_BOOSTED') data = data.filter(d => d.isValidated && !d.isBoosted);
-  if (sf === 'FATIGUING')             data = data.filter(d => d.fatiguing && d.boostState === 'running');
-  if (sf === 'BOOST_ENDED')           data = data.filter(d => d.boostState === 'ended');
-  if (srcf === 'brand')     data = data.filter(d => d.type === 'Brand Say');
-  if (srcf === 'creator_led') data = data.filter(d => d.type === 'Brand Say' && d.creatorLed);
-  if (srcf === 'creator')   data = data.filter(d => d.type === 'Others Say' && d.source !== 'community');
-  if (srcf === 'community') data = data.filter(d => d.source === 'community');
-  if (of === 'original')       data = data.filter(d => !d.isRepurposed);
-  if (of === 'repurposed')     data = data.filter(d => d.isRepurposed);
-  if (of === 'has_repurposed') data = data.filter(d => repurposesOf(d.id).length > 0);
-  if (vf === 'validated')     data = data.filter(d => d.isValidated);
-  if (vf === 'not_validated') data = data.filter(d => !d.isValidated);
-  if (searchQ) data = data.filter(d => matchesSearch(d, searchQ));
-
-  return [...data].sort((a,b) => {
-    let valA = 0, valB = 0;
-    // Hook and hold were sortable and are not any more: both are paid-only,
-    // so they ranked every unboosted creative as a zero.
-    if (currentSort==='reach') { valA = a.reach; valB = b.reach; }
-    else if (currentSort==='spend') { valA = a.spend; valB = b.spend; }
-    else if (currentSort==='cqr')   { const o={Good:0,Average:1,Poor:2,Invalid:3}; valB=(o[a.cqr]??4); valA=(o[b.cqr]??4); }
-    // Date Posted had a button but no branch here, so it silently did nothing.
-    // Blank dates sort last in either direction rather than jumping to the top.
-    else if (currentSort==='date')  { valA = ts(a.date);    valB = ts(b.date); }
-    else if (currentSort==='added') { valA = ts(a.addedAt); valB = ts(b.addedAt); }
-    return sortAscending ? valA - valB : valB - valA;
-  });
+  p.set('sort', currentSort);
+  p.set('dir', sortAscending ? 'asc' : 'desc');
+  return p;
 }
 
-// Missing dates must not out-rank real ones. -Infinity in ascending order and
-// the same value flipped in descending keeps them at the bottom either way.
-function ts(v) {
-  if (!v) return sortAscending ? Infinity : -Infinity;
-  const t = Date.parse(v);
-  return Number.isNaN(t) ? (sortAscending ? Infinity : -Infinity) : t;
+// Responses are kept for a short while, so going back to a filter or a
+// sort you just had is instant. Cleared with everything else on reload.
+const HUB_CACHE = new Map();     // query string -> { at, data }
+const HUB_CACHE_MS = 30 * 1000;
+
+function remember(items) {
+  for (const d of items || []) {
+    const det = DETAILS.get(d.id);
+    if (det) applyDetail(d, det);
+    LOADED.set(d.id, d);
+  }
+}
+
+async function fetchHub(qs) {
+  const hit = HUB_CACHE.get(qs);
+  if (hit && Date.now() - hit.at < HUB_CACHE_MS) return hit.data;
+  const r = await fetch('/api/creatives?' + qs);
+  if (!r.ok) {
+    const e = await r.json().catch(() => ({}));
+    throw new Error(e.error || `${r.status} ${r.statusText}`);
+  }
+  const data = await r.json();
+  HUB_CACHE.set(qs, { at: Date.now(), data });
+  if (HUB_CACHE.size > 60) HUB_CACHE.delete(HUB_CACHE.keys().next().value);
+  return data;
+}
+
+/** How many creatives the filters as set now would show. For the Apply button. */
+async function hubCount() {
+  const p = hubParams();
+  p.delete('sort'); p.delete('dir');
+  p.set('limit', '0');
+  return (await fetchHub(p.toString())).total;
+}
+
+// What the grid is showing: the query, the creatives loaded so far in
+// order, the total, and where the next page starts.
+const HUB = { base: '', items: [], total: 0, nextOffset: null, pending: null, seq: 0, shownFor: null };
+
+/**
+ * Load the first page for the current filters, with the tiles.
+ *
+ * The cards already on screen stay there until the new ones arrive, and
+ * only dim if the answer takes longer than a moment, so a quick change
+ * never flashes.
+ */
+async function loadHub() {
+  const base = hubParams();
+  const first = new URLSearchParams(base);
+  first.set('limit', String(CARD_PAGE));
+  first.set('summary', '1');
+  const seq = ++HUB.seq;
+  const grid = document.getElementById('card-grid');
+  const row = document.getElementById('kpi-row');
+  const slow = setTimeout(() => {
+    if (seq !== HUB.seq) return;
+    grid && grid.classList.add('hub-busy');
+    row && row.classList.add('hub-busy');
+  }, 300);
+  try {
+    const data = await fetchHub(first.toString());
+    if (seq !== HUB.seq) return;
+    remember(data.items);
+    remember(data.summaryItems);
+    HUB.base = base.toString();
+    HUB.items = data.items.slice();
+    HUB.total = data.total;
+    HUB.nextOffset = data.nextOffset;
+    HUB.pending = null;
+    HUB.shownFor = BRAND_ID;
+    renderKPIs(data.summary);
+    renderCards();
+  } catch (err) {
+    if (seq !== HUB.seq) return;
+    console.error('[hub]', err);
+    if (grid) grid.innerHTML = `<div class="load-msg load-msg-error">Couldn't load the creatives. ${err.message}
+      <button class="load-retry" onclick="render()">Try again</button></div>`;
+  } finally {
+    clearTimeout(slow);
+    if (seq === HUB.seq) {
+      grid && grid.classList.remove('hub-busy');
+      row && row.classList.remove('hub-busy');
+    }
+  }
+}
+
+/** The next page for the grid as it is now. One request at a time; resolves false if the query changed. */
+function fetchNextPage() {
+  if (HUB.nextOffset === null) return Promise.resolve(false);
+  if (HUB.pending) return HUB.pending;
+  const seq = HUB.seq;
+  const p = new URLSearchParams(HUB.base);
+  p.set('offset', String(HUB.nextOffset));
+  p.set('limit', String(CARD_PAGE));
+  const pending = fetchHub(p.toString()).then(data => {
+    if (seq !== HUB.seq) return false;
+    remember(data.items);
+    // The server's build can move on between pages; never show a card twice.
+    const have = new Set(HUB.items.map(x => x.id));
+    HUB.items.push(...data.items.filter(x => !have.has(x.id)));
+    HUB.nextOffset = data.nextOffset;
+    HUB.total = data.total;
+    return true;
+  }).finally(() => { if (HUB.pending === pending) HUB.pending = null; });
+  HUB.pending = pending;
+  return pending;
 }
 
 function hookColor(v) { return v>=40?'#1F8A5B':v>=20?'#8A5E0F':'#C2414B'; }
@@ -735,60 +841,22 @@ function paidState(d) {
 function fmt(n)  { return n>=1000000?'Rs. '+(n/1000000).toFixed(1)+'M':n>=1000?'Rs. '+(n/1000).toFixed(0)+'K':'Rs. '+n; }
 function fmtN(n) { return n>=1000000?(n/1000000).toFixed(1)+'M':n>=1000?(n/1000).toFixed(0)+'K':String(n); }
 
-// ---------------------------------------------------------------------
-//  Search
-//  Matches the creative ID, its short name, the creator, the campaign, and
-//  any of the three post links. Pasting a link from the address bar brings
-//  its own query string, and the stored link usually has a different one, so
-//  a plain substring check would miss. The identifying part of the URL is
-//  pulled out of both sides and compared instead.
-// ---------------------------------------------------------------------
-
-// instagram.com/reel/Dc6Vb-6zw5g/?utm_source=... -> dc6vb-6zw5g
-// tiktok.com/@vaseline_sl/video/7682474116825320712 -> 7682474116825320712
-function postKey(url) {
-  if (!url) return '';
-  const clean = String(url).split('?')[0].split('#')[0].replace(/\/+$/, '');
-  const segs = clean.split('/').filter(Boolean);
-  const last = segs[segs.length - 1] || '';
-  // Skip a trailing path word like "reel" or "video" with no id after it.
-  if (/^(reel|reels|video|videos|p|share|v)$/i.test(last)) return '';
-  return last.toLowerCase();
-}
-
-function matchesSearch(d, q) {
-  q = (q || '').trim().toLowerCase();
-  if (!q) return true;
-
-  const links = [d.igLink, d.fbLink, d.ttLink].filter(Boolean);
-
-  // If a URL was pasted, compare on the post id rather than the whole string.
-  const looksLikeUrl = /^https?:\/\//i.test(q) || /\.(com|net|org|me)\//i.test(q);
-  const qKey = postKey(q);
-  if (qKey && qKey.length > 4) {
-    if (links.some(l => postKey(l) === qKey)) return true;
-    if (links.some(l => String(l).toLowerCase().includes(qKey))) return true;
-    // A pasted link that matches no post is a miss, not a reason to fall
-    // through to substring matching on the domain.
-    if (looksLikeUrl) return false;
-  } else if (looksLikeUrl) {
-    // A URL with no identifiable post in it (".../reel/") would otherwise
-    // substring-match every creative on that platform.
-    return false;
-  }
-
-  const fields = [d.id, d.short, d.creatorProfile, d.campaign, ...links];
-  return fields.some(v => String(v || '').toLowerCase().includes(q));
-}
+// Search runs on the server now (searchMatcher in server/hub.js), which
+// also understands a pasted post link.
 
 function render() {
-  const data = getData();
-  if (currentPage === 'creatives') {
-    renderKPIs(data);
-    renderCards(data);
-  } else if (currentPage === 'kpi') {
-    if (typeof renderKpiTab === 'function') renderKpiTab(data);
-  }
+  if (currentPage === 'creatives') loadHub();
+  else if (currentPage === 'kpi' && typeof renderKpiTab === 'function') withLibrary('kpi', renderKpiTab);
+  else if (currentPage === 'creators' && typeof renderCreatorTab === 'function') withLibrary('creators', renderCreatorTab);
+}
+
+// Search waits for typing to pause, so each keystroke is not a request.
+// Enter searches at once.
+let searchTimer = null;
+function onSearchInput(e) {
+  clearTimeout(searchTimer);
+  if (e && e.key === 'Enter') return render();
+  searchTimer = setTimeout(render, 250);
 }
 
 /**
@@ -802,7 +870,7 @@ const KPI_RANK = { Good: 0, Average: 1, Poor: 2 };
 // The ranked five behind each named tile, filled by renderKPIs and read
 // by the drawer. Each entry is { d, grade, src } rather than a bare
 // creative, because the rating a tile ranked on is not always the one
-// stored on the creative — see ratedBy.
+// stored on the creative — see ratedBy in server/hub.js.
 const KPI_LISTS = { top: [], weak: [] };
 // What the drawer calls each list. Set by renderKPIs, because the weak
 // list's heading depends on whether anything was running to rank.
@@ -810,6 +878,8 @@ const KPI_HEADS = { top: '', weak: '' };
 
 /**
  * The best organic grade this creative earned, across its platforms.
+ * Media Summary and Creators use it; server/hub.js has the same rule for
+ * the tiles.
  *
  * Grades and states share one column, so a platform can come back
  * 'Boosted' or 'Too Early' where a rating would go. isGrade filters those
@@ -825,86 +895,28 @@ function bestOrganicGrade(d) {
   return isGrade(d.bestOrgCqr) ? d.bestOrgCqr : null;
 }
 
-/**
- * The rating to judge a creative on, and where it came from.
- *
- * Paid first: once there is spend behind a post its organic numbers
- * include paid delivery, so the paid rating is the only honest one. With
- * no spend there is no paid rating, and the organic one is all there is.
- *
- * Both named tiles used to rank on d.cqr, which is the paid rating alone.
- * On a brand that has not boosted anything yet that is undefined on every
- * creative, so both tiles read "Nothing to show" against a dashboard full
- * of rated creatives.
- */
-function ratedBy(d) {
-  if (isGrade(d.cqr)) return { d, grade: d.cqr, src: 'paid' };
-  const o = bestOrganicGrade(d);
-  return o ? { d, grade: o, src: 'organic' } : null;
-}
-
 const srcWord = (src) => src === 'paid' ? 'paid rating' : 'organic rating';
 
-function renderKPIs(data) {
-  const totalAssets = data.length;
-  const bsCount = data.filter(d => d.type === 'Brand Say').length;
-  const osCount = data.filter(d => d.type === 'Others Say').length;
-
-  // Three boost states. A creative switched off after running is not the
-  // same thing as one that never had spend, and "not boosted" read as both.
-  const running = data.filter(d => d.boostState === 'running').length;
-  const ended   = data.filter(d => d.boostState === 'ended').length;
-  const never   = data.filter(d => d.boostState === 'never').length;
-
-  // Views against views. Impressions counted a different thing from the
-  // organic figure beside it, so the two were never comparable.
-  let orgViews = 0;
-  data.forEach(d => {
-    if (d.igOrganic) orgViews += (d.igOrganic.views || 0);
-    if (d.fbOrganic) orgViews += (d.fbOrganic.videoViews || 0);
-    if (d.ttOrganic) orgViews += (d.ttOrganic.views || 0);
-  });
-  const paidViews = data.reduce((s, d) => s + (d.paidViews || 0), 0);
+/**
+ * The tiles, from the figures the server worked out for the filters as
+ * they are (summarize in server/hub.js). The named tiles' creatives came
+ * with the same response, so their drawer opens without another request.
+ */
+function renderKPIs(sum) {
+  sum = sum || {};
+  const totalAssets = sum.total || 0;
+  const bsCount = sum.brandSay || 0, osCount = sum.othersSay || 0;
+  const running = sum.running || 0, ended = sum.ended || 0, never = sum.never || 0;
+  const orgViews = sum.orgViews || 0, paidViews = sum.paidViews || 0;
   const viewTotal = orgViews + paidViews;
   const orgShare = viewTotal ? Math.round((orgViews / viewTotal) * 100) : 0;
+  const readyToBoost = sum.readyToBoost || 0;
+  const fatiguing = sum.fatiguing || 0;
 
-  const readyToBoost = data.filter(d => d.needsBoostWarning).length;
-  const fatiguing = data.filter(d => d.fatiguing && d.boostState === 'running').length;
-
-  const thisMonth = new Date().toISOString().slice(0, 7);
-  // Every creative that has a rating at all, paid or organic.
-  const rated = data.map(ratedBy).filter(Boolean);
-  const rk = r => KPI_RANK[r.grade];
-  const newest = (a, b) => String(b.d.date || '').localeCompare(String(a.d.date || ''));
-
-  // Five of each, kept for the drawer. The tile names the leader; the
-  // rest are one click away rather than another page.
-  //
-  // "This month" is the current calendar month by publish date, so early
-  // in a month this is a short list and in a quiet month an empty one.
-  KPI_LISTS.top = rated
-    .filter(r => (r.d.date || '').startsWith(thisMonth))
-    .sort((a, b) => rk(a) - rk(b) || (b.d.reach || 0) - (a.d.reach || 0))
-    .slice(0, 5);
-
-  // Worst first, then most recent. Deliberately NOT by spend: the figure
-  // on a creative is its lifetime spend, and most of that was spent while
-  // it was still performing. Showing it against a creative that has only
-  // just turned weak reads as money already wasted, which is not what
-  // happened.
-  //
-  // What is running on paid money comes first, because that is the one
-  // worth acting on today. With nothing boosted there is nothing live to
-  // rank, so the tile falls back to the weakest organically rated creative
-  // and renames itself instead of going blank.
-  const live = rated
-    .filter(r => r.src === 'paid' && r.d.boostState === 'running')
-    .sort((a, b) => rk(b) - rk(a) || newest(a, b));
-  const weakIsLive = live.length > 0;
-  KPI_LISTS.weak = weakIsLive ? live.slice(0, 5)
-    : rated.filter(r => r.src === 'organic')
-           .sort((a, b) => rk(b) - rk(a) || newest(a, b))
-           .slice(0, 5);
+  const entry = e => { const d = LOADED.get(e.id); return d ? { d, grade: e.grade, src: e.src } : null; };
+  KPI_LISTS.top = (sum.top || []).map(entry).filter(Boolean);
+  KPI_LISTS.weak = (sum.weak || []).map(entry).filter(Boolean);
+  const weakIsLive = !!sum.weakIsLive;
 
   KPI_HEADS.top = 'Best rated this month';
   KPI_HEADS.weak = weakIsLive
@@ -1317,31 +1329,52 @@ function validationStrip(d, platformNames) {
 // ---------------------------------------------------------------------
 //  The grid, a page at a time
 //
-//  Drawing every card at once was fine at a hundred and not at a few
-//  thousand: the browser builds and lays out every node before showing
-//  any. The first CARD_PAGE cards are drawn, and the next page follows as
-//  the end of the grid comes into view, or from the button under it.
+//  The server sends CARD_PAGE creatives per request. The next page is
+//  asked for as soon as one is drawn, so it is usually already here by
+//  the time the end of the grid comes into view, or the button under it
+//  is pressed.
 // ---------------------------------------------------------------------
 const CARD_PAGE = 48;
-let CARD_DATA = [], CARD_SHOWN = 0, cardObserver = null;
+let CARD_SHOWN = 0, cardObserver = null, appending = false;
 
-function renderCards(data) {
-  document.getElementById('grid-count').textContent = `${data.length} creatives`;
-  CARD_DATA = data;
+function renderCards() {
+  document.getElementById('grid-count').textContent =
+    `${HUB.total.toLocaleString()} creative${HUB.total === 1 ? '' : 's'}`;
   CARD_SHOWN = 0;
   document.getElementById('card-grid').innerHTML = '';
   appendCards();
 }
 
-function appendCards() {
+async function appendCards() {
   const grid = document.getElementById('card-grid');
-  if (!grid) return;
-  const next = CARD_DATA.slice(CARD_SHOWN, CARD_SHOWN + CARD_PAGE);
-  grid.insertAdjacentHTML('beforeend', next.map(cardHTML).join(''));
-  CARD_SHOWN += next.length;
+  if (!grid || appending) return;
+  appending = true;
+  const seq = HUB.seq;
+  try {
+    if (CARD_SHOWN >= HUB.items.length && HUB.nextOffset !== null) {
+      paintMore('loading');
+      if (!(await fetchNextPage()) || seq !== HUB.seq) return;
+    }
+    const next = HUB.items.slice(CARD_SHOWN, CARD_SHOWN + CARD_PAGE);
+    grid.insertAdjacentHTML('beforeend', next.map(cardHTML).join(''));
+    CARD_SHOWN += next.length;
+    paintMore();
+    // Ahead of need, so scrolling rarely waits.
+    if (HUB.items.length - CARD_SHOWN < CARD_PAGE) fetchNextPage().catch(() => {});
+  } catch (err) {
+    console.error('[hub] next page failed', err);
+    if (seq === HUB.seq) paintMore('error');
+  } finally {
+    appending = false;
+  }
+}
 
+/** The row under the grid: progress, a button, and what the observer watches. */
+function paintMore(state) {
+  const grid = document.getElementById('card-grid');
   let more = document.getElementById('card-more');
-  if (CARD_SHOWN >= CARD_DATA.length) {
+  const done = CARD_SHOWN >= HUB.items.length && HUB.nextOffset === null;
+  if (done) {
     if (more) more.remove();
     return;
   }
@@ -1351,15 +1384,19 @@ function appendCards() {
     more.className = 'card-more';
     grid.after(more);
   }
-  more.innerHTML = `<button class="card-more-btn" data-press onclick="appendCards()">Show more</button>
-    <span>Showing ${CARD_SHOWN} of ${CARD_DATA.length}</span>`;
-  if ('IntersectionObserver' in window) {
-    if (!cardObserver) cardObserver = new IntersectionObserver(entries => {
-      if (entries.some(e => e.isIntersecting) && CARD_SHOWN < CARD_DATA.length) appendCards();
-    }, { rootMargin: '600px 0px' });
-    cardObserver.disconnect();
-    cardObserver.observe(more);
-  }
+  const shown = `Showing ${CARD_SHOWN.toLocaleString()} of ${HUB.total.toLocaleString()}`;
+  more.innerHTML = state === 'error'
+    ? `<button class="card-more-btn" data-press onclick="appendCards()">Try again</button>
+       <span>Couldn't load more. ${shown}</span>`
+    : `<button class="card-more-btn" data-press onclick="appendCards()"${state === 'loading' ? ' disabled' : ''}>${
+        state === 'loading' ? 'Loading…' : 'Show more'}</button>
+       <span>${shown}</span>`;
+  if (state || !('IntersectionObserver' in window)) return;
+  if (!cardObserver) cardObserver = new IntersectionObserver(entries => {
+    if (entries.some(e => e.isIntersecting)) appendCards();
+  }, { rootMargin: '600px 0px' });
+  cardObserver.disconnect();
+  cardObserver.observe(more);
 }
 
 function cardHTML(d) {
@@ -1588,12 +1625,21 @@ function showCreativePanel(trigger) {
 //  Panel-only fields, fetched when needed
 //
 //  The list leaves out the scene timeline, the brief and the
-//  recommendation text, which only the panel reads. They are fetched the
-//  first time a creative is opened and merged into its entry in ALL, so a
-//  second open is instant and everything downstream sees one object.
+//  recommendation text, which only the panel reads, and the creative's
+//  lineage. They are fetched the first time a creative is opened and
+//  merged into it, so a second open is instant.
 // ---------------------------------------------------------------------
+function applyDetail(d, det) {
+  const { _meta, _tt, lineage, ...rest } = det;
+  Object.assign(d, rest);
+  if (_meta && d._meta) Object.assign(d._meta, _meta);
+  if (_tt && d._tt) Object.assign(d._tt, _tt);
+  d._lineage = lineage || null;
+  d._detail = true;
+}
+
 async function ensureDetails(ids) {
-  const want = ids.filter(id => { const d = ALL.find(x => x.id === id); return d && !d._detail; });
+  const want = ids.filter(id => { const d = LOADED.get(id); return d && !d._detail; });
   if (!want.length) return;
   for (let i = 0; i < want.length; i += 200) {
     const chunk = want.slice(i, i + 200);
@@ -1601,17 +1647,13 @@ async function ensureDetails(ids) {
     if (!r.ok) throw new Error(`details ${r.status}`);
     const { details } = await r.json();
     for (const id of chunk) {
-      const d = ALL.find(x => x.id === id);
-      if (!d) continue;
       // Marked fetched even when the server had nothing for it, so a
       // creative with no details is not asked for again on every open.
-      d._detail = true;
-      const det = details[id];
-      if (!det) continue;
-      const { _meta, _tt, ...rest } = det;
-      Object.assign(d, rest);
-      if (_meta && d._meta) Object.assign(d._meta, _meta);
-      if (_tt && d._tt) Object.assign(d._tt, _tt);
+      const det = details[id] || {};
+      DETAILS.set(id, det);
+      const d = LOADED.get(id);
+      if (d) applyDetail(d, det);
+      if (det.lineage) remember([det.lineage.origin, ...(det.lineage.repurposes || [])].filter(Boolean));
     }
   }
 }
@@ -1629,21 +1671,32 @@ function panelSkeleton() {
 // Previous and next step through the grid as it is filtered and sorted
 // now, without closing the panel.
 function panelNavHTML(id) {
-  const i = CARD_DATA.findIndex(x => x.id === id);
-  if (i < 0 || CARD_DATA.length < 2) return '';
+  const i = HUB.items.findIndex(x => x.id === id);
+  if (i < 0 || HUB.total < 2) return '';
   const btn = (dir, label, on, path) => `<button class="detail-step" data-press aria-label="${label}" ${on ? '' : 'disabled'}
       onclick="panelStep(${dir})"><svg viewBox="0 0 12 12" width="14" height="14"><path d="${path}"/></svg></button>`;
   return btn(-1, 'Previous creative', i > 0, 'M7.5 2.5 4 6l3.5 3.5') +
-    `<span class="detail-pos">${(i + 1).toLocaleString()} of ${CARD_DATA.length.toLocaleString()}</span>` +
-    btn(1, 'Next creative', i < CARD_DATA.length - 1, 'M4.5 2.5 8 6 4.5 9.5');
+    `<span class="detail-pos">${(i + 1).toLocaleString()} of ${HUB.total.toLocaleString()}</span>` +
+    btn(1, 'Next creative', i < HUB.total - 1, 'M4.5 2.5 8 6 4.5 9.5');
 }
 
-function panelStep(dir) {
-  const i = CARD_DATA.findIndex(x => x.id === panelFor);
-  const next = CARD_DATA[i + dir];
-  if (i < 0 || !next) return;
+async function panelStep(dir) {
+  const from = panelFor;
+  const i = HUB.items.findIndex(x => x.id === from);
+  if (i < 0) return;
+  // Past the last loaded creative, the next page comes first.
+  if (!HUB.items[i + dir] && dir > 0) {
+    try { await fetchNextPage(); } catch (e) { return toast("Couldn't load the next creative.", 'error'); }
+    if (panelFor !== from) return;
+  }
+  const next = HUB.items[i + dir];
+  if (!next) return;
   // Keep the grid behind the panel in step, so closing lands on it.
-  while (CARD_SHOWN <= i + dir && CARD_SHOWN < CARD_DATA.length) appendCards();
+  while (CARD_SHOWN <= i + dir && CARD_SHOWN < HUB.items.length) {
+    const before = CARD_SHOWN;
+    await appendCards();
+    if (CARD_SHOWN === before) break;
+  }
   selectedId = next.id;
   document.querySelectorAll('#card-grid .card.selected').forEach(c => c.classList.remove('selected'));
   const card = document.querySelector(`#card-grid .card[onclick*="selectCard('${next.id}'"]`);
@@ -1680,9 +1733,18 @@ function openPanelFor(item) {
   }
 }
 
-function selectCard(id, trigger) {
-  const item = ALL.find(d => d.id === id);
-  if (!item) return;
+async function selectCard(id, trigger) {
+  let item = LOADED.get(id);
+  // Opened from somewhere other than the grid (Ask Lens, a lineage row,
+  // another page) before any page carried it.
+  if (!item) {
+    try {
+      const r = await fetch('/api/creatives?ids=' + encodeURIComponent(id));
+      if (r.ok) remember((await r.json()).items);
+    } catch (e) { console.error('[hub] could not load', id, e); }
+    item = LOADED.get(id);
+  }
+  if (!item) return toast("Couldn't find that creative.", 'error');
   const { overlay } = modalEls();
   overlay.style.display = 'flex';
   // The panel opens whatever happens while filling it. renderDetail
@@ -2410,14 +2472,16 @@ function fmtBriefTs(t) {
 
 // ── Lineage ───────────────────────────────────────────────────────────────────
 // Repurposed assets carry extractedOrigId pointing back at their source.
+// Both come with the creative's details, worked out by the server over
+// the whole brand (creativeDetails in creatives.js).
 function repurposesOf(id) {
-  if (!id || typeof ALL === 'undefined') return [];
-  return ALL.filter(x => x.isRepurposed && x.extractedOrigId === id);
+  const d = id && LOADED.get(id);
+  return (d && d._lineage && d._lineage.repurposes) || [];
 }
 
 function originOf(d) {
-  if (!d.isRepurposed || !d.extractedOrigId || typeof ALL === 'undefined') return null;
-  return ALL.find(x => x.id === d.extractedOrigId) || null;
+  if (!d.isRepurposed || !d.extractedOrigId) return null;
+  return (d._lineage && d._lineage.origin) || null;
 }
 
 function lineageRow(x) {
@@ -2655,7 +2719,7 @@ async function confirmAction() {
   const origText = btn.innerText;
   btn.innerText = 'Updating...'; btn.disabled = true;
   try {
-    const creative = ALL.find(c => c.id === pendingAction.id);
+    const creative = findCreative(pendingAction.id);
     const platform = pendingAction.platform === 'Meta' ? 'meta' : 'tiktok';
     const sourceItem = platform === 'meta' ? (creative._meta || creative) : (creative._tt || creative);
     const dateStr = new Date().toISOString().slice(0, 10);
@@ -2679,6 +2743,9 @@ async function confirmAction() {
     sourceItem.actionBy = name;
     sourceItem.actionDate = dateStr;
     sourceItem.agency = agency;
+    // The server's copy changed, so pages kept from before would show the
+    // old state, and the "not actioned" filter would still list it.
+    HUB_CACHE.clear();
     closeActionModal();
     renderDetail(creative);
     toast('Marked as actioned.');
@@ -2695,7 +2762,7 @@ function openAddCreativeModal() {
   const campaignSelect = document.getElementById('ac-campaign');
   const campaigns = CAMPAIGNS.length > 0
     ? CAMPAIGNS
-    : [...new Set(ALL.map(c => c.campaign).filter(c => c && c !== 'Unknown'))];
+    : HUB_OPTIONS.campaigns.filter(c => c && c !== 'Unknown');
   campaignSelect.innerHTML = '<option value="" disabled selected>Select Campaign</option>';
   if (campaigns.length === 0) {
     campaignSelect.innerHTML += '<option value="Cool Fresh">Cool Fresh</option>';
@@ -2703,11 +2770,16 @@ function openAddCreativeModal() {
     campaigns.forEach(c => { campaignSelect.innerHTML += `<option value="${c}">${c}</option>`; });
   }
   const orgIdSelect = document.getElementById('ac-original-id');
-  const creativeIds = [...new Set(ALL.map(c => c.id).filter(id => id))];
   orgIdSelect.innerHTML = '<option value="" disabled selected>Select Original Creative ID</option>';
   if (typeof enhanceSelectsIn === 'function') enhanceSelectsIn('addCreativeModal');
   if (typeof repaintFilterDropdowns === 'function') repaintFilterDropdowns();
-  creativeIds.forEach(id => { orgIdSelect.innerHTML += `<option value="${id}">${id}</option>`; });
+  // Every id in the brand, which the page no longer holds, so it is asked
+  // for here. Only matters once "repurposed" is picked, well after this.
+  fetch('/api/creatives/ids').then(r => r.ok ? r.json() : { ids: [] }).then(({ ids }) => {
+    orgIdSelect.insertAdjacentHTML('beforeend',
+      (ids || []).map(id => `<option value="${escapeHtml(id)}">${escapeHtml(id)}</option>`).join(''));
+    if (typeof repaintFilterDropdowns === 'function') repaintFilterDropdowns();
+  }).catch(err => console.error('[add] creative ids', err));
   // Last, not first: the styled controls have to exist before anything can
   // be hidden, or they are built visible around a hidden select.
   toggleCreativeFields();

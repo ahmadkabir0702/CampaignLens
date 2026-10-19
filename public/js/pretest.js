@@ -730,7 +730,7 @@
         if (r.status === 'succeeded') creativeCache.set(id, r);
       }
       if (r.status === 'succeeded') {
-        const d = (typeof ALL !== 'undefined' ? ALL : []).find(x => x.id === id) || {};
+        const d = (typeof findCreative === 'function' && findCreative(id)) || {};
         const pdf = {
           title: d.short || id,
           lines: [typeof BRAND_NAME !== 'undefined' ? BRAND_NAME : '', d.campaign, r.channelLabel, d.type,
