@@ -382,6 +382,11 @@ select:focus,.search-input:focus,.modal-input:focus{outline:none;border-color:va
 .card-more-btn{height:36px;padding:0 18px;border-radius:var(--r-btn);border:1px solid var(--line);
   background:var(--white);font:500 13.5px var(--font);color:var(--ink-900);cursor:pointer}
 .card-more-btn:hover{border-color:var(--ink-300)}
+.card-more-btn:disabled{color:var(--ink-500);cursor:default}
+/* A filter answer that takes longer than a moment dims what is on screen
+   rather than blanking it, so a quick change never flashes. */
+#card-grid,#kpi-row{transition:opacity .18s ease}
+#card-grid.hub-busy,#kpi-row.hub-busy{opacity:.55}
 
 /* Every row of the grid is the height of the tallest card, and each card
    is three fixed zones, so the grid stays even however much a card says. */

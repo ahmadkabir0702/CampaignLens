@@ -453,44 +453,58 @@ async function buildPayload(brandId) {
 // ---------------------------------------------------------------------
 //  Serving it
 //
-//  The payload used to go to the browser whole: every creative with its
+//  The browser no longer holds a brand's creative list. The Creative Hub
+//  asks for one filtered, sorted page at a time (server/hub.js), and the
 //  scene timeline, brief and recommendation text, which only the creative
-//  panel reads and which is most of the weight. The list now carries what
-//  cards, filters and summaries need, and the rest is fetched when a
-//  creative is opened.
+//  panel reads, are fetched when a creative is opened.
 //
-//  A built payload is reused for a short while per brand, so the list and
-//  the details opened from it come from one build rather than nine
-//  queries each. Writes made through the app clear it at once; data that
-//  arrives from n8n straight into the database shows within CACHE_MS.
+//  A built payload is reused for a while per brand, so the pages, the
+//  tiles and the details opened from them come from one build rather than
+//  nine queries each. Writes made through the app clear it at once. Past
+//  CACHE_MS the next request still gets the last build straight away
+//  while a fresh one is made behind it, so nobody waits on a rebuild for
+//  data that only n8n has touched. Past STALE_MS it is too old to show,
+//  and the request waits for the new build.
 // ---------------------------------------------------------------------
+const HUB = require('./server/hub');
+
 const CACHE_MS = 30 * 1000;
-const cache = new Map();   // brandId -> { at, promise }
+const STALE_MS = 5 * 60 * 1000;
+const cache = new Map();   // brandId -> { at, promise, value? }
+// Bumped by every invalidation, so a background rebuild that started
+// before a write cannot put pre-write data back in the cache.
+const generation = new Map();
+let generationAll = 0;
+const genOf = (brandId) => `${generationAll}:${generation.get(brandId) || 0}`;
 
 // ---------------------------------------------------------------------
-//  How big the payload is getting
+//  How long builds take
 //
-//  The browser holds a brand's whole creative list, which is the fastest
-//  experience up to a few thousand creatives and the wrong design past
-//  that (docs/scaling.md). Each build records its size and time per
-//  brand, so the logs show the trend well before anyone feels it. A
-//  build past either threshold logs a warning.
+//  Each build records its size and time per brand, so the logs show the
+//  trend well before anyone feels it. A build past either threshold logs
+//  a warning: with paging in place the browser no longer feels a large
+//  list, but the build itself still grows with the brand, and past this
+//  point it is worth moving the card fields into their own table
+//  (docs/scaling.md).
 // ---------------------------------------------------------------------
 const WARN_CREATIVES = Number(process.env.PAYLOAD_WARN_CREATIVES || 3000);
 const WARN_BUILD_MS = Number(process.env.PAYLOAD_WARN_BUILD_MS || 1000);
 const stats = new Map();   // brandId -> { creatives, buildMs, bytes, at }
 
-/** Record the size of the list as sent, once per build, and log the build. */
-function notePayloadSent(brandId, bytes) {
-  const st = stats.get(brandId);
-  if (!st || st.bytes != null) return;
-  st.bytes = bytes;
-  const line = `[payload] brand=${brandId} creatives=${st.creatives} build=${st.buildMs}ms list=${Math.round(bytes / 1024)}KB`;
-  if (st.creatives >= WARN_CREATIVES || st.buildMs >= WARN_BUILD_MS) {
-    console.warn(`${line} WARN past the threshold (${WARN_CREATIVES} creatives or ${WARN_BUILD_MS}ms); time to move the Creative Hub to server-side paging, see docs/scaling.md`);
+function noteBuild(brandId, creatives, buildMs) {
+  stats.set(brandId, { creatives, buildMs, bytes: null, at: new Date().toISOString() });
+  const line = `[payload] brand=${brandId} creatives=${creatives} build=${buildMs}ms`;
+  if (creatives >= WARN_CREATIVES || buildMs >= WARN_BUILD_MS) {
+    console.warn(`${line} WARN past the threshold (${WARN_CREATIVES} creatives or ${WARN_BUILD_MS}ms); time to keep the card fields in their own table, see docs/scaling.md`);
   } else {
     console.log(line);
   }
+}
+
+/** Record the size of a response, so the stats show what one page or the library costs. */
+function notePayloadSent(brandId, bytes) {
+  const st = stats.get(brandId);
+  if (st) st.bytes = bytes;
 }
 
 /** The latest build's figures for every brand built since the server started. */
@@ -500,23 +514,51 @@ function payloadStats() {
     .sort((a, b) => b.creatives - a.creatives);
 }
 
-function getPayload(brandId) {
-  const hit = cache.get(brandId);
-  if (hit && Date.now() - hit.at < CACHE_MS) return hit.promise;
+function startBuild(brandId) {
   const started = Date.now();
   const promise = buildPayload(brandId);
-  promise.then(p => stats.set(brandId, {
-    creatives: p.creatives.length, buildMs: Date.now() - started, bytes: null, at: new Date().toISOString(),
-  })).catch(() => {});
-  cache.set(brandId, { at: Date.now(), promise });
+  const entry = { at: Date.now(), promise, gen: genOf(brandId) };
+  promise.then(p => {
+    entry.value = p;
+    noteBuild(brandId, p.creatives.length, Date.now() - started);
+  }).catch(() => {});
+  return entry;
+}
+
+function getPayload(brandId) {
+  const hit = cache.get(brandId);
+  const age = hit ? Date.now() - hit.at : Infinity;
+  if (hit && age < CACHE_MS) return hit.promise;
+  if (hit && hit.value && age < STALE_MS) {
+    // Serve the last build and refresh behind it, once.
+    if (!hit.refreshing) {
+      hit.refreshing = true;
+      const next = startBuild(brandId);
+      next.promise.then(() => {
+        if (next.gen === genOf(brandId) && cache.get(brandId) === hit) cache.set(brandId, next);
+      }, err => {
+        hit.refreshing = false;
+        console.error('[payload] background rebuild failed, keeping the last build:', err.message);
+      });
+    }
+    return hit.promise;
+  }
+  const entry = startBuild(brandId);
+  cache.set(brandId, entry);
   // A failed build is not kept, so the next request tries again.
-  promise.catch(() => { if (cache.get(brandId)?.promise === promise) cache.delete(brandId); });
-  return promise;
+  entry.promise.catch(() => { if (cache.get(brandId) === entry) cache.delete(brandId); });
+  return entry.promise;
 }
 
 /** Drop the cached payload for one brand, or for every brand. */
 function invalidatePayload(brandId) {
-  if (brandId) cache.delete(brandId); else cache.clear();
+  if (brandId) {
+    cache.delete(brandId);
+    generation.set(brandId, (generation.get(brandId) || 0) + 1);
+  } else {
+    cache.clear();
+    generationAll++;
+  }
 }
 
 // Read only by the creative panel.
@@ -545,20 +587,117 @@ function detailOf(c) {
   return out;
 }
 
-/** The dashboard payload without the panel-only fields. */
-async function listPayload(brandId) {
+// One index per build: the slim list, lookups and cached queries.
+const indexes = new WeakMap();
+async function getIndex(brandId) {
   const p = await getPayload(brandId);
-  return { ...p, creatives: p.creatives.map(slimCreative) };
+  let ix = indexes.get(p);
+  if (!ix) {
+    ix = HUB.buildIndex(p.creatives.map(slimCreative));
+    ix.byIdFull = new Map(p.creatives.map(c => [c.id, c]));
+    indexes.set(p, ix);
+  }
+  return { p, ix };
 }
 
-/** Panel-only fields for the given creatives, keyed by id. Unknown ids are left out. */
-async function creativeDetails(brandId, ids) {
-  const p = await getPayload(brandId);
-  const want = new Set(ids);
-  const out = {};
-  for (const c of p.creatives) if (want.has(c.id)) out[c.id] = detailOf(c);
+/**
+ * Everything the page needs except the creatives: the brand, the Media
+ * Summary's account numbers, campaigns, and the Creative Hub's dropdown
+ * options and size.
+ */
+async function pageMeta(brandId) {
+  const { p, ix } = await getIndex(brandId);
+  const { creatives, ...rest } = p;
+  return { ...rest, total: creatives.length, options: ix.options };
+}
+
+/**
+ * The slim list of every creative, for the pages that still work out
+ * their figures in the browser (Media Summary and Creators). Loaded only
+ * when one of those pages is opened.
+ */
+async function libraryPayload(brandId) {
+  const { ix } = await getIndex(brandId);
+  return ix.slim;
+}
+
+/** The dashboard payload without the panel-only fields. Kept for anything still calling it. */
+async function listPayload(brandId) {
+  const { p, ix } = await getIndex(brandId);
+  return { ...p, creatives: ix.slim };
+}
+
+const PAGE_MAX = 200;
+
+/**
+ * One page of the Creative Hub.
+ *
+ *   { total, offset, items, nextOffset, summary? }
+ *
+ * `total` is how many creatives the filters leave; `summary` is the tiles
+ * for that set, sent with the first page only. `ids` instead of filters
+ * returns those creatives, for one opened from somewhere other than the
+ * grid.
+ */
+async function hubPage(brandId, q) {
+  const { ix } = await getIndex(brandId);
+  const f = HUB.normalise(q);
+
+  if (q.ids) {
+    const want = String(q.ids).split(',').map(s => s.trim()).filter(Boolean).slice(0, PAGE_MAX);
+    const view = new Map(HUB.viewOf(ix, f.platform).map(d => [d.id, d]));
+    return { items: want.map(id => view.get(id) || ix.byId.get(id)).filter(Boolean) };
+  }
+
+  const withSummary = q.summary === '1' || q.summary === 'true';
+  const hit = HUB.run(ix, f, withSummary);
+  const offset = Math.max(0, Math.floor(Number(q.offset) || 0));
+  const limitRaw = q.limit === undefined ? 48 : Math.floor(Number(q.limit));
+  const limit = Math.min(PAGE_MAX, Math.max(0, Number.isFinite(limitRaw) ? limitRaw : 48));
+  const items = hit.list.slice(offset, offset + limit);
+  const out = {
+    total: hit.list.length,
+    offset,
+    items,
+    nextOffset: offset + items.length < hit.list.length ? offset + items.length : null,
+  };
+  if (withSummary) {
+    const { items: tileItems, ...summary } = hit.summary;
+    out.summary = summary;
+    // The tiles' named creatives, so a row in the drawer opens at once.
+    out.summaryItems = tileItems;
+  }
   return out;
 }
 
-module.exports = { buildPayload, listPayload, creativeDetails, invalidatePayload, slimCreative, detailOf,
+/** Every creative id for the brand, newest first, for the add form's "original" picker. */
+async function creativeIds(brandId) {
+  const { ix } = await getIndex(brandId);
+  return ix.slim.map(d => d.id);
+}
+
+/**
+ * Panel-only fields for the given creatives, keyed by id, with each one's
+ * lineage: the creative it was repurposed from, or the ones repurposed
+ * from it, as slim records. Unknown ids are left out.
+ */
+async function creativeDetails(brandId, ids) {
+  const { ix } = await getIndex(brandId);
+  const out = {};
+  for (const id of ids) {
+    const c = ix.byIdFull.get(id);
+    if (!c) continue;
+    const d = detailOf(c);
+    const own = ix.byId.get(id);
+    d.lineage = {
+      origin: own && own.isRepurposed && own.extractedOrigId ? ix.byId.get(own.extractedOrigId) || null : null,
+      repurposes: ix.repurposes.get(id) || [],
+    };
+    out[id] = d;
+  }
+  return out;
+}
+
+module.exports = { buildPayload, listPayload, libraryPayload, pageMeta, hubPage, creativeIds,
+                   creativeDetails, invalidatePayload, slimCreative, detailOf,
                    notePayloadSent, payloadStats };

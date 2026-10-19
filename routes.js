@@ -50,9 +50,12 @@ const DESCRIPTION_MAX = 20;
 module.exports = function mountRoutes(app, deps = {}) {
   // Any successful write through the API may change what the dashboard
   // shows, so the cached payload goes. Cheaper than naming every route that
-  // writes, and it cannot miss one added later.
+  // writes, and it cannot miss one added later. The few posts that only
+  // read are named, because a brand switch or an Ask Lens question used to
+  // throw away every brand's build and make the next page wait on a new one.
+  const READ_ONLY_POSTS = p => p === '/switch-brand' || p === '/check-links' || p.startsWith('/chat/');
   app.use('/api', (req, res, next) => {
-    if (req.method !== 'GET') {
+    if (req.method !== 'GET' && !READ_ONLY_POSTS(req.path)) {
       res.on('finish', () => {
         if (res.statusCode < 400) require('./creatives').invalidatePayload();
       });
@@ -406,49 +409,89 @@ app.get('/api/brands', async (req, res) => {
   });
 
   // -------------------------------------------------------------------
-  //  DASHBOARD DATA — same 11-array shape the frontend already parses
+  //  DASHBOARD DATA
+  //
+  //  The browser no longer downloads a brand's creatives up front. The
+  //  page gets the brand, campaigns, account numbers and the Creative
+  //  Hub's dropdown options here; the hub then asks /api/creatives for one
+  //  filtered, sorted page at a time (docs/scaling.md).
   // -------------------------------------------------------------------
-  const { listPayload, creativeDetails, invalidatePayload, notePayloadSent, payloadStats } = require('./creatives');
+  const C = require('./creatives');
+
+  const fail = (tag, res, err) => {
+    console.error(`[${tag}]`, err.message);
+    res.status(err.message.startsWith('Access denied') ? 403 : 500).json({ error: err.message });
+  };
+
+  // Serialised here rather than by res.json, so the size can be recorded.
+  const sendJson = (res, brand, body) => {
+    const s = JSON.stringify(body);
+    C.notePayloadSent(brand, Buffer.byteLength(s));
+    res.type('json').send(s);
+  };
 
   app.get('/api/dashboard-data', async (req, res) => {
     try {
       const brand = resolveBrand(req);
-      const payload = await listPayload(brand);
+      // ?lite=1 is the current page. Without it the whole list still comes
+      // back, so a tab left open across a deploy keeps working until it
+      // reloads.
+      const lite = req.query.lite === '1';
+      const payload = lite ? await C.pageMeta(brand) : await C.listPayload(brand);
       // Account-level media numbers (spend, reach, KPIs) feed only the
       // Media Summary. An account without it does not receive them.
       const f = req.session.features;
       if (f && f.media === false) payload.account = [];
-      // Serialised once here rather than by res.json, so the size can be
-      // recorded without doing the work twice.
-      const body = JSON.stringify(payload);
-      notePayloadSent(brand, Buffer.byteLength(body));
-      res.type('json').send(body);
-    } catch (err) {
-      console.error('[dashboard-data]', err.message);
-      res.status(err.message.startsWith('Access denied') ? 403 : 500)
-         .json({ error: err.message });
-    }
+      sendJson(res, brand, payload);
+    } catch (err) { fail('dashboard-data', res, err); }
   });
 
-  // How big each brand's dashboard payload is getting. Admin only; the
-  // same figures go to the server log on every build.
+  // One page of the Creative Hub: filters, search and sort as query
+  // parameters, and offset/limit for the page. See hubPage in creatives.js.
+  app.get('/api/creatives', async (req, res) => {
+    try {
+      const brand = resolveBrand(req);
+      res.json(await C.hubPage(brand, req.query));
+    } catch (err) { fail('creatives', res, err); }
+  });
+
+  // Every creative, slim, for Media Summary and Creators, which still work
+  // their figures out in the browser. Fetched only when one is opened.
+  app.get('/api/creatives/library', async (req, res) => {
+    try {
+      const f = req.session.features;
+      if (f && f.media === false && f.creators === false) {
+        return res.status(403).json({ error: 'Media Summary and Creators are not available on this account.' });
+      }
+      const brand = resolveBrand(req);
+      sendJson(res, brand, { creatives: await C.libraryPayload(brand) });
+    } catch (err) { fail('creatives-library', res, err); }
+  });
+
+  // Ids only, for the add form's "repurposed from" picker.
+  app.get('/api/creatives/ids', async (req, res) => {
+    try {
+      const brand = resolveBrand(req);
+      res.json({ ids: await C.creativeIds(brand) });
+    } catch (err) { fail('creatives-ids', res, err); }
+  });
+
+  // How big each brand's build is getting. Admin only; the same figures
+  // go to the server log on every build.
   app.get('/api/payload-stats', (req, res) => {
     if (req.session.role !== 'admin') return res.status(403).json({ error: 'Not permitted for this role' });
-    res.json({ brands: payloadStats() });
+    res.json({ brands: C.payloadStats() });
   });
 
-  // The fields only the creative panel reads, for one or more creatives:
-  // /api/creative-details?ids=A,B. Same brand scoping as the list.
+  // The fields only the creative panel reads, and each creative's lineage,
+  // for one or more creatives: /api/creative-details?ids=A,B.
   app.get('/api/creative-details', async (req, res) => {
     try {
       const brand = resolveBrand(req);
       const ids = String(req.query.ids || '').split(',').map(s => s.trim()).filter(Boolean).slice(0, 200);
       if (!ids.length) return res.status(400).json({ error: 'No creative ids given.' });
-      res.json({ details: await creativeDetails(brand, ids) });
-    } catch (err) {
-      console.error('[creative-details]', err.message);
-      res.status(err.message.startsWith('Access denied') ? 403 : 500).json({ error: err.message });
-    }
+      res.json({ details: await C.creativeDetails(brand, ids) });
+    } catch (err) { fail('creative-details', res, err); }
   });
 
   // -------------------------------------------------------------------
