@@ -91,8 +91,9 @@ function crBrandPosts() {
 function crProfiles(posts) {
   const map = {};
   posts.forEach(d => {
-    const info = typeof extractCreatorInfo === 'function'
-      ? extractCreatorInfo(d.creatorProfile, d.ttLink) : null;
+    // The account that posted it, not the profile it is filed under: a
+    // wrong match there merged several creators into one card.
+    const info = typeof creatorInfo === 'function' ? creatorInfo(d) : null;
     const name = (info && info.username) || d.creatorProfile;
     if (!name) return;
     (map[name] ||= { name, profileUrl: (info && info.profileUrl) || null, posts: [] }).posts.push(d);

@@ -82,7 +82,7 @@ function searchMatcher(q) {
   return plain;
 
   function plain(d) {
-    const fields = [d.id, d.short, d.creatorProfile, d.campaign, ...links(d)];
+    const fields = [d.id, d.short, d.creatorProfile, d.creatorHandle, d.campaign, ...links(d)];
     return fields.some(v => String(v || '').toLowerCase().includes(q));
   }
 }

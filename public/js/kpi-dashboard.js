@@ -23,7 +23,7 @@
  * actually need it.
  *
  * Loaded after dashboard.js and uses its globals: ALL, ACCOUNT_OVERVIEW,
- * fmtN, cqrClass, isGrade, bestOrganicGrade, extractCreatorInfo.
+ * fmtN, cqrClass, isGrade, bestOrganicGrade, creatorInfo.
  */
 
 // ---------------------------------------------------------------------
@@ -875,8 +875,7 @@ function msSectionCreators(data) {
   if (!os.length) return '';
 
   const handle = (d) => {
-    const info = typeof extractCreatorInfo === 'function'
-      ? extractCreatorInfo(d.creatorProfile, d.ttLink) : null;
+    const info = typeof creatorInfo === 'function' ? creatorInfo(d) : null;
     return (info && info.username) || d.creatorProfile || null;
   };
   const profiles = (arr) => new Set(arr.map(handle).filter(Boolean)).size;
