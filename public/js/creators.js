@@ -386,6 +386,9 @@ let crPanelShown = CR_POSTS_PAGE;
 
 function openCreatorDetail(name, trigger) {
   crPanelShown = CR_POSTS_PAGE;
+  // The arrow keys step through Creative Hub creatives while its panel is
+  // open; this panel shares the same overlay, so switch that off.
+  if (typeof panelFor !== 'undefined') panelFor = null;
   crRenderDetail(name);
   // Through the shared opener in dashboard.js, so this panel arrives the
   // same way the Creative Hub's does and picks up the same spring state.
