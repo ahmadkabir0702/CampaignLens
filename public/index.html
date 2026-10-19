@@ -222,6 +222,17 @@
              </select>
            </div>
 
+           <!-- What the post is. Decides which links fit each platform box,
+                so a carousel link is never pasted as a reel or the reverse. -->
+           <div class="ac-field" id="ac-format-row">
+             <select id="ac-format" class="modal-input" onchange="acFormatChanged()" required>
+               <option value="" disabled selected>What kind of post is it?</option>
+               <option value="video">Reel or video</option>
+               <option value="photo">Static image</option>
+               <option value="carousel">Carousel</option>
+             </select>
+           </div>
+
            <div class="ac-field" id="ac-source-row" style="display:none">
              <select id="ac-source" class="modal-input" onchange="previewCreativeId();acRecheckFb()">
                <option value="" disabled selected>Who posted it?</option>

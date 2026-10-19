@@ -129,10 +129,11 @@ async function readPendingJobs(app) {
  * Check every supplied field.
  * input: { ig, fb, tt }  (empty or missing = platform not used)
  * source: 'creator' | 'community' | 'brand' | undefined — widens Facebook
+ * format: 'video' | 'photo' | 'carousel' | undefined — narrows the link shapes
  * returns { ok, fields: { ig: {ok,url,id} | {ok:false,error}, ... }, links: {ig,fb,tt} }
  * links holds the normalised URLs to store, only when ok is true.
  */
-async function checkLinks(app, query, input, { excludeId, source } = {}) {
+async function checkLinks(app, query, input, { excludeId, source, format } = {}) {
   const pendingJobs = await readPendingJobs(app);
   const fields = {};
   const links = {};
@@ -141,7 +142,7 @@ async function checkLinks(app, query, input, { excludeId, source } = {}) {
   await Promise.all(FIELDS.map(async (f) => {
     const raw = input[f];
     if (!raw || !String(raw).trim()) return;
-    fields[f] = await checkField(f, raw, { source });
+    fields[f] = await checkField(f, raw, { source, format });
   }));
 
   for (const f of FIELDS) {

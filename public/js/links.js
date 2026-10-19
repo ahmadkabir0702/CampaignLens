@@ -185,9 +185,67 @@
 
   var CHECK = { ig: checkIg, tt: checkTt, fb: checkFb };
 
+  // ------------------------------------------------------------ format
+  /**
+   * The person says up front what the post is: a reel or video, or a static
+   * image or carousel. That narrows which links fit, and the error says
+   * which setting would make the link acceptable.
+   *
+   * 'video' and 'static' are the two rule sets ('photo' and 'carousel' both
+   * mean static). No format means any link shape is accepted, which is what
+   * older callers and queued jobs get.
+   */
+  function normFormat(f) {
+    f = String(f || '').toLowerCase();
+    if (f === 'video' || f === 'reel') return 'video';
+    if (f === 'static' || f === 'photo' || f === 'image' || f === 'carousel') return 'static';
+    return null;
+  }
+
+  var SWITCH_TO_STATIC = ' If it is a photo or carousel, change Format to Static image or Carousel.';
+  var SWITCH_TO_VIDEO = ' If it is a reel or video, change Format to Reel or video.';
+
+  function checkFormat(field, r, format, opts) {
+    if (!r.ok || !format) return r;
+    if (format === 'video') {
+      if (field === 'ig' && r.kind === 'post') {
+        return fail('This is a post link (instagram.com/p/…). For a reel, open it and copy the link from the Reels view.' + SWITCH_TO_STATIC);
+      }
+      if (field === 'tt' && r.kind === 'photo') {
+        return fail('This is a TikTok photo post. Paste the video link (tiktok.com/@…/video/…).' + SWITCH_TO_STATIC);
+      }
+      if (field === 'fb' && r.kind === 'photo') {
+        return fail('This is a Facebook photo. Paste the video link (facebook.com/reel/… or …/videos/…).' + SWITCH_TO_STATIC);
+      }
+      // A community page's video is often only reachable as a post link.
+      if (field === 'fb' && r.kind === 'post' && !(opts && opts.source === 'community')) {
+        return fail('This is a post link. Open the video and copy its link (facebook.com/reel/… or …/videos/…).' + SWITCH_TO_STATIC);
+      }
+      return r;
+    }
+    // static
+    if (r.kind === 'video') {
+      var what = { ig: 'an Instagram reel', tt: 'a TikTok video', fb: 'a Facebook video' }[field];
+      var want = {
+        ig: 'the post link (instagram.com/p/…)',
+        tt: 'the photo post link (tiktok.com/@…/photo/…)',
+        fb: 'the photo or post link',
+      }[field];
+      return fail('This is ' + what + '. Paste ' + want + '.' + SWITCH_TO_VIDEO);
+    }
+    return r;
+  }
+
+  /** Placeholder text for each field under a format, for the add forms. */
+  var PLACEHOLDER = {
+    video:  { ig: 'Instagram reel link (instagram.com/reel/…)', fb: 'Facebook video link (facebook.com/reel/… or …/videos/…)', tt: 'TikTok video link (tiktok.com/@…/video/…)' },
+    static: { ig: 'Instagram post link (instagram.com/p/…)', fb: 'Facebook photo or post link', tt: 'TikTok photo post link (tiktok.com/@…/photo/…)' },
+  };
+
   /**
    * field: 'ig' | 'fb' | 'tt'
-   * opts:  { source }  kept for callers; every type now accepts the same links
+   * opts:  { source, format }  format 'video' | 'static' | 'photo' | 'carousel'
+   *        narrows the accepted links; see checkFormat
    * returns one of:
    *   { ok: true, url, id, kind }    normalised URL and the id matchers use
    *   { ok: false, error }           show this under the field
@@ -204,10 +262,13 @@
       return fail('This is a ' + LABEL[actual] + ' link. Put it in the '
         + LABEL[actual] + ' field instead.');
     }
-    return CHECK[field](u, opts || {});
+    var o = opts || {};
+    return checkFormat(field, CHECK[field](u, o), normFormat(o.format), o);
   }
 
   return { validate: validate, platformOf: function (raw) {
     var u = parse(raw); return u ? platformOf(u) : null;
-  }, LABEL: LABEL };
+  }, LABEL: LABEL, normFormat: normFormat, placeholder: function (format, field) {
+    var f = normFormat(format); return f ? PLACEHOLDER[f][field] : null;
+  } };
 });

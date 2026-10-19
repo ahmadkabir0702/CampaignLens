@@ -1099,6 +1099,12 @@ function makeProcessor(ai) {
       // no file to watch, so the slides are fetched, kept, and read as
       // images instead (migration 022).
       const isStatic = meta.kind === 'photo' || meta.kind === 'carousel';
+      // The person chose the kind of post when adding it, and the link rules
+      // follow that choice. The fetched post is still the truth: a mismatch
+      // that got past the rules is logged and the post's real kind is used.
+      if (d.format && (d.format !== 'video') !== isStatic) {
+        console.warn(`[worker] ${creativeId}: added as ${d.format} but the post is a ${meta.kind}; using ${meta.kind}`);
+      }
 
       let a = {};
       let timeline = [];

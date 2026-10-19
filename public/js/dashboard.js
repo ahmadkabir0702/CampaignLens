@@ -2682,6 +2682,7 @@ function acReadForm() {
     description: (document.getElementById('ac-description') || {}).value || '',
     campaign: document.getElementById('ac-campaign').value,
     type: document.getElementById('ac-type').value,
+    format: acFormat(),
     source: (document.getElementById('ac-source') || {}).value || '',
     creatorLed: !!(document.getElementById('ac-creator-led') || {}).checked,
     repurposed: document.getElementById('ac-repurposed').value || 'No',
@@ -2694,6 +2695,7 @@ function acReadForm() {
 function acValidate(f) {
   if (!f.campaign) return 'Select a campaign.';
   if (!f.type) return 'Select a category.';
+  if (!f.format) return 'Choose what kind of post this is: reel or video, static image, or carousel.';
   if (f.type === 'Others Say' && !f.source) return 'Choose whether this is creator or community content.';
   const anyOn = AC_PLATS.some(p => f.plats[p.k].on);
   if (!anyOn) return 'Turn on at least one platform. A creative with no links cannot have stats.';
@@ -2702,7 +2704,7 @@ function acValidate(f) {
     const v = f.plats[p.k];
     if (!v.on) { acSetErr(p.k, ''); continue; }
     if (!v.link) { acSetErr(p.k, 'Add the link or turn this platform off.'); bad = true; continue; }
-    const r = window.CLLinks.validate(p.k, v.link, { source: f.source });
+    const r = window.CLLinks.validate(p.k, v.link, { source: f.source, format: f.format });
     // needsResolve is not an error: the server follows the redirect.
     if (!r.ok && !r.needsResolve) { acSetErr(p.k, r.error); bad = true; }
     else acSetErr(p.k, '');
@@ -2739,8 +2741,28 @@ function acCheckOne(k) {
   const box = document.getElementById(`ac-${k}-on`);
   const input = document.getElementById(`ac-${k}`);
   if (!box || !box.checked || !input || !input.value.trim()) return;
-  const r = window.CLLinks.validate(k, input.value, { source: acSource() });
+  const r = window.CLLinks.validate(k, input.value, { source: acSource(), format: acFormat() });
   acSetErr(k, (!r.ok && !r.needsResolve) ? r.error : '');
+}
+
+/** What the person said the post is: 'video', 'photo', 'carousel' or ''. */
+function acFormat() {
+  return (document.getElementById('ac-format') || {}).value || '';
+}
+
+/**
+ * The format decides which links fit, so the boxes say what to paste and
+ * any link already typed is checked again under the new rule.
+ */
+function acFormatChanged() {
+  const fmt = acFormat();
+  AC_PLATS.forEach(p => {
+    const input = document.getElementById(`ac-${p.k}`);
+    if (!input) return;
+    input.placeholder = (fmt && window.CLLinks.placeholder(fmt, p.k)) || `${p.label} link`;
+    acClearErr(p.k);
+    acCheckOne(p.k);
+  });
 }
 
 /**
@@ -2762,7 +2784,7 @@ function acRecheckFb() {
 // Server check: resolves short links, catches duplicates. Returns true when
 // every link passes, having written each field's error under it.
 async function acServerCheck(f) {
-  const body = { source: f.source || '' };
+  const body = { source: f.source || '', format: f.format || '' };
   AC_PLATS.forEach(p => { if (f.plats[p.k].on) body[p.k] = f.plats[p.k].link; });
   let data;
   try {
@@ -2809,6 +2831,7 @@ function acRenderReview(f) {
     ${f.description ? line('Description', f.description) : ''}
     ${line('Campaign', f.campaign)}
     ${line('Category', f.type)}
+    ${line('Format', { video: 'Reel or video', photo: 'Static image', carousel: 'Carousel' }[f.format] || '')}
     ${f.type === 'Others Say' ? line('Posted by', f.source === 'community' ? 'Community' : 'Creator') : ''}
     ${f.type === 'Brand Say' ? line('Led by a creator', f.creatorLed ? 'Yes' : 'No') : ''}
     ${f.type === 'Brand Say' ? line('Repurposed', f.repurposed) : ''}
@@ -2828,7 +2851,7 @@ function backToEdit() {
     el.style.display = '';
   });
   document.querySelectorAll('#addCreativeForm .plat-rows').forEach(el => el.style.display = '');
-  ['ac-campaign', 'ac-type', 'ac-repurposed', 'ac-original-id'].forEach(id => {
+  ['ac-campaign', 'ac-type', 'ac-format-row', 'ac-repurposed', 'ac-original-id'].forEach(id => {
     const el = document.getElementById(id);
     if (el && el.dataset.acHidden === '1') { el.style.display = el.dataset.acDisplay || ''; delete el.dataset.acHidden; }
   });
@@ -2867,7 +2890,7 @@ async function submitCreative(e) {
     const rv = document.getElementById('ac-review');
     rv.innerHTML = acRenderReview(f) + acContentBlock();
     rv.style.display = 'block';
-    ['ac-campaign', 'ac-type', 'ac-repurposed', 'ac-original-id'].forEach(id => {
+    ['ac-campaign', 'ac-type', 'ac-format-row', 'ac-repurposed', 'ac-original-id'].forEach(id => {
       const el = document.getElementById(id);
       if (el && el.style.display !== 'none') { el.dataset.acDisplay = el.style.display; el.dataset.acHidden = '1'; el.style.display = 'none'; }
     });
@@ -2918,7 +2941,7 @@ async function submitCreative(e) {
     const res = await fetch('/api/add-creative', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ campaign, type, source, creator_led, ig, fb, tt, repurposed, originalId, description, brand: BRAND_NAME,
+      body: JSON.stringify({ campaign, type, format: f.format, source, creator_led, ig, fb, tt, repurposed, originalId, description, brand: BRAND_NAME,
         content_confirmed: !!(AC_CONTENT && AC_CONTENT.verdict === 'different') }),
       signal: AbortSignal.timeout(120000)
     });
@@ -3093,9 +3116,10 @@ function resetAddCreativeForm() {
   });
   syncPlatFields();
   document.querySelectorAll('#addCreativeForm .plat-rows').forEach(el => el.style.display = '');
-  ['ac-campaign', 'ac-type'].forEach(id => {
+  ['ac-campaign', 'ac-type', 'ac-format-row'].forEach(id => {
     const el = document.getElementById(id); if (el) { el.style.display = ''; delete el.dataset.acHidden; }
   });
+  AC_PLATS.forEach(p => { const i = document.getElementById(`ac-${p.k}`); if (i) i.placeholder = `${p.label} link`; });
   const back = document.getElementById('ac-back-btn');
   if (back) back.style.display = 'none';
   const conf = document.getElementById('ac-confirm-btn');
