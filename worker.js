@@ -1054,6 +1054,13 @@ function startWorker(ai) {
     maxStalledCount: 3,
   });
 
+  // A finished job has written to creatives, so the cached dashboard
+  // payload is stale. Only reaches the web process's cache when the worker
+  // runs in-process; a standalone worker relies on the cache's short expiry.
+  worker.on('completed', () => {
+    try { require('./creatives').invalidatePayload(); } catch (e) { /* cache is an aside */ }
+  });
+
   // A job whose worker vanished is not a real failure: it never got to run.
   worker.on('stalled', (jobId) => {
     console.warn(`[worker] job ${jobId} stalled (worker restarted mid-job) — requeueing`);

@@ -480,4 +480,14 @@ function crRenderDetail(name) {
       ${postBlocks}
       ${more}
     </div>`;
+
+  // The hook line is a panel-only field the list leaves out. Fetch it for
+  // the posts on show and draw again once, if any were missing.
+  const shown = p.posts.slice(0, crPanelShown).filter(a => !a._detail).map(a => a.id);
+  if (shown.length && typeof ensureDetails === 'function') {
+    ensureDetails(shown).then(() => {
+      const open = document.querySelector('#creativeModalContent .detail-title');
+      if (open && open.textContent.trim() === p.name) crRenderDetail(name);
+    }).catch(err => console.error('[creators] details failed', err));
+  }
 }
