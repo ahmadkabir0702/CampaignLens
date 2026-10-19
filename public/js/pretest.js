@@ -103,7 +103,7 @@
     const pct = value == null ? 0 : Math.max(2, Math.min(100, value));
     return `<div class="bs-bar${opts.current ? ' is-current' : ''}">
       <span class="bs-bar-label">${esc(label)}${opts.note ? ` <span class="bs-bar-note">${esc(opts.note)}</span>` : ''}</span>
-      <span class="bs-bar-track"><span class="bs-bar-fill t-${t}" style="width:${pct}%"></span></span>
+      <span class="bs-bar-track"><span class="bs-bar-fill grow-x t-${t}" style="--i:${opts.i || 0};width:${pct}%"></span></span>
       <span class="bs-bar-val">${value == null ? '<span class="bs-quiet">N/A</span>' : Math.round(value)}</span>
     </div>`;
   }
@@ -127,12 +127,12 @@
     const strategic = (s.categories || []).find(c => c.name === 'Strategic Fit');
     const noMessage = strategic && strategic.score == null;
 
-    const catBars = (s.categories || []).map(c => bar(c.name, c.score, c.rating, {
-      note: c.unweighted ? 'not in total' : '',
+    const catBars = (s.categories || []).map((c, i) => bar(c.name, c.score, c.rating, {
+      note: c.unweighted ? 'not in total' : '', i,
     })).join('');
 
-    const placeBars = placements.map(([p, v]) => bar(PLACEMENT[p] || p, v.total, v.rating, {
-      current: p === here, note: p === here ? 'tested for' : '',
+    const placeBars = placements.map(([p, v], i) => bar(PLACEMENT[p] || p, v.total, v.rating, {
+      current: p === here, note: p === here ? 'tested for' : '', i,
     })).join('');
 
     const fixRows = fixes.map(k => `<li class="bs-fix t-${tone(k.rating)}">
@@ -153,6 +153,11 @@
     return `<div class="bs-report">
       <div class="bs-hero">
         <div class="bs-total t-${t}">
+          <svg class="bs-ring" viewBox="0 0 96 96" aria-hidden="true">
+            <circle class="bs-ring-bg" cx="48" cy="48" r="42"/>
+            <circle class="bs-ring-fg" cx="48" cy="48" r="42"
+              style="stroke-dashoffset:${(263.9 * (1 - Math.max(0, Math.min(100, s.total.score || 0)) / 100)).toFixed(1)}"/>
+          </svg>
           <div class="bs-total-num">${s.total.score == null ? '–' : Math.round(s.total.score)}</div>
           <div class="bs-total-sub">${TONE_WORD[t]}</div>
         </div>
@@ -344,10 +349,10 @@
 
   function statusCell(p) {
     const label = STATUS[p.status] || p.status;
-    if (RUNNING.has(p.status)) return `<span class="bs-status is-running"><span class="bs-spin"></span>${esc(label)}</span>`;
-    if (p.status === 'failed') return `<span class="bs-status t-neg">${esc(label)}</span>`;
-    if (p.status === 'expired') return `<span class="bs-status bs-quiet">${esc(label)}</span>`;
-    return `<span class="bs-status">${esc(label)}</span>`;
+    if (RUNNING.has(p.status)) return `<span class="bs-status is-running"><i></i>${esc(label)}</span>`;
+    if (p.status === 'failed') return `<span class="bs-status t-neg"><i></i>${esc(label)}</span>`;
+    if (p.status === 'expired') return `<span class="bs-status bs-quiet"><i></i>${esc(label)}</span>`;
+    return `<span class="bs-status is-done"><i></i>${esc(label)}</span>`;
   }
 
   function renderPage() {
@@ -379,20 +384,26 @@
       </tr>`;
     }).join('');
 
+    const can = s.configured && s.queue;
+    const newBtn = `<button class="btn-primary bs-new" data-press onclick="PreTest.openForm()" ${can ? '' : 'disabled'}>New pre-test</button>`;
+    const facts = `<div class="bs-facts">
+        <span class="bs-fact"><b>${esc(list.length)}</b> ${list.length === 1 ? 'report' : 'reports'} on file</span>
+        <span class="bs-fact">Reports are deleted <b>${esc(s.ttlHours || 72)} hours</b> after they finish</span>
+        <span class="bs-fact">Up to <b>${esc(s.dailyCap)}</b> a day across Campaign Lens</span>
+        <span class="bs-fact">Never shown in Creative Hub</span>
+      </div>`;
     page.innerHTML = `<div class="content bs-page">
-      <div class="bs-page-head">
-        <div>
-          <p class="bs-lede">CampaignLens Pre-testing scores a video before it runs. Each report is deleted ${esc(s.ttlHours || 72)} hours after it finishes, and pre-tests never appear in Creative Hub.</p>
-        </div>
-        <button class="btn-outline primary" data-press onclick="PreTest.openForm()" ${s.configured && s.queue ? '' : 'disabled'}>
-          <svg viewBox="0 0 24 24"><path d="M12 5v14M5 12h14"/></svg>New pre-test</button>
-      </div>
+      <div class="bs-page-head">${facts}${list.length ? newBtn : ''}</div>
       ${warn}
       ${list.length ? `<div class="bs-card"><table class="bs-list">
         <thead><tr><th>Asset</th><th>Placement</th><th>Type</th><th>Run by</th><th>Status</th><th class="bs-num">Score</th></tr></thead>
         <tbody>${rows}</tbody></table></div>`
-      : `<div class="bs-card bs-empty">No pre-tests for ${esc(d.brand ? d.brand.name : 'this brand')} yet. Use New pre-test to score a video before it goes live.</div>`}
-      <div class="bs-fine">Up to ${esc(s.dailyCap)} pre-tests a day across Campaign Lens.</div>
+      : `<div class="bs-card bs-empty">
+          <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M9 3h6M10 3v6L4.5 19a1.5 1.5 0 0 0 1.3 2h12.4a1.5 1.5 0 0 0 1.3-2L14 9V3"/><path d="M7.5 14h9"/></svg>
+          <div class="bs-empty-title">No pre-tests for ${esc(d.brand ? d.brand.name : 'this brand')} yet</div>
+          <p>Upload a video to see how it is likely to perform, and what to change, before it goes live.</p>
+          ${newBtn}
+        </div>`}
     </div>`;
   }
 
@@ -670,6 +681,8 @@
   }
 
   function notice(msg) {
+    // The app-wide toast, so every confirmation looks and moves the same.
+    if (typeof toast === 'function') return toast(msg);
     let el = $('bs-notice');
     if (!el) {
       el = document.createElement('div');

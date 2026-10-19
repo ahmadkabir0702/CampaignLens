@@ -104,6 +104,55 @@ const parseNum = (val) => {
 let ALL = [];
 
 // ---------------------------------------------------------------------
+//  Sliding highlights
+//
+//  A switch is redrawn as HTML when it changes, so its highlight is a new
+//  element every time. glide() remembers where the highlight for a given
+//  switch last sat and slides the new one from there to the selected
+//  option. The first time, it simply appears in place.
+// ---------------------------------------------------------------------
+const GLIDE_AT = new Map();
+function glide(key, root) {
+  if (!root) return;
+  const on = root.querySelector('[aria-pressed="true"],[aria-selected="true"],.on');
+  if (!on) return;
+  let pill = root.querySelector(':scope > .glide-pill');
+  if (!pill) { pill = document.createElement('span'); pill.className = 'glide-pill'; pill.setAttribute('aria-hidden', 'true'); root.prepend(pill); }
+  root.classList.add('glide');
+  const to = { left: on.offsetLeft, width: on.offsetWidth };
+  const from = GLIDE_AT.get(key) || to;
+  pill.style.transition = 'none';
+  pill.style.left = from.left + 'px'; pill.style.width = from.width + 'px';
+  pill.offsetHeight;
+  pill.style.transition = '';
+  pill.style.left = to.left + 'px'; pill.style.width = to.width + 'px';
+  GLIDE_AT.set(key, to);
+}
+
+/**
+ * Bars that are redrawn slide from the length they had to the new one.
+ * Call with the bars before the redraw (read with barWidths) and the new
+ * ones after; bars are matched by the key function, so a reordered list
+ * still moves each bar from its own old length.
+ */
+function barWidths(els, key) {
+  const m = new Map();
+  els.forEach((el, i) => m.set(key(el, i), el.style.width));
+  return m;
+}
+function slideBars(els, before, key) {
+  const pairs = els.map((el, i) => {
+    const to = el.style.width, from = before.get(key(el, i));
+    el.classList.add('no-grow');
+    el.style.transition = 'none';
+    el.style.width = from || '0%';
+    return [el, to];
+  });
+  if (pairs.length) pairs[0][0].offsetHeight;
+  pairs.forEach(([el, to]) => { el.style.transition = 'width var(--t-slow) var(--ease-move)'; el.style.width = to; });
+}
+
+// ---------------------------------------------------------------------
 //  Toasts
 //
 //  One short line at the foot of the screen that something worked or did
