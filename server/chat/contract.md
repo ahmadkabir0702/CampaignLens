@@ -242,8 +242,11 @@ measure:
 
 - **Brand Say video**: average watch time as a share of the video's length,
   against bands set by video length
-- **Others Say video**: likes plus twice the comments, per view, against a
-  benchmark built from recent creator posts that had no spend behind them.
+- **Others Say video**: likes plus twice the comments, per view, against
+  the brand's own creator posts on that platform once it has five with no
+  spend behind them, otherwise against creator posts across all brands. A
+  Good creator post means good for this brand, not good against other
+  brands, so never rank one brand's creators against another's by grade.
   A creator post with spend behind it reads Boosted and has no organic grade
 - **Photos and carousels**: engagement per person reached (Brand Say), or
   likes plus twice the comments per view or per follower (Others Say),
