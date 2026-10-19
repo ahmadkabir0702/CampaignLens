@@ -102,6 +102,34 @@ const parseNum = (val) => {
 };
 
 let ALL = [];
+
+// ---------------------------------------------------------------------
+//  Toasts
+//
+//  One short line at the foot of the screen that something worked or did
+//  not, in place of the browser's alert box, which stops the page and
+//  looks like a different product. Errors stay up longer and are read
+//  out straight away by screen readers.
+// ---------------------------------------------------------------------
+let toastTimer = null;
+function toast(message, tone) {
+  let el = document.getElementById('cl-toast');
+  if (!el) {
+    el = document.createElement('div');
+    el.id = 'cl-toast';
+    el.className = 'cl-toast';
+    document.body.appendChild(el);
+  }
+  const err = tone === 'error';
+  el.setAttribute('role', err ? 'alert' : 'status');
+  el.classList.toggle('is-error', err);
+  el.textContent = String(message || '');
+  el.classList.remove('show');
+  el.offsetHeight;
+  el.classList.add('show');
+  clearTimeout(toastTimer);
+  toastTimer = setTimeout(() => el.classList.remove('show'), err ? 6000 : 3200);
+}
 let ACCOUNT_OVERVIEW = [];
 let CAMPAIGNS = [];
 // How long a post is left alone before its organic numbers are read. Sent
@@ -207,7 +235,7 @@ async function switchBrand(brandId) {
     }
     if (typeof PreTest !== 'undefined') PreTest.onBrandChange(currentPage);
   } catch (e) {
-    alert('Could not switch brand: ' + e.message);
+    toast('Could not switch brand: ' + e.message, 'error');
   }
 }
 
@@ -2495,7 +2523,7 @@ function closeActionModal() {
 async function confirmAction() {
   const name   = CURRENT_USER;
   const agency = document.getElementById('actionAgencyInput').value;
-  if (!agency) return alert("Please select an agency.");
+  if (!agency) return toast("Please select an agency.", 'error');
   const btn = document.getElementById('modalConfirmBtn');
   const origText = btn.innerText;
   btn.innerText = 'Updating...'; btn.disabled = true;
@@ -2526,8 +2554,9 @@ async function confirmAction() {
     sourceItem.agency = agency;
     closeActionModal();
     renderDetail(creative);
+    toast('Marked as actioned.');
   } catch(err) {
-    alert("Failed to update: " + err.message);
+    toast("Couldn't update it: " + err.message, 'error');
   } finally {
     btn.innerText = origText; btn.disabled = false;
   }
@@ -2706,7 +2735,7 @@ async function regenerateDescription() {
   } catch (err) {
     // yt-dlp writes warnings to stderr; the real cause is the last line.
     const lines = String(err.message).split('\n').filter(l => l.trim() && !/^\s*(WARNING|It is strongly|Run "yt-dlp|To suppress|Pre-merged|To prioritize)/.test(l));
-    alert('Analysis failed: ' + (lines.pop() || err.message).trim());
+    toast('Analysis failed: ' + (lines.pop() || err.message).trim(), 'error');
   } finally {
     btn.innerText = orig; btn.disabled = false;
   }
@@ -2869,7 +2898,7 @@ async function acServerCheck(f) {
     data = await r.json();
     if (!r.ok) throw new Error(data.error || 'HTTP ' + r.status);
   } catch (e) {
-    alert('Could not check the links: ' + e.message);
+    toast('Could not check the links: ' + e.message, 'error');
     return false;
   }
   for (const p of AC_PLATS) {
@@ -2951,7 +2980,7 @@ async function submitCreative(e) {
   // First press validates and shows the review. Nothing is sent yet.
   if (!AC_REVIEWED) {
     const err = acValidate(f);
-    if (err) { if (err !== 'Fix the highlighted links.') alert(err); return; }
+    if (err) { if (err !== 'Fix the highlighted links.') toast(err, 'error'); return; }
     const btn = document.getElementById('ac-confirm-btn');
     const label = btn.innerText;
     btn.disabled = true; btn.innerText = 'Checking links…';
@@ -3067,82 +3096,6 @@ function showQueuedConfirmation(result) {
   }
 
   const queued = result.queued !== false;
-  box.innerHTML = queued ? `
-    <div class="ac-queued">
-      <div class="ac-queued-head">
-        <span class="ac-queued-icon" aria-hidden="true">
-          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7"
-               stroke-linecap="round" stroke-linejoin="round">
-            <circle cx="12" cy="12" r="9"/><path d="M12 7v5l3 2"/>
-          </svg>
-        </span>
-        <div>
-          <div class="ac-queued-title">Added to the queue</div>
-          <p class="ac-queued-body">
-            The video is being downloaded and analysed. This usually takes a few minutes.
-          </p>
-        </div>
-      </div>
-
-      <ul class="ac-queued-steps">
-        <li>You will get an email with the creative ID once it is done</li>
-        <li>The creative appears in the Creative Hub at the same time</li>
-        <li>If it fails you will get an email explaining why, and nothing is added</li>
-      </ul>
-
-      <p class="ac-queued-note">You can close this and keep working.</p>
-
-      <div class="ac-queued-actions">
-        <button type="button" class="btn-outline" onclick="closeAddCreativeModal()">Close</button>
-        <button type="button" class="btn-outline primary" onclick="resetAddCreativeForm()">Add another</button>
-      </div>
-    </div>` : `
-    <div class="ac-queued">
-      <div class="ac-queued-title">Creative added</div>
-      <p class="ac-queued-body">${result.message || 'Added.'}</p>
-      <div class="ac-queued-actions">
-        <button type="button" class="btn-outline" onclick="closeAddCreativeModal()">Close</button>
-        <button type="button" class="btn-outline primary" onclick="resetAddCreativeForm()">Add another</button>
-      </div>
-    </div>`;
-  box.style.display = 'block';
-  box.innerHTML = `
-    <div class="brief-hook" style="margin-bottom:12px">
-      <span class="brief-hook-label">Creative ID</span>
-      <div class="brief-hook-text" style="font-family:var(--font-mono);font-size:13px">${result.creativeId}</div>
-      <div style="font:400 12px/16px var(--font-ui);color:var(--ink-500);margin-top:6px">
-        Add this after the pipe in the ad name when the asset is boosted.
-      </div>
-    </div>
-    ${a.duration ? `<div class="organic-stat-row"><span class="organic-stat-label">Duration</span><span class="organic-stat-val">${fmtDur(a.duration)}</span></div>` : ''}
-    ${failed ? `
-      <div class="warning-badge" style="display:block;margin-top:12px">
-        Analysis did not complete
-      </div>
-      <div style="font:400 13px/18px var(--font-ui);color:var(--ink-500);margin-top:8px">
-        The creative is saved. Descriptions can be generated again without re-entering anything.
-      </div>` : `
-      ${a.hook ? `<div class="brief-hook" style="margin-top:12px"><span class="brief-hook-label">Hook</span><div class="brief-hook-text">${a.hook}</div></div>` : ''}
-      ${segs.length ? `<div class="brief-segs" style="margin-top:12px">${
-        segs.map((s,i)=>`<div class="seg-row"><div class="seg-label">${labels[i]||''}</div><div class="seg-text">${s}</div></div>`).join('')
-      }</div>` : ''}`}
-  `;
-}
-
-function showQueuedConfirmation(result) {
-  const form = document.getElementById('addCreativeForm');
-  if (!form) return;
-
-  // The confirmation has to live OUTSIDE the form: hiding the form to show it
-  // would hide the confirmation too, leaving an empty modal.
-  let box = document.getElementById('ac-queued-box');
-  if (!box) {
-    box = document.createElement('div');
-    box.id = 'ac-queued-box';
-    form.parentNode.insertBefore(box, form.nextSibling);
-  }
-
-  const queued = result.queued !== false;
   box.innerHTML = `
     <div class="ac-queued">
       <div class="ac-queued-title">${queued ? 'Queued for analysis' : 'Creative added'}</div>
@@ -3160,6 +3113,7 @@ function showQueuedConfirmation(result) {
   box.style.display = 'block';
   form.style.display = 'none';
   document.getElementById('addCreativeModal').style.pointerEvents = 'auto';
+  toast(queued ? 'Added to the queue. Analysis has started.' : 'Creative added.');
 }
 
 function resetAddCreativeForm() {

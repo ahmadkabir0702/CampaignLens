@@ -243,6 +243,7 @@ function msRenderBody() {
     return;
   }
 
+  const before = msMotionSnapshot(body);
   body.innerHTML =
     msSectionOutput(data) +
     msSectionTrend(data) +
@@ -250,6 +251,7 @@ function msRenderBody() {
     msSectionPaid(data) +
     msSectionWhatWorked(data) +
     msSectionCreators(data);
+  msMotionPlay(body, before);
 }
 
 // ---------- 1. What went out ----------------------------------------
@@ -735,6 +737,77 @@ function msCountBar(parts) {
     <div class="ms-keys">${present.map(p => `
       <span class="ms-key"><span class="ms-key-dot" style="background:${p.c}"></span>${
         msEsc(p.label)} ${p.n}</span>`).join('')}</div>`;
+}
+
+// ---------------------------------------------------------------------
+//  Motion for redrawn figures
+//
+//  The page is rebuilt as HTML on every filter change, so nothing moves on
+//  its own. Before a rebuild the bar widths, column heights and tile
+//  figures on screen are read; after it, each new bar starts from the old
+//  one's length and slides to its own, and a figure that changed rolls to
+//  its new value. Pieces are matched by their order on the page.
+//
+//  On a first draw bars grow from nothing with a short stagger, and
+//  figures do not roll: a number counting up every time a page opens is
+//  noise. Under reduced motion the motion tokens are zero, so it all
+//  simply appears.
+// ---------------------------------------------------------------------
+function msMotionSnapshot(root) {
+  if (!root || !root.firstElementChild) return null;
+  return {
+    segs: [...root.querySelectorAll('.ms-seg')].map(s => s.style.width),
+    fills: [...root.querySelectorAll('.ms-trend-fill')].map(f => f.style.height),
+    nums: [...root.querySelectorAll('.ms-tile-v')].map(n => n.textContent.trim()),
+  };
+}
+
+function msMotionPlay(root, before) {
+  if (!root) return;
+  const segs = [...root.querySelectorAll('.ms-seg')];
+  const fills = [...root.querySelectorAll('.ms-trend-fill')];
+  const set = (els, prop, from) => els.map((el, i) => {
+    const to = el.style[prop];
+    el.style.transition = 'none';
+    el.style[prop] = from ? (from[i] || '0%') : '0%';
+    // Rows further down start a little later, so a first draw reads top
+    // to bottom; capped so a long table still finishes promptly.
+    if (!from) el.style.transitionDelay = Math.min(i * 12, 300) + 'ms';
+    return [el, to];
+  });
+  const pairs = [...set(segs, 'width', before && before.segs), ...set(fills, 'height', before && before.fills)];
+  root.offsetHeight;   // commit the starting lengths before moving them
+  pairs.forEach(([el, to]) => { el.style.transition = ''; el.style[el.classList.contains('ms-seg') ? 'width' : 'height'] = to; });
+  if (before) [...root.querySelectorAll('.ms-tile-v')].forEach((el, i) => {
+    if (before.nums[i] !== undefined && before.nums[i] !== el.textContent.trim()) msRoll(el, before.nums[i]);
+  });
+}
+
+/**
+ * Roll a figure from its old text to the text it now holds. Each digit is
+ * a column of 0-9 moved by transform; separators, units and letters sit
+ * still. Only when the shape matches (same length, digits in the same
+ * places) does it roll; otherwise the new value simply shows.
+ */
+function msRoll(el, fromText) {
+  const to = el.textContent.trim();
+  if (el.children.length) return;   // a tile holding markup is left alone
+  const a = [...fromText], b = [...to];
+  const digit = c => /\d/.test(c);
+  if (a.length !== b.length || a.some((c, i) => digit(c) !== digit(b[i]))) return;
+  el.setAttribute('aria-label', to);
+  el.innerHTML = b.map((c, i) => digit(c)
+    ? `<span class="roll-d" aria-hidden="true"><span style="transform:translateY(-${Number(a[i]) * 10}%)">${
+        '0123456789'.split('').map(x => `<i>${x}</i>`).join('')}</span></span>`
+    : `<span aria-hidden="true">${msEsc(c)}</span>`).join('');
+  el.offsetHeight;
+  el.querySelectorAll('.roll-d > span').forEach((col, k) => {
+    const d = b.filter(digit)[k];
+    col.style.transform = `translateY(-${Number(d) * 10}%)`;
+  });
+  // Back to plain text once settled, so copy and search see the number.
+  const ms = parseFloat(getComputedStyle(document.documentElement).getPropertyValue('--t-slow')) || 0;
+  setTimeout(() => { if (el.getAttribute('aria-label') === to) { el.textContent = to; el.removeAttribute('aria-label'); } }, ms + 80);
 }
 
 /** "3 creatives", "1 creative". */
