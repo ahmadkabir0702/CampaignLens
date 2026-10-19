@@ -467,10 +467,11 @@ app.get('/api/brands', async (req, res) => {
   // what the form shows as valid is exactly what the server will accept.
   app.post('/api/check-links', async (req, res) => {
     try {
-      const { ig, fb, tt, source } = req.body || {};
-      // The form sends what it currently has selected, because a community
-      // page's Facebook post is valid where a brand's or a creator's is not.
-      const result = await checkLinks(app, query, { ig, fb, tt }, { source });
+      const { ig, fb, tt, source, format } = req.body || {};
+      // The form sends what it currently has selected: who posted it, and
+      // whether it is a video or a photo or carousel, which decides the
+      // link shapes that fit.
+      const result = await checkLinks(app, query, { ig, fb, tt }, { source, format });
       // Only worth comparing videos once every link is individually valid.
       if (result.ok) result.content = await contentFor(result.links);
       return res.json(result);
@@ -485,6 +486,10 @@ app.get('/api/brands', async (req, res) => {
     // date is no longer taken from the form. The real post date comes from the
     // platform on first sync; until then the row gets today as a placeholder.
     const { campaign, type, repurposed, originalId, creator, creator_id, description } = req.body;
+    // What the person said the post is. Decides which links are accepted.
+    // Optional, so a form loaded before this change still works.
+    const FORMATS = { video: 'Video', photo: 'Photo', carousel: 'Carousel' };
+    const format = FORMATS[String(req.body.format || '').toLowerCase()] ? String(req.body.format).toLowerCase() : null;
     // Others Say covers briefed creator content and posts by the public.
     // They are judged and acted on differently, so which one is recorded.
     const source = req.body.source || null;
@@ -518,7 +523,7 @@ app.get('/api/brands', async (req, res) => {
     let contentType = 'Video';
     try {
       const lc = await checkLinks(app, query, { ig: req.body.ig, fb: req.body.fb, tt: req.body.tt },
-        { source: sourceValue });
+        { source: sourceValue, format });
       if (!lc.ok) {
         const fieldErrors = {};
         for (const [k, v] of Object.entries(lc.fields)) if (!v.ok) fieldErrors[k] = v.error;
@@ -526,10 +531,11 @@ app.get('/api/brands', async (req, res) => {
       }
       normalised = lc.links;
       ig = normalised.ig || null; fb = normalised.fb || null; tt = normalised.tt || null;
-      // A community page's Facebook post can be a photo. The validator
-      // already worked that out, so the row is typed from it rather than
-      // assuming every creative is a video.
-      if (lc.fields.fb && lc.fields.fb.kind && lc.fields.fb.kind !== 'video') contentType = 'Photo';
+      // A first guess only. Whether the post is a video, a single image or a
+      // carousel is settled by the worker when it fetches the post, since an
+      // Instagram /p/ link or a Facebook post can be any of them.
+      if (format) contentType = FORMATS[format];
+      else if (Object.values(lc.fields).some(f => f && f.kind === 'photo')) contentType = 'Photo';
     } catch (err) {
       console.error('[add-creative] link check failed:', err.message);
       return res.status(500).json({ error: 'Could not verify the links. Try again.' });
@@ -541,7 +547,7 @@ app.get('/api/brands', async (req, res) => {
     const content = await contentFor({ ig, fb, tt });
     if (content.verdict === 'different' && !req.body.content_confirmed) {
       return res.status(409).json({
-        error: 'These links look like different videos.',
+        error: 'These links look like different posts.',
         contentWarning: content.warning, content });
     }
     // Overriding a mismatch lets the creative in, but it is not treated as
@@ -657,6 +663,7 @@ app.get('/api/brands', async (req, res) => {
             creator: creator || null,
             creatorId: creator_id || null,
             contentType,
+            format,
             mediaUrl: videoLink,
             platform: videoLink.includes('instagram.com') ? 'instagram'
                     : videoLink.includes('tiktok.com') ? 'tiktok' : 'facebook',

@@ -120,12 +120,18 @@
     <div class="sub" style="margin:-6px 0 12px">The creator is picked up from the post automatically. Just choose the campaign and add the links.</div>
     <div class="grid">
       <div><label>Campaign</label><select id="f_campaign"><option value="" disabled selected>Select campaign</option></select></div>
+      <div><label>Kind of post</label><select id="f_format" onchange="formatChanged()">
+        <option value="" disabled selected>Choose one</option>
+        <option value="video">Reel or video</option>
+        <option value="photo">Static image</option>
+        <option value="carousel">Carousel</option>
+      </select></div>
     </div>
     <div class="plats-form">
       <div class="plat-row">
         <label class="tgl"><input type="checkbox" id="f_ig_on" onchange="platToggle('ig')"><span class="tgl-track"></span></label>
         <div class="plat-name">Instagram</div>
-        <input id="f_ig" placeholder="https://www.instagram.com/reel/…" disabled
+        <input id="f_ig" placeholder="https://www.instagram.com/reel/… or /p/…" disabled
                onblur="checkOne('ig')" oninput="setErr('ig', '')">
       </div>
       <div class="plat-err" id="f_ig_err"></div>
@@ -139,7 +145,7 @@
       <div class="plat-row">
         <label class="tgl"><input type="checkbox" id="f_tt_on" onchange="platToggle('tt')"><span class="tgl-track"></span></label>
         <div class="plat-name">TikTok</div>
-        <input id="f_tt" placeholder="TikTok video link" disabled
+        <input id="f_tt" placeholder="TikTok video or photo link" disabled
                onblur="checkOne('tt')" oninput="setErr('tt', '')">
       </div>
       <div class="plat-err" id="f_tt_err"></div>
@@ -334,19 +340,21 @@ function readForm() {
   });
   return {
     campaign: $('f_campaign').value,
+    format: $('f_format').value,
     plats,
   };
 }
 
 function validate(f) {
   if (!f.campaign) return 'Select a campaign.';
+  if (!f.format) return 'Choose what kind of post this is: reel or video, static image, or carousel.';
   if (!PLATS.some(p => f.plats[p.k].on)) return 'Turn on at least one platform. Content with no links cannot have stats.';
   let bad = false;
   for (const p of PLATS) {
     const v = f.plats[p.k];
     if (!v.on) { setErr(p.k, ''); continue; }
     if (!v.link) { setErr(p.k, 'Add the link or turn this platform off.'); bad = true; continue; }
-    const r = window.CLLinks.validate(p.k, v.link);
+    const r = window.CLLinks.validate(p.k, v.link, { format: f.format });
     if (!r.ok && !r.needsResolve) { setErr(p.k, r.error); bad = true; }
     else setErr(p.k, '');
   }
@@ -362,12 +370,24 @@ function setErr(k, msg) {
 function checkOne(k) {
   const box = $('f_' + k + '_on'), inp = $('f_' + k);
   if (!box || !box.checked || !inp || !inp.value.trim()) return;
-  const r = window.CLLinks.validate(k, inp.value);
+  const r = window.CLLinks.validate(k, inp.value, { format: $('f_format').value });
   setErr(k, (!r.ok && !r.needsResolve) ? r.error : '');
 }
 
+// The kind of post decides which links fit, so the boxes say what to
+// paste and anything already typed is checked again.
+function formatChanged() {
+  const fmt = $('f_format').value;
+  PLATS.forEach(p => {
+    const inp = $('f_' + p.k);
+    if (inp) inp.placeholder = window.CLLinks.placeholder(fmt, p.k) || (p.label + ' link');
+    setErr(p.k, '');
+    checkOne(p.k);
+  });
+}
+
 async function serverCheck(f) {
-  const body = {};
+  const body = { format: f.format };
   PLATS.forEach(p => { if (f.plats[p.k].on) body[p.k] = f.plats[p.k].link; });
   const r = await fetch('/api/check-links', {
     method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
@@ -386,7 +406,7 @@ function contentBlock() {
   const c = CONTENT;
   if (!c) return '';
   if (c.verdict === 'different') {
-    return `<div class="content-warn"><b>These links look like different videos.</b> ${esc(c.warning || '')}
+    return `<div class="content-warn"><b>These links look like different posts.</b> ${esc(c.warning || '')}
       <div class="content-sub">Go back and check the links, or add it anyway if they really are the same content.</div></div>`;
   }
   if (c.note) return `<div class="content-note">${esc(c.note)}</div>`;
@@ -398,6 +418,7 @@ function renderReview(f) {
   const off = PLATS.filter(p => !f.plats[p.k].on).length;
   return `<div class="rv"><h4>Check before submitting</h4>
     ${line('Campaign', f.campaign)}
+    ${line('Kind of post', { video: 'Reel or video', photo: 'Static image', carousel: 'Carousel' }[f.format] || '')}
     ${PLATS.map(p => line(p.label, f.plats[p.k].on ? f.plats[p.k].link : 'Not used', !f.plats[p.k].on)).join('')}
     ${off ? `<div class="rv-warn">${off} platform${off > 1 ? 's' : ''} recorded as not used. Go back if that is wrong.</div>` : ''}
     <div class="rv-warn">Stats for this content are due within 48 hours of submitting.</div>
@@ -438,7 +459,7 @@ $('addBtn').onclick = async () => {
     $('backBtn').style.display = '';
     const differs = CONTENT && CONTENT.verdict === 'different';
     $('addBtn').textContent = differs ? 'Add anyway' : 'Confirm and add';
-    m.textContent = differs ? 'The links look like different videos. Check them before adding.'
+    m.textContent = differs ? 'The links look like different posts. Check them before adding.'
                             : 'Check the details above, then confirm.';
     REVIEWED = true;
     return;
@@ -447,6 +468,7 @@ $('addBtn').onclick = async () => {
   const body = {
     brand_id: BRAND, type: 'Others Say',
     campaign: f.campaign,
+    format: f.format,
     ig: f.plats.ig.on ? f.plats.ig.link : null,
     fb: f.plats.fb.on ? f.plats.fb.link : null,
     tt: f.plats.tt.on ? f.plats.tt.link : null,
@@ -460,7 +482,7 @@ $('addBtn').onclick = async () => {
       CONTENT = j.content || { verdict: 'different', warning: j.contentWarning };
       $('review').innerHTML = renderReview(readForm()) + contentBlock();
       $('addBtn').textContent = 'Add anyway';
-      throw new Error('The links look like different videos. Check them, or press Add anyway.');
+      throw new Error('The links look like different posts. Check them, or press Add anyway.');
     }
     if (j.fieldErrors) {
       setEditMode();

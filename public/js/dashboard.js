@@ -651,6 +651,9 @@ const STATE_SHORT = {
   'No Duration':   'No length on file',
   'No Watch Time': 'No watch time',
   'No Threshold':  'No benchmark set',
+  'No Reach':      'No reach yet',
+  'No Followers':  'No follower count',
+  'Not Rated':     'Not rated',
 };
 const STATE_WHY = {
   'Boosted':       'Spend is behind this post, so its organic numbers include paid delivery. The paid rating is the one that applies.',
@@ -660,6 +663,9 @@ const STATE_WHY = {
   'No Duration':   'The video length is missing, so retention cannot be worked out.',
   'No Watch Time': 'No average watch time came back, which is what the rating needs.',
   'No Threshold':  'No benchmark is set for this platform.',
+  'No Reach':      'No reach or views have come back yet. Photos and carousels are rated on engagement per person reached.',
+  'No Followers':  'No follower count came back for this account. Photos and carousels from creators are rated on engagement per follower.',
+  'Not Rated':     'The paid rating is built on video watch rates, so photos and carousels are not given one. Read them on spend and reach, and on the organic engagement rating.',
 };
 const stateShort = (v) => STATE_SHORT[v] || v;
 
@@ -1130,13 +1136,15 @@ function cardMediaHTML(d) {
   const play = open ? `<button class="card-play" data-press title="Open on ${escapeHtml(links[0].name)}"
        aria-label="Open on ${escapeHtml(links[0].name)}"
        onclick="event.stopPropagation();window.open('${escapeHtml(open)}','_blank','noopener')"
-      >${playMark(13)}</button>` : '';
+      >${d.isStatic ? openMark(12) : playMark(13)}</button>` : '';
+  const stack = d.isStatic && d.slideCount > 1
+    ? `<span class="card-thumb-stack" title="${d.slideCount} slides">${d.slideCount}</span>` : '';
   const img = d.thumbnail
     ? `<img src="${escapeHtml(d.thumbnail)}" alt="" loading="lazy" onerror="this.remove()">`
     : '';
   return `<div class="card-thumb${d.thumbnail ? '' : ' card-thumb-none'}"
        ${d.thumbnail ? '' : 'title="No still frame on file for this creative"'}>
-    <span class="card-thumb-mark">${mark}</span>${img}${play}
+    <span class="card-thumb-mark">${mark}</span>${img}${stack}${play}
   </div>`;
 }
 
@@ -1144,6 +1152,13 @@ function platformLinks(d) {
   return PLATFORM_LINKS
     .filter(p => d[p.key])
     .map(p => ({ name: p.name, url: d[p.key] }));
+}
+
+// An arrow out, for photos and carousels: there is nothing to play.
+function openMark(size) {
+  return `<svg viewBox="0 0 24 24" width="${size}" height="${size}" aria-hidden="true">
+    <path d="M9 7h8v8M17 7 7.5 16.5" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
+  </svg>`;
 }
 
 // A play triangle. Same mark on the card and in the detail panel so the
@@ -1356,7 +1371,9 @@ function cardHTML(d) {
       ? `<span class="tag-repurposed">Repurposed</span>`
       : (kidCount ? `<span class="tag-lineage">${kidCount} repurposed</span>` : '');
     const valTag  = d.isValidated  ? `<span class="tag-validated">✓ Validated</span>` : '';
-    const durTag  = d.duration     ? `<span class="tag-duration">${fmtDur(d.duration)}</span>` : '';
+    const durTag  = d.isStatic
+      ? (d.slideCount > 1 ? `<span class="tag-duration">${d.slideCount} slides</span>` : '')
+      : (d.duration ? `<span class="tag-duration">${fmtDur(d.duration)}</span>` : '');
     const ctTag   = d.contentType  ? `<span class="tag-content-type">${d.contentType}</span>` : '';
 
     // Type and sub-type in one chip. BS, Creator-led and Community page
@@ -1777,8 +1794,22 @@ function installModalDrag() {
   panel.addEventListener('pointercancel', release);
 }
 
-function getMetricsHTML(item, titleLabel) {
+function getMetricsHTML(item, titleLabel, isStatic) {
   if (!item) return '';
+  if (isStatic) {
+    // No video, so no hook or hold rate and no rating built on them.
+    const cpm = item.impressions > 0 ? item.spend / item.impressions * 1000 : null;
+    return `
+    <div style="margin-bottom:12px;">
+      <div style="font-size:11px;font-weight:700;color:var(--c-muted);margin-bottom:6px;text-transform:uppercase;">${titleLabel} Paid Stats</div>
+      <div class="detail-metrics" style="margin-bottom:6px;">
+        <div class="dm"><div class="dm-label">Spend</div><div class="dm-val">${fmt(item.spend)}</div></div>
+        <div class="dm"><div class="dm-label">Reach</div><div class="dm-val">${fmtN(item.reach)}</div><div style="font-size:10px;color:var(--c-muted);margin-top:2px;">Impr: ${fmtN(item.impressions)}</div></div>
+        <div class="dm"><div class="dm-label">CPM</div><div class="dm-val">${cpm === null ? '—' : fmt(Math.round(cpm))}</div></div>
+        <div class="dm"><div class="dm-label">Paid CQR</div><div class="dm-val dsum-quiet" title="${escapeHtml(STATE_WHY['Not Rated'])}">Not rated</div><div style="font-size:10px;color:var(--c-muted);margin-top:2px;">Video-only rating</div></div>
+      </div>
+    </div>`;
+  }
   const cqrColorClass = item.cqr === 'Good' ? 'cqr-good' : (item.cqr === 'Average' ? 'cqr-avg' : 'cqr-poor');
   const hlValFormatted = item.holdRate >= 1000 ? (item.holdRate/1000).toFixed(1)+'K' : (item.holdRate||0).toFixed(1);
   const durLabel = item.duration ? `<div style="font-size:10px;color:var(--c-muted);margin-top:3px;">Duration: ${fmtDur(item.duration)}</div>` : '';
@@ -1879,7 +1910,8 @@ function buildOrganicHTML(d) {
 
   const igBox = !ig ? `<div class="organic-box"><div class="organic-platform">Instagram</div><div class="organic-empty">No data</div></div>` : `<div class="organic-box">
     <div class="organic-platform">Instagram</div>
-    <div class="organic-stat-row"><span class="organic-stat-label">Views</span><span class="organic-stat-val">${fmtN(ig.views||0)}</span></div>
+    ${d.isStatic && !ig.views ? '' : `<div class="organic-stat-row"><span class="organic-stat-label">Views</span><span class="organic-stat-val">${fmtN(ig.views||0)}</span></div>`}
+    ${d.isStatic && ig.reach ? `<div class="organic-stat-row"><span class="organic-stat-label">Reach</span><span class="organic-stat-val">${fmtN(ig.reach)}</span></div>` : ''}
     <div class="organic-stat-row"><span class="organic-stat-label">Likes</span><span class="organic-stat-val">${fmtN(ig.likes||0)}</span></div>
     <div class="organic-stat-row"><span class="organic-stat-label">Comments</span><span class="organic-stat-val">${fmtN(ig.comments||0)}</span></div>
     <div class="organic-stat-row"><span class="organic-stat-label">Saves</span><span class="organic-stat-val">${fmtN(ig.saves||0)}</span></div>
@@ -1891,7 +1923,8 @@ function buildOrganicHTML(d) {
 
   const fbBox = !fb ? `<div class="organic-box"><div class="organic-platform">Facebook</div><div class="organic-empty">No data</div></div>` : `<div class="organic-box">
     <div class="organic-platform">Facebook</div>
-    <div class="organic-stat-row"><span class="organic-stat-label">Video Views</span><span class="organic-stat-val">${fmtN(fb.videoViews||0)}</span></div>
+    ${d.isStatic && !fb.videoViews ? '' : `<div class="organic-stat-row"><span class="organic-stat-label">${d.isStatic ? 'Views' : 'Video Views'}</span><span class="organic-stat-val">${fmtN(fb.videoViews||0)}</span></div>`}
+    ${d.isStatic && fb.reach ? `<div class="organic-stat-row"><span class="organic-stat-label">Reach</span><span class="organic-stat-val">${fmtN(fb.reach)}</span></div>` : ''}
     <div class="organic-stat-row"><span class="organic-stat-label">Reactions</span><span class="organic-stat-val">${fmtN(fb.reactions||0)}</span></div>
     <div class="organic-stat-row"><span class="organic-stat-label">Comments</span><span class="organic-stat-val">${fmtN(fb.comments||0)}</span></div>
     <div class="organic-stat-row"><span class="organic-stat-label">Shares</span><span class="organic-stat-val">${fmtN(fb.shares||0)}</span></div>
@@ -2262,7 +2295,50 @@ function buildValidationHTML(v) {
   return `${split}${flags}<div class="orgval-grid">${platBlocks}</div>${winners}`;
 }
 
+/** The brief for a photo or carousel: what each slide shows. */
+function buildSlidesBriefHTML(d) {
+  const slides = Array.isArray(d.slides) ? d.slides : [];
+  if (!d.contentHook && !slides.length) return '';
+  const esc = s => String(s ?? '').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
+  const FORMAT_LABEL = {
+    product_demo:'Product demo', testimonial:'Testimonial', lifestyle:'Lifestyle', tutorial:'Tutorial',
+    ugc:'UGC', animation:'Graphic design', other:'Other',
+  };
+  const ROLE_LABEL = {
+    hero:'Product is the subject', featured:'Product featured',
+    incidental:'Product incidental', absent:'Product not shown',
+  };
+  const many = (d.slideCount || slides.length) > 1;
+  const metaBits = [
+    FORMAT_LABEL[d.format] ? `<span class="brief-tag">${FORMAT_LABEL[d.format]}</span>` : '',
+    ROLE_LABEL[d.productRole] ? `<span class="brief-tag brief-tag-quiet">${ROLE_LABEL[d.productRole]}</span>` : '',
+    `<span class="brief-tag brief-tag-quiet">${many ? `${d.slideCount || slides.length} slides` : 'Single image'}</span>`,
+  ].filter(Boolean).join('');
+  const more = d.slideCount && d.slideCount > slides.length
+    ? `<div class="brief-note">The first ${slides.length} of ${d.slideCount} slides are shown.</div>` : '';
+  const rows = slides.map(sl => `<div class="brief-slide">
+      <div class="brief-slide-img">${sl.image
+        ? `<img src="${esc(sl.image)}" alt="Slide ${sl.i}" loading="lazy" onerror="this.remove()">` : ''}
+        ${sl.type === 'video' ? '<span class="brief-slide-vid">Video</span>' : ''}</div>
+      <div class="brief-slide-body">
+        <div class="brief-slide-n">${many ? `Slide ${sl.i}` : 'Image'}</div>
+        <div class="brief-scene-text">${sl.d ? esc(sl.d) : '<span style="color:var(--c-muted)">Not described.</span>'}</div>
+      </div>
+    </div>`).join('');
+  return `
+    <details class="org-details" style="margin-top:12px;">
+      <summary class="org-summary">Creative Brief <span style="color:var(--c-muted);font-size:10px;">Click to expand ▼</span></summary>
+      <div class="org-content">
+        ${metaBits ? `<div class="brief-tags">${metaBits}</div>` : ''}
+        ${d.formatNote ? `<div class="brief-note">${esc(d.formatNote)}</div>` : ''}
+        ${d.contentHook ? `<div class="brief-hook"><span class="brief-hook-label">${many ? 'First slide' : 'Hook'}</span><div class="brief-hook-text">${esc(d.contentHook)}</div></div>` : ''}
+        ${rows ? `<div class="brief-timeline-head"><span class="brief-hook-label">${many ? 'Slide by slide' : 'The image'}</span></div><div class="brief-slides">${rows}</div>${more}` : ''}
+      </div>
+    </details>`;
+}
+
 function buildCreativeBriefHTML(d) {
+  if (d.isStatic) return buildSlidesBriefHTML(d);
   const timeline = Array.isArray(d.timeline) ? d.timeline : [];
   const hasQuartiles = d.segments && d.segments.length > 0;
   if (!d.contentHook && !timeline.length && !hasQuartiles) return '';
@@ -2390,10 +2466,10 @@ function renderDetail(d) {
   const platLabel = d.platform === 'both' ? 'Meta & TikTok' : (d.platform==='tiktok'?'TikTok':'Meta');
   let statsHTML = '', recsHTML = '';
   if (d.platform === 'both') {
-    statsHTML = getMetricsHTML(d._meta, 'Meta') + getMetricsHTML(d._tt, 'TikTok');
+    statsHTML = getMetricsHTML(d._meta, 'Meta', d.isStatic) + getMetricsHTML(d._tt, 'TikTok', d.isStatic);
     recsHTML  = getRecHTML(d._meta, 'Meta') + getRecHTML(d._tt, 'TikTok');
   } else {
-    statsHTML = getMetricsHTML(d, d.platform==='meta'?'Meta':'TikTok');
+    statsHTML = getMetricsHTML(d, d.platform==='meta'?'Meta':'TikTok', d.isStatic);
     recsHTML  = getRecHTML(d, d.platform==='meta'?'Meta':'TikTok');
   }
 
@@ -2417,7 +2493,7 @@ function renderDetail(d) {
       ${previewLink ? `<button class="detail-play" data-press title="Open on ${escapeHtml(previewLink.name)}"
          aria-label="Open on ${escapeHtml(previewLink.name)}"
          onclick="window.open('${escapeHtml(previewLink.url)}','_blank','noopener')"
-        >${playMark(26)}</button>` : ''}
+        >${d.isStatic ? openMark(22) : playMark(26)}</button>` : ''}
     </div>` : '';
 
   let valUI = '';
@@ -2441,8 +2517,8 @@ function renderDetail(d) {
   }
 
   const metaParts = [platLabel, d.campaign, d.month];
-  if (d.duration) metaParts.push(fmtDur(d.duration));
-  if (d.contentType) metaParts.push(d.contentType);
+  if (d.duration && !d.isStatic) metaParts.push(fmtDur(d.duration));
+  if (d.contentType) metaParts.push(d.contentType + (d.isStatic && d.slideCount > 1 ? ` of ${d.slideCount} slides` : ''));
 
   document.getElementById('creativeModalContent').innerHTML = `
     <div class="cm-body">
@@ -2481,10 +2557,10 @@ function renderDetail(d) {
 
       <div style="margin-top:14px">${recsHTML}</div>
 
-      <div class="charts-row" style="margin-top:14px;">
+      ${d.isStatic ? '' : `<div class="charts-row" style="margin-top:14px;">
         <div class="chart-box"><div class="chart-box-title">Retention drop-off</div><div class="chart-container" style="height:160px"><canvas id="retChart"></canvas></div></div>
         <div class="chart-box"><div class="chart-box-title">Performance radar</div><div class="chart-container" style="height:160px"><canvas id="radarChart"></canvas></div></div>
-      </div>
+      </div>`}
     </div>`;
 
   // Organic opens by default now, and ontoggle only fires when the open
@@ -2492,8 +2568,10 @@ function renderDetail(d) {
   const openOrg = document.querySelector('#creativeModalContent details.org-details[open]');
   if (openOrg) loadOrganicValidation(openOrg, d.id);
 
-  if (retChart)   retChart.destroy();
-  if (radarChart) radarChart.destroy();
+  if (retChart)   { retChart.destroy(); retChart = null; }
+  if (radarChart) { radarChart.destroy(); radarChart = null; }
+  // A photo or carousel has no retention curve and no hook or hold rate.
+  if (d.isStatic) return;
 
   const gc = '#E4E6EA';   // gridlines, line-200
   const tc = '#8A909B';   // axis labels, ink-400
@@ -2856,6 +2934,7 @@ function acReadForm() {
     description: (document.getElementById('ac-description') || {}).value || '',
     campaign: document.getElementById('ac-campaign').value,
     type: document.getElementById('ac-type').value,
+    format: acFormat(),
     source: (document.getElementById('ac-source') || {}).value || '',
     creatorLed: !!(document.getElementById('ac-creator-led') || {}).checked,
     repurposed: document.getElementById('ac-repurposed').value || 'No',
@@ -2868,6 +2947,7 @@ function acReadForm() {
 function acValidate(f) {
   if (!f.campaign) return 'Select a campaign.';
   if (!f.type) return 'Select a category.';
+  if (!f.format) return 'Choose what kind of post this is: reel or video, static image, or carousel.';
   if (f.type === 'Others Say' && !f.source) return 'Choose whether this is creator or community content.';
   const anyOn = AC_PLATS.some(p => f.plats[p.k].on);
   if (!anyOn) return 'Turn on at least one platform. A creative with no links cannot have stats.';
@@ -2876,7 +2956,7 @@ function acValidate(f) {
     const v = f.plats[p.k];
     if (!v.on) { acSetErr(p.k, ''); continue; }
     if (!v.link) { acSetErr(p.k, 'Add the link or turn this platform off.'); bad = true; continue; }
-    const r = window.CLLinks.validate(p.k, v.link, { source: f.source });
+    const r = window.CLLinks.validate(p.k, v.link, { source: f.source, format: f.format });
     // needsResolve is not an error: the server follows the redirect.
     if (!r.ok && !r.needsResolve) { acSetErr(p.k, r.error); bad = true; }
     else acSetErr(p.k, '');
@@ -2913,8 +2993,28 @@ function acCheckOne(k) {
   const box = document.getElementById(`ac-${k}-on`);
   const input = document.getElementById(`ac-${k}`);
   if (!box || !box.checked || !input || !input.value.trim()) return;
-  const r = window.CLLinks.validate(k, input.value, { source: acSource() });
+  const r = window.CLLinks.validate(k, input.value, { source: acSource(), format: acFormat() });
   acSetErr(k, (!r.ok && !r.needsResolve) ? r.error : '');
+}
+
+/** What the person said the post is: 'video', 'photo', 'carousel' or ''. */
+function acFormat() {
+  return (document.getElementById('ac-format') || {}).value || '';
+}
+
+/**
+ * The format decides which links fit, so the boxes say what to paste and
+ * any link already typed is checked again under the new rule.
+ */
+function acFormatChanged() {
+  const fmt = acFormat();
+  AC_PLATS.forEach(p => {
+    const input = document.getElementById(`ac-${p.k}`);
+    if (!input) return;
+    input.placeholder = (fmt && window.CLLinks.placeholder(fmt, p.k)) || `${p.label} link`;
+    acClearErr(p.k);
+    acCheckOne(p.k);
+  });
 }
 
 /**
@@ -2936,7 +3036,7 @@ function acRecheckFb() {
 // Server check: resolves short links, catches duplicates. Returns true when
 // every link passes, having written each field's error under it.
 async function acServerCheck(f) {
-  const body = { source: f.source || '' };
+  const body = { source: f.source || '', format: f.format || '' };
   AC_PLATS.forEach(p => { if (f.plats[p.k].on) body[p.k] = f.plats[p.k].link; });
   let data;
   try {
@@ -2967,7 +3067,7 @@ function acContentBlock() {
   const c = AC_CONTENT;
   if (!c) return '';
   if (c.verdict === 'different') {
-    return `<div class="rv-content-warn"><b>These links look like different videos.</b> ${escapeHtml(c.warning || '')}
+    return `<div class="rv-content-warn"><b>These links look like different posts.</b> ${escapeHtml(c.warning || '')}
       <div class="rv-content-sub">Only one of them is analysed, so the creative's description would not match the other's numbers.
       Go back and check the links, or add it anyway if they really are the same content.</div></div>`;
   }
@@ -2983,6 +3083,7 @@ function acRenderReview(f) {
     ${f.description ? line('Description', f.description) : ''}
     ${line('Campaign', f.campaign)}
     ${line('Category', f.type)}
+    ${line('Format', { video: 'Reel or video', photo: 'Static image', carousel: 'Carousel' }[f.format] || '')}
     ${f.type === 'Others Say' ? line('Posted by', f.source === 'community' ? 'Community' : 'Creator') : ''}
     ${f.type === 'Brand Say' ? line('Led by a creator', f.creatorLed ? 'Yes' : 'No') : ''}
     ${f.type === 'Brand Say' ? line('Repurposed', f.repurposed) : ''}
@@ -3002,7 +3103,7 @@ function backToEdit() {
     el.style.display = '';
   });
   document.querySelectorAll('#addCreativeForm .plat-rows').forEach(el => el.style.display = '');
-  ['ac-campaign', 'ac-type', 'ac-repurposed', 'ac-original-id'].forEach(id => {
+  ['ac-campaign', 'ac-type', 'ac-format-row', 'ac-repurposed', 'ac-original-id'].forEach(id => {
     const el = document.getElementById(id);
     if (el && el.dataset.acHidden === '1') { el.style.display = el.dataset.acDisplay || ''; delete el.dataset.acHidden; }
   });
@@ -3041,7 +3142,7 @@ async function submitCreative(e) {
     const rv = document.getElementById('ac-review');
     rv.innerHTML = acRenderReview(f) + acContentBlock();
     rv.style.display = 'block';
-    ['ac-campaign', 'ac-type', 'ac-repurposed', 'ac-original-id'].forEach(id => {
+    ['ac-campaign', 'ac-type', 'ac-format-row', 'ac-repurposed', 'ac-original-id'].forEach(id => {
       const el = document.getElementById(id);
       if (el && el.style.display !== 'none') { el.dataset.acDisplay = el.style.display; el.dataset.acHidden = '1'; el.style.display = 'none'; }
     });
@@ -3092,7 +3193,7 @@ async function submitCreative(e) {
     const res = await fetch('/api/add-creative', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ campaign, type, source, creator_led, ig, fb, tt, repurposed, originalId, description, brand: BRAND_NAME,
+      body: JSON.stringify({ campaign, type, format: f.format, source, creator_led, ig, fb, tt, repurposed, originalId, description, brand: BRAND_NAME,
         content_confirmed: !!(AC_CONTENT && AC_CONTENT.verdict === 'different') }),
       signal: AbortSignal.timeout(120000)
     });
@@ -3192,9 +3293,10 @@ function resetAddCreativeForm() {
   });
   syncPlatFields();
   document.querySelectorAll('#addCreativeForm .plat-rows').forEach(el => el.style.display = '');
-  ['ac-campaign', 'ac-type'].forEach(id => {
+  ['ac-campaign', 'ac-type', 'ac-format-row'].forEach(id => {
     const el = document.getElementById(id); if (el) { el.style.display = ''; delete el.dataset.acHidden; }
   });
+  AC_PLATS.forEach(p => { const i = document.getElementById(`ac-${p.k}`); if (i) i.placeholder = `${p.label} link`; });
   const back = document.getElementById('ac-back-btn');
   if (back) back.style.display = 'none';
   const conf = document.getElementById('ac-confirm-btn');

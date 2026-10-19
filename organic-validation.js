@@ -25,6 +25,7 @@
 // =====================================================================
 const { query } = require('./db');
 const V = require('./server/chat/vocab');
+const SR = require('./server/static-rating');
 
 /**
  * Run a query, and if Postgres reports a column that does not exist,
@@ -115,7 +116,7 @@ function ratingSignal(o, type, durationS) {
 // words and was rendered in the panel, so it is gone rather than merely
 // unused: the comment block at the top of this file is where the method
 // is documented, for people reading the source.
-const signalName = (type) => (isOthersSay(type) ? 'Interaction' : 'Retention');
+const signalName = (type, isStatic) => (isStatic ? 'Engagement' : isOthersSay(type) ? 'Interaction' : 'Retention');
 
 /**
  * Every value cqr_organic_label can return that is not a grade, and what
@@ -130,6 +131,8 @@ const CQR_STATES = {
   'no duration':    'The video length is missing, so retention cannot be worked out.',
   'no watch time':  'No average watch time came back, which is what the rating is based on.',
   'no threshold':   'No benchmark is set for this platform, so there is nothing to rate against.',
+  'no reach':       'No reach or views have come back for this post, which is what a photo or carousel is rated on.',
+  'no followers':   'No follower count came back for this account, which is what a photo or carousel is rated on.',
 };
 const stateOf = (cqr) => CQR_STATES[String(cqr || '').toLowerCase()] ? String(cqr) : null;
 const gradeOnly = (cqr) => (S_RANK[cqr] === undefined ? null : cqr);
@@ -214,6 +217,11 @@ const SIGNAL_WORDS = {
     Good: 'people do something after watching, not just scroll past',
     Average: 'some people respond to it, but not many',
     Poor: 'almost nobody responds to it',
+  },
+  Engagement: {
+    Good: 'people stop on it and respond, rather than scroll past',
+    Average: 'some people respond to it, but not many',
+    Poor: 'almost nobody who saw it responded',
   },
 };
 
@@ -317,7 +325,8 @@ const DIMENSIONS = [
   {
     key: 'engagement',
     label: () => 'Engagement',
-    value: (o) => rate(engagementsOf(o), anyOf(o, 'views')),
+    // Per view; per person reached when there are no views (a photo).
+    value: (o) => rate(engagementsOf(o), anyOf(o, 'views', 'reach')),
   },
   {
     key: 'watch',
@@ -336,7 +345,7 @@ const DIMENSIONS = [
       if (!o) return null;
       const s = anyOf(o, 'shares'), sv = anyOf(o, 'saves');
       if (s === null && sv === null) return null;
-      return rate((s || 0) + (sv || 0), anyOf(o, 'views'));
+      return rate((s || 0) + (sv || 0), anyOf(o, 'views', 'reach'));
     },
   },
 ];
@@ -651,14 +660,16 @@ async function buildValidation(brandId, creativeId) {
   // The peer query needs this creative's type, so that one read comes
   // first and the rest run together behind it.
   const typeR = await query(
-    `select type from creatives where creative_id = $1 and brand_id = $2`,
+    `select type, content_type from creatives where creative_id = $1 and brand_id = $2`,
     [creativeId, brandId]);
   if (!typeR.rows.length) return null;
   const creativeType = typeR.rows[0].type;
 
-  const [creativeR, organicR, thresholdR, osBenchR, peerR, paidR] = await Promise.all([
+  const creativeIsStatic = SR.isStatic(typeR.rows[0].content_type);
+
+  const [creativeR, organicR, thresholdR, osBenchR, peerR, staticBands, paidR] = await Promise.all([
     queryTolerant(
-      `select c.creative_id, c.brand_id, c.type, c.campaign, c.date, c.duration_s,
+      `select c.creative_id, c.brand_id, c.type, c.content_type, c.campaign, c.date, c.duration_s,
               c.ig_link, c.fb_link, c.tt_link,
               c.format, c.product_role, c.content_intent, c.narrative_structure,
               c.hook_device, c.hook_subject, c.hook_pace, c.language, c.talent,
@@ -670,7 +681,7 @@ async function buildValidation(brandId, creativeId) {
 
     queryTolerant(
       `select o.platform, o.views, o.reach, o.likes, o.comments, o.shares, o.saves,
-              o.total_interactions, o.avg_watch_time, o.time_posted,
+              o.total_interactions, o.avg_watch_time, o.time_posted, o.followers,
               o.reaction_like, o.reaction_love, o.reaction_haha,
               o.reaction_wow, o.reaction_sad, o.reaction_angry,
               s.cqr, s.engagement_rate, s.retention_rate
@@ -694,16 +705,20 @@ async function buildValidation(brandId, creativeId) {
     // different signals, so a mixed pool produces a meaningless
     // percentile. The raw counts come too, because the standing is
     // computed from the same signal the rating uses, not from the view.
-    query(
+    // Statics are compared only with statics, and videos only with videos.
+    queryTolerant(
       `select o.platform, o.views, o.reach, o.likes, o.comments, o.shares, o.saves,
-              o.total_interactions, o.avg_watch_time, c.duration_s
+              o.total_interactions, o.avg_watch_time, c.duration_s, o.followers
          from organic_perf o
          join creatives c on c.creative_id = o.creative_id
         where c.brand_id = $1
           and c.creative_id <> $2
           and c.type is not distinct from $4
+          and (coalesce(c.content_type, 'Video') in ('Photo', 'Carousel')) = $5
           and (c.date is null or c.date >= current_date - ($3)::int)`,
-      [brandId, creativeId, STANDING_DAYS, creativeType]),
+      [brandId, creativeId, STANDING_DAYS, creativeType, creativeIsStatic]),
+
+    SR.loadBands(query, brandId),
 
     // Paid creative-platform pairs with their tags, for the winners match.
     query(
@@ -767,9 +782,14 @@ async function buildValidation(brandId, creativeId) {
 
     // The one signal the rating is based on, and the band it is read
     // against. Which of the two it is, and where the band comes from,
-    // depends on type, exactly as cqr_organic_label does it.
-    const signal = ratingSignal(o, c.type, c.duration_s);
-    const band = isOthersSay(c.type)
+    // depends on type, exactly as cqr_organic_label does it. Photos and
+    // carousels use the engagement rule in static-rating.js instead.
+    const st = creativeIsStatic
+      ? SR.rateStatic({ o, type: c.type, plat, brandId, bands: staticBands, storedCqr: o.cqr, postedAt: o.time_posted })
+      : null;
+    const signal = st ? (st.signal ? st.signal.value : null) : ratingSignal(o, c.type, c.duration_s);
+    const band = st ? (st.band ? { poor_lt: num(st.band.poor_lt), good_gte: num(st.band.good_gte), source: 'static' } : null)
+      : isOthersSay(c.type)
       ? (osBench[plat]
           ? { poor_lt: num(osBench[plat].poor_below), good_gte: num(osBench[plat].good_from), source: 'os' }
           : null)
@@ -782,12 +802,21 @@ async function buildValidation(brandId, creativeId) {
     // Boosted. The rule is the same one, so the answer agrees with
     // every other CQR in the app rather than being a second opinion.
     const rated = grade(signal, band);
-    const state = stateOf(o.cqr);
-    const delivered = num(o.views) !== null && num(o.views) >= VIEW_FLOOR;
+    const state = st ? (st.grade ? null : stateOf(st.cqr)) : stateOf(o.cqr);
+    // A static has no views to judge delivery by on most platforms: reach
+    // stands in, and a per-follower read needs only the follower count.
+    // With nothing to rate on at all, the state says why; delivery is
+    // not the question then.
+    const delivered = st
+      ? (!st.signal || st.signal.value === null || st.signal.basis === 'followers' ? true
+         : Number(st.signal.den) >= VIEW_FLOOR)
+      : num(o.views) !== null && num(o.views) >= VIEW_FLOOR;
     const tooNew = hoursSince !== null && hoursSince < MIN_HOURS;
     const peers = peersBy[plat] || [];
 
-    const standing = placeAmong(signal, peers.map((p) => ratingSignal(p, c.type, p.duration_s)));
+    const standing = placeAmong(signal, peers.map((p) => (st
+      ? SR.staticSignal(p, c.type, p.followers).value
+      : ratingSignal(p, c.type, p.duration_s))));
     standing.words = standingWords(standing.percentile);
 
     // What the panel shows in place of the method: four ranks, a one-line
@@ -843,7 +872,7 @@ async function buildValidation(brandId, creativeId) {
       working: pair.working,
       not_working: pair.notWorking,
       peer_count: peers.length,
-      reason: reasonFor({ rated, state, signal, band, signalName: signalName(c.type), type: c.type }),
+      reason: reasonFor({ rated, state, signal, band, signalName: signalName(c.type, !!st), type: c.type }),
       standing,
       velocity: velocity[plat] || null,
       delivered, too_new: tooNew,
@@ -885,11 +914,13 @@ async function buildValidation(brandId, creativeId) {
   // The floor still decides whether a rating counts; it just no longer
   // announces itself with the number. "656 views is below the 1,000-view
   // floor" tells people how to game it and reads like a system message.
-  for (const p of platforms) if (!p.missing && !p.delivered) flags.push(`${p.label}: too few views so far for the rating to mean much. Give it time rather than acting on it.`);
+  for (const p of platforms) if (!p.missing && !p.delivered) flags.push(`${p.label}: ${creativeIsStatic ? 'too few people reached' : 'too few views'} so far for the rating to mean much. Give it time rather than acting on it.`);
 
   return {
     creative_id: c.creative_id,
     type: c.type,
+    content_type: c.content_type || 'Video',
+    is_static: creativeIsStatic,
     campaign: c.campaign || '',
     duration_s: c.duration_s === null ? null : Number(c.duration_s),
     posted_at: posted || null,

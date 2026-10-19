@@ -15,6 +15,21 @@ const { query } = require('./db');
 // because two copies of a window would drift and the card would then
 // disagree with the panel about when a post becomes readable.
 const { MIN_HOURS } = require('./organic-validation');
+const SR = require('./server/static-rating');
+
+// Slides for photos and carousels. Separate and tolerant, so a database
+// without migration 022 keeps its dashboard and simply shows no slides.
+async function slidesFor(brandId) {
+  try {
+    const { rows } = await query(
+      `select creative_id, slides, slide_count from creatives
+        where brand_id = $1 and (slides is not null or slide_count is not null)`, [brandId]);
+    return Object.fromEntries(rows.map(r => [r.creative_id, r]));
+  } catch (e) {
+    if (e.code === '42703') return {};
+    throw e;
+  }
+}
 
 const num = v => (v === null || v === undefined ? 0 : Number(v));
 const r1  = v => Math.round(num(v) * 10) / 10;
@@ -165,7 +180,10 @@ async function brainsuiteScores(brandId) {
 }
 
 async function buildPayload(brandId) {
-  const [extras, bsBy] = await Promise.all([paidExtras(brandId), brainsuiteScores(brandId)]);
+  const [extras, bsBy, staticBands, followersBy, slidesBy] = await Promise.all([
+    paidExtras(brandId), brainsuiteScores(brandId),
+    SR.loadBands(query, brandId), SR.loadFollowers(query, brandId), slidesFor(brandId),
+  ]);
   const [brandR, contentR, metaR, ttR, organicR, bestR, boostR, accountR, campR] =
     await Promise.all([
       query(`select brand_id, name from brands where brand_id = $1`, [brandId]),
@@ -221,8 +239,21 @@ async function buildPayload(brandId) {
   const bestBy  = Object.fromEntries(bestR.rows.map(r => [r.creative_id, r]));
   const boostBy = Object.fromEntries(boostR.rows.map(r => [r.creative_id, r.is_boosted]));
 
+  // Photos and carousels are rated on engagement, not on the video rule
+  // the view applies, which would leave every one of them unrated.
+  const contentById = Object.fromEntries(contentR.rows.map(c => [c.creative_id, c]));
   const organicBy = {};
   organicR.rows.forEach(o => {
+    const cr = contentById[o.creative_id];
+    let cqr = o.cqr || '';
+    if (cr && SR.isStatic(cr.content_type)) {
+      const r = SR.rateStatic({
+        o, type: cr.type, plat: o.platform, brandId, bands: staticBands,
+        followers: (followersBy[o.creative_id] || {})[o.platform],
+        storedCqr: o.cqr, postedAt: o.time_posted,
+      });
+      cqr = r.cqr || '';
+    }
     (organicBy[o.creative_id] ||= {})[o.platform] = {
       views: num(o.views), reach: num(o.reach), likes: num(o.likes),
       // buildOrganicHTML() renders the Facebook box with videoViews /
@@ -234,7 +265,7 @@ async function buildPayload(brandId) {
       avgWatchTime: num(o.avg_watch_time),
       engagementRate: o.engagement_rate === null ? null : Number(o.engagement_rate),
       retentionRate: o.retention_rate === null ? null : Number(o.retention_rate),
-      cqr: o.cqr || '',
+      cqr,
       timePosted: o.time_posted
     };
   });
@@ -246,16 +277,29 @@ async function buildPayload(brandId) {
     const m  = paidBlock(metaBy[id], 'meta');
     const t  = paidBlock(ttBy[id], 'tiktok');
     const org = organicBy[id] || {};
-    const best = bestBy[id] || {};
+    const isStatic = SR.isStatic(c.content_type);
+    const sl = slidesBy[id] || {};
+    // A static's best organic grade comes from the engagement rating above,
+    // since the view only knows the video rule.
+    let best = bestBy[id] || {};
+    if (isStatic) {
+      const RANKS = { Good: 0, Average: 1, Poor: 2 };
+      const grades = Object.values(org).map(x => x.cqr).filter(g => RANKS[g] !== undefined)
+        .sort((a, b) => RANKS[a] - RANKS[b]);
+      best = { best_cqr: grades[0] || null, is_validated: grades[0] === 'Good' };
+    }
 
     // Combined view across platforms, mirroring the old addPaid() rollup
     const both = [m, t].filter(Boolean);
     const platform = both.length > 1 ? 'both' : (both[0] ? both[0].platform : 'both');
     const avg = f => both.length ? both.reduce((s, x) => s + x[f], 0) / both.length : 0;
     const cqrRank = { Good: 0, Average: 1, Poor: 2 };
-    const bestPaidCqr = both
+    // The paid rating is built on video watch rates (hook and hold), so a
+    // photo or carousel is not given one: it would read Poor for having
+    // no video, which says nothing about the post.
+    const bestPaidCqr = isStatic ? 'Invalid' : (both
       .map(x => x.cqr)
-      .sort((a, b) => (cqrRank[a] ?? 9) - (cqrRank[b] ?? 9))[0] || 'Invalid';
+      .sort((a, b) => (cqrRank[a] ?? 9) - (cqrRank[b] ?? 9))[0] || 'Invalid');
 
     const isBoosted = !!boostBy[id];
 
@@ -326,8 +370,8 @@ async function buildPayload(brandId) {
       // both. A creative running on Meta and stopped on TikTok reads as
       // simply "running" otherwise, which is not what is happening.
       paidBy: {
-        meta:   m ? { adStatus: m.adStatus || null, cqr: m.cqr || null, spend: m.spend || 0 } : null,
-        tiktok: t ? { adStatus: t.adStatus || null, cqr: t.cqr || null, spend: t.spend || 0 } : null,
+        meta:   m ? { adStatus: m.adStatus || null, cqr: isStatic ? 'Not Rated' : (m.cqr || null), spend: m.spend || 0 } : null,
+        tiktok: t ? { adStatus: t.adStatus || null, cqr: isStatic ? 'Not Rated' : (t.cqr || null), spend: t.spend || 0 } : null,
       },
 
       // content
@@ -343,6 +387,11 @@ async function buildPayload(brandId) {
       productRole: c.product_role || '',
       formatNote: c.format_note || '',
       contentType: c.content_type || '',
+      // Photos and carousels: no runtime, no retention, rated on engagement.
+      isStatic,
+      slides: Array.isArray(sl.slides) ? sl.slides : [],
+      slideCount: sl.slide_count === null || sl.slide_count === undefined
+        ? (Array.isArray(sl.slides) ? sl.slides.length : null) : Number(sl.slide_count),
       creativeLink: c.ig_link || c.tt_link || c.fb_link || '',
       igLink: c.ig_link || '', fbLink: c.fb_link || '', ttLink: c.tt_link || '',
       creatorProfile: c.creator_profile || null,
@@ -435,7 +484,7 @@ function invalidatePayload(brandId) {
 
 // Read only by the creative panel.
 const DETAIL_KEYS = ['timeline', 'segments', 'contentHook', 'formatNote', 'format', 'productRole',
-                     'recommendation', 'rec'];
+                     'recommendation', 'rec', 'slides'];
 const PAID_DETAIL_KEYS = ['recommendation', 'rec'];
 
 function slimCreative(c) {
