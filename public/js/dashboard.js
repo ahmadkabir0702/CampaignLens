@@ -2295,7 +2295,10 @@ function buildValidationHTML(v) {
         ${p.not_working ? `<div class="orgval-line"><b>Not working</b> ${esc(p.not_working)}</div>` : ''}
       </div>` : '';
 
-    return `${thin}${summary}${dimBars(dims)}${wn}`;
+    const against = p.rated_against
+      ? `<div class="orgval-line orgval-muted">${esc(p.rated_against)}</div>` : '';
+
+    return `${thin}${summary}${dimBars(dims)}${wn}${against}`;
   };
 
   // "Boost — " with nothing after the dash is what an empty recommendation
