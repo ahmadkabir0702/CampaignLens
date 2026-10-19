@@ -23,7 +23,10 @@ const { getPool } = require('./db');
 // and the vendor is never named, so stored digests using the old label go.
 // Bumped to 8: Others Say is described as Creators and Community, so stored
 // digests saying "Community page" or "briefed" go.
-const SNAPSHOT_SCHEMA_VERSION = 8;
+// Bumped to 9: paid CQR is the overall impression-weighted result, not the
+// best day, and the benchmark list includes the global rows a brand is
+// rated on (migration 023).
+const SNAPSHOT_SCHEMA_VERSION = 9;
 
 const T = S.tables, C = S.creative, P = S.paidView, O = S.organicView, OR = S.organicRawCols;
 const OB = S.organicBest, B = S.boost, TH = S.thresholds, CR = S.creator;
@@ -169,18 +172,31 @@ async function qCqrHistory(pool, brand) {
     const { rows } = await pool.query(
       `select ${CH.creativeId} as id, ${CH.channel} as channel, ${CH.platform} as platform,
               ${CH.cqr} as cqr, ${CH.cqrLifetime} as cqr_lifetime
-         from ${T.cqrHistory} where ${CH.brand} = $1
+         from ${T.cqrHistory} h where ${CH.brand} = $1
+          and coalesce(to_jsonb(h) ->> 'reason', '') <> 'rule change'
         order by id desc limit 500`, [brand]);
     return rows;
   }, 'cqr history');
 }
 
+// The benchmarks that actually rate this brand: its own rows, and the
+// global rows for any platform and metric it has none of. Most brands have
+// no rows of their own, and listing only those told the assistant they had
+// no benchmarks while the global ones were rating every creative.
 async function qThresholds(pool, brand) {
   const { rows } = await pool.query(
-    `select ${TH.platform} as platform, ${TH.metric} as metric, ${TH.minDur} as min_dur, ${TH.maxDur} as max_dur,
-            ${TH.poorLt} as poor_lt, ${TH.goodGte} as good_gte
-     from ${T.thresholds} where ${TH.brand} = $1
-     order by platform, metric, min_dur`, [brand]);
+    `with own as (
+       select ${TH.platform} as platform, ${TH.metric} as metric
+         from ${T.thresholds} where ${TH.brand} = $1 group by 1, 2
+     )
+     select t.${TH.platform} as platform, t.${TH.metric} as metric, t.${TH.minDur} as min_dur, t.${TH.maxDur} as max_dur,
+            t.${TH.poorLt} as poor_lt, t.${TH.goodGte} as good_gte,
+            (t.${TH.brand} is not null) as own
+       from ${T.thresholds} t
+      where t.${TH.brand} = $1
+         or (t.${TH.brand} is null
+             and not exists (select 1 from own o where o.platform = t.${TH.platform} and o.metric = t.${TH.metric}))
+      order by platform, metric, min_dur nulls first`, [brand]);
   return rows;
 }
 
@@ -334,10 +350,10 @@ function renderDigest(an, insights) {
 
   // Benchmarks first: they define what every number below means.
   if (an.thresholds.length || an.monthly.length) {
-    L.push('BENCHMARKS (this brand\'s own, the only benchmarks that exist)');
+    L.push('BENCHMARKS (the bands this brand is rated on; "global" means the default every brand without its own uses)');
     for (const t of an.thresholds) {
       const dur = (t.min_dur !== null || t.max_dur !== null) ? ` ${num(t.min_dur)}-${t.max_dur === null ? 'inf' : num(t.max_dur)}s` : '';
-      L.push(`  ${S.platformLabels[t.platform] || t.platform} ${t.metric}${dur}: Poor below ${fmtPct(t.poor_lt)}, Good from ${fmtPct(t.good_gte)}`);
+      L.push(`  ${S.platformLabels[t.platform] || t.platform} ${t.metric}${dur}: Poor below ${fmtPct(t.poor_lt)}, Good from ${fmtPct(t.good_gte)}${t.own === false ? ' (global)' : ''}`);
     }
     const m = an.monthly[an.monthly.length - 1];
     if (m) L.push(`  Monthly plan ${m.month.slice(0, 7)}: spend ${money(m.kpi_spend)}, reach ${fmtCount(m.kpi_reach)}, ER ${fmtPct(m.kpi_engagement_rate, 2)}`);

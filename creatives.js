@@ -251,7 +251,7 @@ async function buildPayload(brandId) {
       const r = SR.rateStatic({
         o, type: cr.type, plat: o.platform, brandId, bands: staticBands,
         followers: (followersBy[o.creative_id] || {})[o.platform],
-        storedCqr: o.cqr, postedAt: o.time_posted,
+        storedCqr: o.cqr, postedAt: o.time_posted, contentType: cr.content_type,
       });
       cqr = r.cqr || '';
     }

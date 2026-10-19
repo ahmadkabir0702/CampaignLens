@@ -42,6 +42,10 @@ A Facebook post link with a `pfbid…` token cannot be read through the Graph AP
 |---|---|
 | map_ig_scrape, Write IG NonCollab | Save the creator's follower count to `organic_perf.followers`. Creators' photos have no public views, so they are rated per follower. |
 | tt_scrape_map, Write TT Organic | The same for TikTok. |
+| map_fb_scrape | Also passes on the link to the page that posted. |
+| **Get FB Page Profile** (new) | Looks up that page's follower count through ScrapeCreators' Facebook profile endpoint. `cache_max_age=7d` reuses a result up to a week old at no cost, so each page costs at most one credit a week. A failed lookup (a group, a private profile) only means no follower count. |
+| **attach_fb_followers** (new) | Puts the follower count on the post's numbers. |
+| Write FB Organic | Saves it to `organic_perf.followers`. Facebook photos have no view count, so community and creator photos on Facebook are rated per follower and read "No follower count" without it. |
 
 Instagram Others Say rows are chosen by `creatives.ig_shortcode`. Migration 022 fills it for `/p/` links too, and adds a trigger that fills it for every new creative.
 
