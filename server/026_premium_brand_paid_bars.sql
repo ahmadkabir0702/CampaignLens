@@ -6,10 +6,14 @@
 --  Sunsilk copied them. Most of their ads read Poor on hook or hold
 --  whatever they did.
 --
---  This keeps them on a higher bar than other brands, but one that can be
---  met: every paid hook and hold bar is the global bar (set from your own
---  results by 025) times 1.2. Change the factor below to make it harder or
---  easier.
+--  This keeps their own content (Brand Say) on a higher bar than other
+--  brands, but one that can be met: each Brand Say paid hook and hold bar
+--  is the global bar (set from your own results by 025) times 1.2. Change
+--  the factor below to make it harder or easier.
+--
+--  Their creator content (Others Say) is rated on the same bars as every
+--  other brand's creators. Creator TikTok hooks already need about 60% for
+--  Good, and 20% on top of that could not be met.
 --
 --  Only their paid rows change. Their organic retention bars are kept.
 --  The old rows are kept in cqr_thresholds_retired.
@@ -31,6 +35,8 @@ with gone as (
    where t.brand_id = p.brand_id
      and t.metric in ('hook_rate', 'hold_rate')
      and t.platform in ('meta_paid_bs', 'meta_paid_os', 'tt_paid_bs', 'tt_paid_os')
+     -- removes their own Others Say rows too, so those fall back to the
+     -- global creator bars
   returning t.*
 )
 insert into cqr_thresholds_retired
@@ -44,7 +50,7 @@ select p.brand_id, g.platform, g.metric, g.min_duration, g.max_duration,
  cross join _premium p
  where g.brand_id is null
    and g.metric in ('hook_rate', 'hold_rate')
-   and g.platform in ('meta_paid_bs', 'meta_paid_os', 'tt_paid_bs', 'tt_paid_os');
+   and g.platform in ('meta_paid_bs', 'tt_paid_bs');
 
 commit;
 
