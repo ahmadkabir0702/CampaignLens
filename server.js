@@ -19,12 +19,31 @@ app.use(cors({ origin: '*' }));
 app.use(express.json());
 app.use(express.urlencoded({ extended: true }));
 
-// Sessions live in Redis when it is available. The default MemoryStore keeps
-// them in this process, so every deploy logged everyone out and the browser
-// was left holding a cookie for a session that no longer existed — which is
-// what produced "Not authenticated" right after a deploy.
+// Where sign-in sessions are kept.
+//
+// Postgres by default. Sessions used to live in Redis, which also holds the
+// video analysis and pre-test queues; Redis is memory only, and when it
+// filled up it could drop sessions to make room, signing people out every
+// few minutes. Postgres keeps them on disk, so they survive restarts and
+// are never dropped for space. See server/pg-session-store.js for why the
+// load on the database is small.
+//
+// SESSION_STORE=redis switches back to Redis without a code change. With
+// neither available, sessions live in this process and every restart
+// signs everyone out.
+const SESSION_TTL_MS = 8 * 60 * 60 * 1000;
 let sessionStore;
-if (process.env.REDIS_URL) {
+const wantStore = (process.env.SESSION_STORE || (process.env.DATABASE_URL ? 'postgres' : 'redis')).toLowerCase();
+if (wantStore === 'postgres' && process.env.DATABASE_URL) {
+  try {
+    const PgSessionStore = require('./server/pg-session-store')(session);
+    sessionStore = new PgSessionStore({ ttlMs: SESSION_TTL_MS });
+    console.log('[session] using Postgres store');
+  } catch (e) {
+    console.error('[session] Postgres store unavailable:', e.message);
+  }
+}
+if (!sessionStore && process.env.REDIS_URL) {
   try {
     const RedisStore = require('connect-redis').default || require('connect-redis');
     const IORedis = require('ioredis');
@@ -35,8 +54,9 @@ if (process.env.REDIS_URL) {
   } catch (e) {
     console.error('[session] Redis store unavailable, falling back to memory:', e.message);
   }
-} else {
-  console.warn('[session] REDIS_URL not set — sessions reset on every restart.');
+}
+if (!sessionStore) {
+  console.warn('[session] no shared store, using memory: sessions reset on every restart.');
 }
 
 // Render terminates TLS at its proxy, so without this Express sees the request
@@ -59,11 +79,11 @@ app.use(session({
   // up as "Not authenticated" on some creatives and not others.
   //
   // rolling re-sends the cookie on every response, and express-session
-  // calls store.touch() for unmodified sessions, which connect-redis
-  // implements, so the Redis TTL moves with it.
+  // calls store.touch() for unmodified sessions, so the stored expiry moves
+  // with it (at most once every five minutes in Postgres).
   rolling: true,
   cookie: {
-    maxAge: 8 * 60 * 60 * 1000,
+    maxAge: SESSION_TTL_MS,
     httpOnly: true,
     sameSite: 'lax'
   }
