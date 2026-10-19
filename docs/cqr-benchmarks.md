@@ -23,7 +23,7 @@ Paid grades are worked out as follows:
 
 The Good marks were kept where they were. Poor now starts at about 70% of Good, so there is a real Average band.
 
-**Paid, Brand Say and Others Say alike**
+**Paid, as set by 023.** Migration 025 then re-sets every global paid band from your own results: Good from the 60th percentile and Poor below the 25th, separately for Meta and TikTok, Brand Say and Others Say, and each video length. Its output lists the bands it set, and those replace the table below. Hold is counted against all impressions, so it is always lower than the hook rate. The global hold bars in this table were higher than the hook bars and almost nothing could clear them, which is why 025 exists.
 
 | | Meta Poor below | Meta Good from | TikTok Poor below | TikTok Good from |
 |---|---|---|---|---|
