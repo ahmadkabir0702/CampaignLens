@@ -760,6 +760,8 @@ const STATE_SHORT = {
   'No Reach':      'No reach yet',
   'No Followers':  'No follower count',
   'Not Rated':     'Not rated',
+  'Low Delivery':  'Under 10k impressions',
+  'Invalid Data':  'Missing data',
 };
 const STATE_WHY = {
   'Boosted':       'Spend is behind this post, so its organic numbers include paid delivery. The paid rating is the one that applies.',
@@ -772,6 +774,8 @@ const STATE_WHY = {
   'No Reach':      'No reach or views have come back yet. Photos and carousels are rated on engagement per person reached.',
   'No Followers':  'No follower count came back for this account. Photos and carousels from creators are rated on engagement per follower.',
   'Not Rated':     'The paid rating is built on video watch rates, so photos and carousels are not given one. Read them on spend and reach, and on the organic engagement rating.',
+  'Low Delivery':  'Fewer than 10,000 impressions so far, which is too few to rate. The hook and hold rates are shown, but they are not graded until delivery passes 10,000.',
+  'Invalid Data':  'The video length or the hook and hold numbers are missing, so this cannot be rated.',
 };
 const stateShort = (v) => STATE_SHORT[v] || v;
 
@@ -1237,7 +1241,8 @@ function detailSummaryHTML(d) {
   const orgCells = ORG_PLATFORMS
     .filter(pl => d[pl.link] || d[pl.key])
     .map(pl => ({ label: pl.label, v: (d[pl.key] || {}).cqr || null }));
-  const paid = (d.cqr && d.cqr !== 'Invalid') ? d.cqr : null;
+  const paid = isGrade(d.cqr) ? d.cqr : null;
+  const paidNote = !paid && d.cqr && d.cqr !== 'Invalid' && d.cqr !== 'Not Rated' ? d.cqr : null;
 
   let status, statusCls, statusSub = '';
   if (ps.running.length) {
@@ -1264,7 +1269,7 @@ function detailSummaryHTML(d) {
                        : `<span class="dsum-plat-v dsum-plat-none">${o.v ? stateShort(o.v) : '—'}</span>`}</span>`
         ).join('')}</div>` : `<div class="dsum-val dsum-quiet">Not rated</div>`}
     </div>
-    ${cell('Paid CQR', paid || (d.boostState === 'never' ? 'No spend yet' : 'Not rated'),
+    ${cell('Paid CQR', paid || (paidNote ? stateShort(paidNote) : (d.boostState === 'never' ? 'No spend yet' : 'Not rated')),
            paid ? 'dsum-' + cqrClass(paid) : 'dsum-quiet')}
     ${cell('Pre-test Score', d.bsScore === null || d.bsScore === undefined ? 'Not scored' : d.bsScore,
            d.bsScore === null || d.bsScore === undefined ? 'dsum-quiet' : '',
@@ -1872,14 +1877,14 @@ function getMetricsHTML(item, titleLabel, isStatic) {
       </div>
     </div>`;
   }
-  const cqrColorClass = item.cqr === 'Good' ? 'cqr-good' : (item.cqr === 'Average' ? 'cqr-avg' : 'cqr-poor');
+  const cqrColorClass = item.cqr === 'Good' ? 'cqr-good' : (item.cqr === 'Average' ? 'cqr-avg' : (item.cqr === 'Poor' ? 'cqr-poor' : 'dsum-quiet'));
   const hlValFormatted = item.holdRate >= 1000 ? (item.holdRate/1000).toFixed(1)+'K' : (item.holdRate||0).toFixed(1);
   const durLabel = item.duration ? `<div style="font-size:10px;color:var(--c-muted);margin-top:3px;">Duration: ${fmtDur(item.duration)}</div>` : '';
   return `
     <div style="margin-bottom:12px;">
       <div style="font-size:11px;font-weight:700;color:var(--c-muted);margin-bottom:6px;text-transform:uppercase;">${titleLabel} Paid Stats</div>
       <div class="detail-metrics" style="margin-bottom:6px;">
-        <div class="dm"><div class="dm-label">CQR</div><div class="dm-val big-cqr ${cqrColorClass}">${item.cqr||'—'}</div>${durLabel}</div>
+        <div class="dm"><div class="dm-label">CQR</div><div class="dm-val big-cqr ${cqrColorClass}" title="${escapeHtml(STATE_WHY[item.cqr] || '')}">${isGrade(item.cqr) ? item.cqr : (item.cqr ? escapeHtml(stateShort(item.cqr)) : '—')}</div>${durLabel}</div>
         <div class="dm"><div class="dm-label">Spend &amp; Reach</div><div class="dm-val">${fmt(item.spend)}</div><div style="font-size:10px;color:var(--c-muted);margin-top:2px;">Reach: ${fmtN(item.reach)} | Impr: ${fmtN(item.impressions)}</div></div>
         <div class="dm"><div class="dm-label">Hook Rate</div><div class="dm-val" style="color:${hookColor(item.hookRate)}">${(item.hookRate||0).toFixed(1)}%</div><div><span class="kpi-pill ${cqrClass(item.hookQual)}">${item.hookQual||'—'}</span></div></div>
         <div class="dm"><div class="dm-label">Hold Rate</div><div class="dm-val" style="color:var(--ink-900)">${hlValFormatted}</div><div><span class="kpi-pill ${cqrClass(item.holdQual)}">${item.holdQual||'—'}</span></div></div>

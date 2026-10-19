@@ -155,7 +155,8 @@ function platformKey(plat, type) {
 
 // ---------------------------------------------------------------------
 //  Threshold lookup. Mirrors the thr() SQL function, in JS, so one read
-//  covers every platform and metric this post needs. Brand-specific
+//  covers every platform and metric this post needs. A band runs from its
+//  min up to, not including, its max, as thr() reads it. Brand-specific
 //  rows win over globals; metric names are matched by prefix so
 //  'retention' and 'retention_rate' both resolve.
 // ---------------------------------------------------------------------
@@ -165,7 +166,7 @@ function pickThreshold(rows, platKey, metricPrefix, durationS) {
     r.platform === platKey &&
     String(r.metric || '').toLowerCase().startsWith(metricPrefix) &&
     (r.min_duration === null || !isFinite(d) || d >= Number(r.min_duration)) &&
-    (r.max_duration === null || !isFinite(d) || d <= Number(r.max_duration)));
+    (r.max_duration === null || !isFinite(d) || d < Number(r.max_duration)));
   if (!candidates.length) return null;
   // Brand rows first, then the narrowest duration band.
   candidates.sort((a, b) => {
@@ -785,7 +786,7 @@ async function buildValidation(brandId, creativeId) {
     // depends on type, exactly as cqr_organic_label does it. Photos and
     // carousels use the engagement rule in static-rating.js instead.
     const st = creativeIsStatic
-      ? SR.rateStatic({ o, type: c.type, plat, brandId, bands: staticBands, storedCqr: o.cqr, postedAt: o.time_posted })
+      ? SR.rateStatic({ o, type: c.type, plat, brandId, bands: staticBands, storedCqr: o.cqr, postedAt: o.time_posted, contentType: c.content_type })
       : null;
     const signal = st ? (st.signal ? st.signal.value : null) : ratingSignal(o, c.type, c.duration_s);
     const band = st ? (st.band ? { poor_lt: num(st.band.poor_lt), good_gte: num(st.band.good_gte), source: 'static' } : null)

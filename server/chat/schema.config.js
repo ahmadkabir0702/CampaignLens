@@ -126,6 +126,11 @@ const schema = {
     'No Watch Time': 'no watch time has come back yet',
     'No Threshold':  'no benchmark band covers this brand, platform and duration',
     'Invalid':       'could not be rated',
+    'Invalid Data':  'the video length or the hook and hold numbers are missing, so it cannot be rated',
+    'Low Delivery':  'it has had fewer than 10,000 paid impressions, which is too few to rate',
+    'No Reach':      'no reach or views have come back yet for this photo or carousel',
+    'No Followers':  'no follower count came back for this creator, which a photo or carousel is rated on',
+    'Not Rated':     'photos and carousels have no paid rating, because the paid rating is built on video watch rates',
   },
 
   metricHierarchy: ['cqr', 'hook_rate', 'hold_rate', 'engagement_rate', 'reach', 'video_views'],
@@ -186,7 +191,14 @@ const schema = {
   },
   platforms: ['meta', 'tiktok'],
   organicPlatforms: ['facebook', 'instagram', 'tiktok'],
-  platformLabels: { meta: 'Meta', tiktok: 'TikTok', facebook: 'Facebook', instagram: 'Instagram' },
+  platformLabels: {
+    meta: 'Meta', tiktok: 'TikTok', facebook: 'Facebook', instagram: 'Instagram',
+    // Benchmark rows name the platform and the type together.
+    meta_paid_bs: 'Meta paid, Brand Say', meta_paid_os: 'Meta paid, Others Say',
+    tt_paid_bs: 'TikTok paid, Brand Say', tt_paid_os: 'TikTok paid, Others Say',
+    ig_organic: 'Instagram organic, Brand Say', fb_organic: 'Facebook organic, Brand Say',
+    tt_organic: 'TikTok organic, Brand Say',
+  },
 
   model: 'claude-haiku-4-5',            // quick lookups
   // Analytical questions (why, what works, what should we do) go to Sonnet.

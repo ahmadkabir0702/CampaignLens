@@ -48,10 +48,19 @@ function staticSignal(o, type, followers) {
   return { value: null, basis: null, missing: 'no reach' };
 }
 
-/** Brand row first, then global. */
-function pickBand(rows, brandId, plat, type, basis) {
-  const list = (rows || []).filter((r) => r.platform === plat && r.creative_type === type && r.basis === basis);
-  return list.find((r) => r.brand_id && r.brand_id === brandId) || list.find((r) => !r.brand_id) || null;
+/**
+ * Brand row first, then global. Within each, a row for this exact format
+ * (Photo or Carousel) wins over one that covers both (content_type null).
+ */
+function pickBand(rows, brandId, plat, type, basis, contentType) {
+  const list = (rows || []).filter((r) => r.platform === plat && r.creative_type === type && r.basis === basis
+    && (!r.content_type || r.content_type === contentType));
+  const exact = (r) => !!r.content_type && r.content_type === contentType;
+  return list.find((r) => r.brand_id && r.brand_id === brandId && exact(r))
+    || list.find((r) => r.brand_id && r.brand_id === brandId && !r.content_type)
+    || list.find((r) => !r.brand_id && exact(r))
+    || list.find((r) => !r.brand_id && !r.content_type)
+    || null;
 }
 
 function gradeOf(value, band) {
@@ -76,7 +85,7 @@ const STATE_LABEL = {
  * storedCqr is what the database view said; 'Boosted' is kept, because a
  * boosted post's numbers are organic and paid mixed whatever its format.
  */
-function rateStatic({ o, type, followers, plat, brandId, bands, storedCqr, postedAt }) {
+function rateStatic({ o, type, followers, plat, brandId, bands, storedCqr, postedAt, contentType }) {
   if (String(storedCqr || '').toLowerCase() === 'boosted') return { cqr: 'Boosted', grade: null, signal: null, band: null };
   const posted = postedAt || (o && o.time_posted);
   if (posted && (Date.now() - new Date(posted).getTime()) / 3600000 < MIN_HOURS) {
@@ -85,18 +94,21 @@ function rateStatic({ o, type, followers, plat, brandId, bands, storedCqr, poste
   }
   const s = staticSignal(o, type, followers);
   if (s.value === null) return { cqr: STATE_LABEL[s.missing] || null, grade: null, signal: s, band: null };
-  const band = pickBand(bands, brandId, plat, type, s.basis);
+  const band = pickBand(bands, brandId, plat, type, s.basis, contentType);
   if (!band) return { cqr: 'No Threshold', grade: null, signal: s, band: null };
   const grade = gradeOf(s.value, band);
   return { cqr: grade, grade, signal: s, band };
 }
 
-/** static_thresholds rows, or none if the migration has not been run. */
+/**
+ * static_thresholds rows, or none if the migration has not been run.
+ * select * so it reads content_type after migration 023 and still works
+ * before it.
+ */
 async function loadBands(query, brandId) {
   try {
     const { rows } = await query(
-      `select brand_id, platform, creative_type, basis, good_gte, poor_lt
-         from static_thresholds where brand_id is null or brand_id = $1`, [brandId]);
+      `select * from static_thresholds where brand_id is null or brand_id = $1`, [brandId]);
     return rows;
   } catch (e) {
     if (e.code === '42P01') return [];
