@@ -515,6 +515,9 @@ function crRenderDetail(name) {
   const shown = p.posts.slice(0, crPanelShown).filter(a => !a._detail).map(a => a.id);
   if (shown.length && typeof ensureDetails === 'function') {
     ensureDetails(shown).then(() => {
+      // Only redraw if the details actually landed. Redrawing regardless
+      // asked again for the same posts, forever, and froze the page.
+      if (shown.some(id => !(p.posts.find(a => a.id === id) || {})._detail)) return;
       const open = document.querySelector('#creativeModalContent .detail-title');
       if (open && open.textContent.trim() === p.name) crRenderDetail(name);
     }).catch(err => console.error('[creators] details failed', err));
