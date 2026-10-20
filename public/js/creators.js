@@ -1,156 +1,184 @@
 /* =====================================================================
-   creators.js — Creator deep dive
-   New file: public/js/creators.js
+   creators.js — Creators and Community
 
    Reads the same global ALL array the other tabs use. Nothing new is
    fetched, so no backend change is needed.
 
    Design notes:
-   - The TABLE is the primary object, not the charts. Everything is
-     searchable and sortable; nothing is capped at "top 8".
-   - A minimum-videos filter exists because a creator with one lucky
-     asset otherwise outranks one with eight consistent ones.
-   - Consistency is shown as the CQR spread, not only the mean. Four
-     assets scoring G/G/G/A is a different proposition from G/P/G/P at
-     the same average.
-   - Cost columns appear only when paid spend is actually attributed.
-     With creative_id matching incomplete they would read zero, and a
-     confident zero is worse than an honest gap.
+   - Two views of Others Say, never mixed: Creators (content the brand
+     commissioned) and Community (posted by the public). Every count,
+     tile and pattern on the page is about the view that is open.
+   - Built for hundreds of profiles. Patterns are aggregated, so they
+     stay one chart however many profiles there are. The profiles
+     themselves are cards, filtered and searched, and drawn a page at a
+     time with "Show more", so a long roster never renders at once.
+   - No league table. Profiles sort by most recent, most posts or name,
+     never best to worst, and a card only points out what a profile is
+     good at. The full rating mix sits on the card, one vote per post.
+   - No money. Nothing here shows spend, and paid appears only as the
+     rating a post earned.
+   - Ratings are organic and counted per post: a post's rating is the
+     best one it earned on any platform, the same rule as everywhere else.
+
+   Uses the Media Summary helpers in kpi-dashboard.js (msCard, msTile,
+   msCqrBar, msEsc, msMonthKey, MS_C) so both pages read as one system.
    ===================================================================== */
 
-// Default sort is quality, not reach. Ranking creators by views rewards
-// whoever got the most impressions rather than whoever made the best work.
-let CREATOR_SORT = { key: 'goodShare', dir: 'desc' };
-let CREATOR_SEARCH = '';
-let CREATOR_MIN_VIDEOS = 1;
-let CREATOR_PLATFORM = 'all';
-let CREATOR_CAMPAIGN = 'all';
-let CREATOR_MONTH = 'all';
-let SELECTED_CREATOR = null;
+const CR_PAGE = 24;          // profiles drawn per "Show more"
+const CR_POSTS_PAGE = 6;     // posts drawn per "Show more" in a profile panel
+const CR_MIN_PATTERN = 3;    // rated posts a group needs before its bar shows
+const CR_TYPES_SHOWN = 6;    // content types listed before the rest fold into Other
+
+const CR_VIEWS = {
+  creators:  { label: 'Creators',  one: 'creator',        many: 'creators',  title: 'Creator',
+               test: d => d.type === 'Others Say' && d.source !== 'community' },
+  community: { label: 'Community', one: 'community page', many: 'community pages', title: 'Community',
+               test: d => d.type === 'Others Say' && d.source === 'community' },
+};
+
+const CR_PLATFORMS = [
+  { code: 'ig', label: 'Instagram', key: 'igOrganic', link: 'igLink' },
+  { code: 'tt', label: 'TikTok',    key: 'ttOrganic', link: 'ttLink' },
+  { code: 'fb', label: 'Facebook',  key: 'fbOrganic', link: 'fbLink' },
+];
+
+const CR = {
+  view: 'creators', search: '', campaign: 'all', month: 'all',
+  platform: 'all', sort: 'recent', shown: CR_PAGE,
+};
+
+const crGrade = (d) => typeof bestOrganicGrade === 'function' ? bestOrganicGrade(d) : null;
+const crViews = (d) => CR_PLATFORMS.reduce((s, p) => {
+  const o = d[p.key];
+  return s + (o ? Number(o.views || o.videoViews || 0) : 0);
+}, 0);
+const crOn = (d, p) => !!(d[p.key] || d[p.link]);
+const crPlural = (n, one, many) => `${n} ${n === 1 ? one : (many || one + 's')}`;
+const crMix = (posts) => {
+  const t = { Good: 0, Average: 0, Poor: 0, none: 0 };
+  posts.forEach(d => { const g = crGrade(d); if (g && t[g] !== undefined) t[g]++; else t.none++; });
+  return t;
+};
+// A name as a JS string inside an HTML attribute: JSON first, then HTML.
+const crArg = (s) => msEsc(JSON.stringify(String(s)));
+const crRated = (mix) => mix.Good + mix.Average + mix.Poor;
+const crGoodShare = (mix) => crRated(mix) ? Math.round(mix.Good / crRated(mix) * 100) : null;
 
 // ---------------------------------------------------------------------
-//  Aggregate ALL into one row per creator
+//  Data
 // ---------------------------------------------------------------------
-function buildCreators() {
-  const src = (typeof ALL !== 'undefined' ? ALL : [])
-    .filter(d => d.type === 'Others Say' && d.creatorProfile)
-    // Campaign and month are applied here, not to the creator list, so
-    // the aggregated figures describe the filtered period only.
-    .filter(d => CREATOR_CAMPAIGN === 'all' || d.campaign === CREATOR_CAMPAIGN)
-    .filter(d => CREATOR_MONTH === 'all' || d.month === CREATOR_MONTH);
 
+/** Every post in scope: the open view, campaign, month and platform. */
+function crPosts(view) {
+  const v = CR_VIEWS[view || CR.view];
+  return (typeof ALL !== 'undefined' ? ALL : [])
+    .filter(v.test)
+    .filter(d => CR.campaign === 'all' || d.campaign === CR.campaign)
+    .filter(d => CR.month === 'all' || d.month === CR.month)
+    .filter(d => CR.platform === 'all' || crOn(d, CR_PLATFORMS.find(p => p.code === CR.platform)));
+}
+
+/** The same scope applied to Brand Say, for the comparison. */
+function crBrandPosts() {
+  return (typeof ALL !== 'undefined' ? ALL : [])
+    .filter(d => d.type === 'Brand Say')
+    .filter(d => CR.campaign === 'all' || d.campaign === CR.campaign)
+    .filter(d => CR.month === 'all' || d.month === CR.month)
+    .filter(d => CR.platform === 'all' || crOn(d, CR_PLATFORMS.find(p => p.code === CR.platform)));
+}
+
+/** One profile per handle, built from the posts in scope. */
+function crProfiles(posts) {
   const map = {};
-  src.forEach(d => {
-    const info = (typeof extractCreatorInfo === 'function')
-      ? extractCreatorInfo(d.creatorProfile, d.ttLink) : null;
+  posts.forEach(d => {
+    // The account that posted it, not the profile it is filed under: a
+    // wrong match there merged several creators into one card.
+    const info = typeof creatorInfo === 'function' ? creatorInfo(d) : null;
     const name = (info && info.username) || d.creatorProfile;
     if (!name) return;
-
-    if (!map[name]) map[name] = {
-      name, profileUrl: (info && info.profileUrl) || null,
-      assets: [], igViews: 0, ttViews: 0, fbViews: 0,
-      watch: [], hooks: [], holds: [], durations: [],
-      spend: 0, paidAssets: 0,
-      cqr: { Good: 0, Average: 0, Poor: 0 },
-      orgCqr: { Good: 0, Average: 0, Poor: 0 },
-      igCount: 0, ttCount: 0, fbCount: 0,
-    };
-    const c = map[name];
-    c.assets.push(d);
-    if (d.duration) c.durations.push(d.duration);
-
-    if (d.igOrganic) {
-      c.igViews += d.igOrganic.views || 0; c.igCount++;
-      if (d.igOrganic.avgWatchTime > 0) c.watch.push(d.igOrganic.avgWatchTime);
-      if (c.orgCqr[d.igOrganic.cqr] !== undefined) c.orgCqr[d.igOrganic.cqr]++;
-    }
-    if (d.ttOrganic) {
-      c.ttViews += d.ttOrganic.views || 0; c.ttCount++;
-      if (d.ttOrganic.avgWatchTime > 0) c.watch.push(d.ttOrganic.avgWatchTime);
-      if (c.orgCqr[d.ttOrganic.cqr] !== undefined) c.orgCqr[d.ttOrganic.cqr]++;
-    }
-    if (d.fbOrganic) {
-      c.fbViews += d.fbOrganic.videoViews || d.fbOrganic.views || 0; c.fbCount++;
-      if (c.orgCqr[d.fbOrganic.cqr] !== undefined) c.orgCqr[d.fbOrganic.cqr]++;
-    }
-
-    if (d.spend > 0) {
-      c.spend += d.spend; c.paidAssets++;
-      if (d.hookRate > 0) c.hooks.push(d.hookRate);
-      if (d.holdRate > 0) c.holds.push(d.holdRate);
-      if (c.cqr[d.cqr] !== undefined) c.cqr[d.cqr]++;
-    }
+    (map[name] ||= { name, profileUrl: (info && info.profileUrl) || null, posts: [] }).posts.push(d);
   });
 
-  const mean = a => a.length ? a.reduce((x, y) => x + y, 0) / a.length : 0;
+  const RANK = { Good: 0, Average: 1, Poor: 2 };
+  return Object.values(map).map(p => {
+    p.posts.sort((a, b) => String(b.date).localeCompare(String(a.date)));
+    p.mix = crMix(p.posts);
+    p.views = p.posts.reduce((s, d) => s + crViews(d), 0);
+    p.latest = p.posts[0].date || '';
+    p.platforms = CR_PLATFORMS.filter(pl => p.posts.some(d => crOn(d, pl)));
 
-  return Object.values(map).map(c => {
-    const totalViews = c.igViews + c.ttViews + c.fbViews;
-    const scored = c.orgCqr.Good + c.orgCqr.Average + c.orgCqr.Poor;
-    // Share of scored organic posts that were Good or Average. This is
-    // the number worth renewing a partnership on — a mean CQR hides
-    // whether the good result was repeatable.
-    const validRate = scored ? (c.orgCqr.Good + c.orgCqr.Average) / scored * 100 : null;
-    return {
-      ...c,
-      videos: c.assets.length,
-      totalViews,
-      avgViews: c.assets.length ? totalViews / c.assets.length : 0,
-      avgWatch: mean(c.watch),
-      avgHook: mean(c.hooks),
-      avgHold: mean(c.holds),
-      // Share of scored organic posts rating Good. CQR is the composite
-      // of both signals, so it is the right primary measure — engagement
-      // rate alone is stored as a raw weighted ratio for Others Say and
-      // is not comparable with Brand Say's plain rate.
-      goodShare: scored ? c.orgCqr.Good / scored * 100 : null,
-      scoredPosts: scored,
-      avgDuration: mean(c.durations),
-      validRate,
-      igShare: totalViews ? c.igViews / totalViews * 100 : 0,
-      ttShare: totalViews ? c.ttViews / totalViews * 100 : 0,
-      fbShare: totalViews ? c.fbViews / totalViews * 100 : 0,
-      platforms: [c.igCount ? 'IG' : '', c.ttCount ? 'TT' : '', c.fbCount ? 'FB' : ''].filter(Boolean)
-    };
+    // Strongest platform: the one with the best share of Good among its
+    // rated posts. Only said when there is a choice, a real lead and at
+    // least two rated posts on each platform compared, so one lucky post
+    // never decides it.
+    if (p.platforms.length > 1) {
+      const by = p.platforms.map(pl => {
+        const g = p.posts.map(d => (d[pl.key] || {}).cqr).filter(c => RANK[c] !== undefined);
+        return { pl, n: g.length, share: g.length ? g.filter(c => c === 'Good').length / g.length : 0 };
+      }).filter(x => x.n >= 2).sort((a, b) => b.share - a.share);
+      if (by.length > 1 && by[0].share > by[1].share && by[0].share > 0) p.strongest = by[0].pl.label;
+    }
+
+    // Best post: highest rating, then most views. Only a Good or Average
+    // post is held up as an example.
+    const best = [...p.posts]
+      .filter(d => crGrade(d) === 'Good' || crGrade(d) === 'Average')
+      .sort((a, b) => (RANK[crGrade(a)] - RANK[crGrade(b)]) || (crViews(b) - crViews(a)))[0];
+    p.best = best || null;
+    p.thumb = (best || p.posts.find(d => d.thumbnail) || {}).thumbnail || null;
+    return p;
   });
 }
 
-function filteredCreators() {
-  let list = buildCreators();
-  if (CREATOR_SEARCH) {
-    const q = CREATOR_SEARCH.toLowerCase();
-    list = list.filter(c => c.name.toLowerCase().includes(q));
-  }
-  if (CREATOR_MIN_VIDEOS > 1) list = list.filter(c => c.videos >= CREATOR_MIN_VIDEOS);
-  if (CREATOR_PLATFORM !== 'all') {
-    list = list.filter(c => c.platforms.includes(CREATOR_PLATFORM));
-  }
-  const k = CREATOR_SORT.key, dir = CREATOR_SORT.dir === 'asc' ? 1 : -1;
-  return list.sort((a, b) => {
-    const av = a[k], bv = b[k];
-    if (typeof av === 'string') return av.localeCompare(bv) * dir;
-    return ((av ?? -1) - (bv ?? -1)) * dir;
-  });
+function crSorted(list) {
+  const q = CR.search.trim().toLowerCase();
+  if (q) list = list.filter(p => p.name.toLowerCase().includes(q));
+  const by = {
+    recent: (a, b) => String(b.latest).localeCompare(String(a.latest)) || a.name.localeCompare(b.name),
+    posts:  (a, b) => b.posts.length - a.posts.length || a.name.localeCompare(b.name),
+    name:   (a, b) => a.name.replace(/^@/, '').localeCompare(b.name.replace(/^@/, '')),
+  }[CR.sort];
+  return list.sort(by);
 }
 
-function sortCreators(key) {
-  if (CREATOR_SORT.key === key) {
-    CREATOR_SORT.dir = CREATOR_SORT.dir === 'desc' ? 'asc' : 'desc';
-  } else {
-    CREATOR_SORT = { key, dir: 'desc' };
-  }
-  renderCreatorTab();
+// ---------------------------------------------------------------------
+//  State changes
+// ---------------------------------------------------------------------
+function setCreatorView(v) {
+  if (v === CR.view) return;
+  CR.view = v; CR.search = ''; CR.shown = CR_PAGE;
+  const reduced = window.matchMedia && matchMedia('(prefers-reduced-motion: reduce)').matches;
+  if (document.startViewTransition && !reduced) document.startViewTransition(renderCreatorTab);
+  else renderCreatorTab();
 }
 
+// The highlight behind Creators | Community slides from where it was.
+let crPillAt = null;
+function crPlacePill() {
+  const pill = document.getElementById('cr-view-pill');
+  const on = document.querySelector('.cr-view.on');
+  if (!pill || !on) return;
+  const to = { left: on.offsetLeft, width: on.offsetWidth };
+  pill.style.transition = 'none';
+  const from = crPillAt || to;
+  pill.style.left = from.left + 'px'; pill.style.width = from.width + 'px';
+  pill.offsetHeight;
+  pill.style.transition = '';
+  pill.style.left = to.left + 'px'; pill.style.width = to.width + 'px';
+  crPillAt = to;
+}
+function setCreatorFilter(key, v) { CR[key] = v; CR.shown = CR_PAGE; renderCreatorTab(); }
+function setCreatorSort(v) { CR.sort = v; CR.shown = CR_PAGE; crRenderRoster(); }
+function showMoreCreators() { CR.shown += CR_PAGE; crRenderRoster(); }
+
+// Search redraws only the roster, so the input keeps focus and the
+// patterns above do not flicker on every keystroke.
+let crSearchTimer = null;
 function setCreatorSearch(v) {
-  CREATOR_SEARCH = v; renderCreatorTab();
-  // renderCreatorTab replaces the DOM, so the input loses focus on every
-  // keystroke unless it is restored with the caret at the end.
-  const el = document.getElementById('cr-search');
-  if (el) { el.focus(); el.setSelectionRange(v.length, v.length); }
+  CR.search = v; CR.shown = CR_PAGE;
+  clearTimeout(crSearchTimer);
+  crSearchTimer = setTimeout(crRenderRoster, 120);
 }
-function setCreatorMinVideos(v) { CREATOR_MIN_VIDEOS = parseInt(v) || 1; renderCreatorTab(); }
-function setCreatorPlatform(v) { CREATOR_PLATFORM = v; renderCreatorTab(); }
 
 // ---------------------------------------------------------------------
 //  Render
@@ -158,491 +186,341 @@ function setCreatorPlatform(v) { CREATOR_PLATFORM = v; renderCreatorTab(); }
 function renderCreatorTab() {
   const page = document.getElementById('page-creators');
   if (!page) return;
-
-  const all = buildCreators();
-  const list = filteredCreators();
-
-  // Options come from the unfiltered set — deriving them from the
-  // filtered set would leave only the option already selected.
-  const osAll = (typeof ALL !== 'undefined' ? ALL : [])
-    .filter(d => d.type === 'Others Say' && d.creatorProfile);
-  const campaignOpts = [...new Set(osAll.map(d => d.campaign).filter(Boolean))].sort();
-  const monthOpts = [...new Set(osAll.map(d => d.month).filter(Boolean))].sort();
-
-  if (all.length === 0) {
+  const all = typeof ALL !== 'undefined' ? ALL : [];
+  const os = all.filter(d => d.type === 'Others Say');
+  if (!os.length) {
     page.innerHTML = `<div class="content"><div class="organic-empty">
-      No creator content for ${typeof BRAND_NAME !== 'undefined' ? BRAND_NAME : 'this brand'} yet.
-      Creators appear here once Others Say assets are added.
-    </div></div>`;
+      No creator or community content for ${typeof BRAND_NAME !== 'undefined' ? msEsc(BRAND_NAME) : 'this brand'} yet.
+      It appears here once Others Say content is added.</div></div>`;
     return;
   }
 
-  const totalAssets = all.reduce((s, c) => s + c.videos, 0);
-  const totalViews  = all.reduce((s, c) => s + c.totalViews, 0);
-  const withPaid    = all.filter(c => c.spend > 0);
-  const scoredAll   = all.filter(c => c.validRate !== null);
-  const avgValid    = scoredAll.length
-    ? scoredAll.reduce((s, c) => s + c.validRate, 0) / scoredAll.length : null;
+  const v = CR_VIEWS[CR.view];
+  const counts = Object.fromEntries(Object.keys(CR_VIEWS).map(k =>
+    [k, crProfiles(all.filter(CR_VIEWS[k].test)).length]));
 
-  const th = (key, label, width) =>
-    `<th style="${width ? `width:${width};` : ''}cursor:pointer" onclick="sortCreators('${key}')">
-       ${label}${CREATOR_SORT.key === key ? (CREATOR_SORT.dir === 'desc' ? ' ↓' : ' ↑') : ''}
-     </th>`;
-
-  const maxViews = Math.max(...list.map(c => c.totalViews), 1);
+  // Options from everything Others Say, so a filter never strands itself.
+  const campaigns = [...new Set(os.map(d => d.campaign).filter(Boolean))].sort();
+  const months = [...new Set(os.map(d => d.month).filter(m => m && m !== 'Unknown'))]
+    .sort((a, b) => msMonthKey(b) - msMonthKey(a));
+  const sel = (key, opts) => `
+    <select class="kfi-select" onchange="setCreatorFilter('${key}', this.value)">
+      ${opts.map(([val, t]) => `<option value="${msEsc(val)}"${CR[key] === val ? ' selected' : ''}>${msEsc(t)}</option>`).join('')}
+    </select>`;
 
   page.innerHTML = `
   <div class="content">
-
-    <div class="kpi-row" style="grid-template-columns:repeat(4,1fr)">
-      <div class="kpi">
-        <div class="kpi-label">Creators</div>
-        <div class="kpi-val">${all.length}</div>
-        <div class="kpi-sub">${totalAssets} assets produced</div>
-      </div>
-      <div class="kpi">
-        <div class="kpi-label">Creator Views</div>
-        <div class="kpi-val">${fmtN(totalViews)}</div>
-        <div class="kpi-sub">Across IG, TikTok and Facebook</div>
-      </div>
-      <div class="kpi">
-        <div class="kpi-label">Validation Rate</div>
-        <div class="kpi-val">${avgValid !== null ? avgValid.toFixed(0) + '%' : '—'}</div>
-        <div class="kpi-sub">${avgValid !== null ? 'Posts scoring Good or Average' : 'No scored organic posts yet'}</div>
-      </div>
-      <div class="kpi">
-        <div class="kpi-label">Amplified</div>
-        <div class="kpi-val">${withPaid.length}</div>
-        <div class="kpi-sub">Creators with paid spend behind them</div>
-      </div>
+    <div class="cr-views" role="tablist">
+      <span class="cr-view-pill" id="cr-view-pill" aria-hidden="true"></span>
+      ${Object.entries(CR_VIEWS).map(([k, x]) => `
+        <button role="tab" aria-selected="${CR.view === k}" class="cr-view ${CR.view === k ? 'on' : ''}"
+          onclick="setCreatorView('${k}')">${x.label}<span class="cr-view-n">${counts[k]}</span></button>`).join('')}
     </div>
 
     <div class="cr-toolbar">
-      <span class="cr-flabel">Campaign</span>
-      <select onchange="setCreatorCampaign(this.value)">
-        <option value="all"${CREATOR_CAMPAIGN === 'all' ? ' selected' : ''}>All campaigns</option>
-        ${campaignOpts.map(c => `<option value="${c}"${CREATOR_CAMPAIGN === c ? ' selected' : ''}>${c}</option>`).join('')}
+      ${sel('campaign', [['all', 'All campaigns'], ...campaigns.map(c => [c, c])])}
+      ${sel('month', [['all', 'All months'], ...months.map(m => [m, m])])}
+      ${sel('platform', [['all', 'All platforms'], ...CR_PLATFORMS.map(p => [p.code, p.label])])}
+    </div>
+
+    <div id="cr-summary"></div>
+
+    <div class="ms-sec-h cr-roster-h">${v.label}</div>
+    <div class="cr-toolbar">
+      <input id="cr-search" class="search-input" placeholder="Search ${v.many}…"
+             value="${msEsc(CR.search)}" oninput="setCreatorSearch(this.value)">
+      <select class="kfi-select" onchange="setCreatorSort(this.value)">
+        ${[['recent', 'Most recent'], ['posts', 'Most posts'], ['name', 'A to Z']]
+          .map(([val, t]) => `<option value="${val}"${CR.sort === val ? ' selected' : ''}>${t}</option>`).join('')}
       </select>
-
-      <span class="cr-flabel">Month</span>
-      <div class="cr-pills">
-        <button class="cr-pill ${CREATOR_MONTH === 'all' ? 'cr-pill-on' : ''}"
-                onclick="setCreatorMonth('all')">All</button>
-        ${monthOpts.map(m => `<button class="cr-pill ${CREATOR_MONTH === m ? 'cr-pill-on' : ''}"
-                onclick="setCreatorMonth('${m}')">${m}</button>`).join('')}
-      </div>
-
-      <input id="cr-search" class="search-input" placeholder="Search creator..."
-             value="${CREATOR_SEARCH}" oninput="setCreatorSearch(this.value)">
-      <select onchange="setCreatorPlatform(this.value)">
-        <option value="all"${CREATOR_PLATFORM === 'all' ? ' selected' : ''}>All platforms</option>
-        <option value="IG"${CREATOR_PLATFORM === 'IG' ? ' selected' : ''}>Instagram</option>
-        <option value="TT"${CREATOR_PLATFORM === 'TT' ? ' selected' : ''}>TikTok</option>
-        <option value="FB"${CREATOR_PLATFORM === 'FB' ? ' selected' : ''}>Facebook</option>
-      </select>
-      <select onchange="setCreatorMinVideos(this.value)">
-        <option value="1"${CREATOR_MIN_VIDEOS === 1 ? ' selected' : ''}>All creators</option>
-        <option value="2"${CREATOR_MIN_VIDEOS === 2 ? ' selected' : ''}>2+ assets</option>
-        <option value="3"${CREATOR_MIN_VIDEOS === 3 ? ' selected' : ''}>3+ assets</option>
-        <option value="5"${CREATOR_MIN_VIDEOS === 5 ? ' selected' : ''}>5+ assets</option>
-      </select>
-      <span class="cr-count">${list.length} of ${all.length} creators</span>
+      <span class="cr-count" id="cr-count"></span>
     </div>
-
-    <div class="chart-box" style="padding:0;overflow-x:auto">
-      <table class="kpi-table">
-        <thead><tr>
-          ${th('name','Creator')}
-          ${th('videos','Assets','70px')}
-          ${th('totalViews','Total Views','150px')}
-          ${th('goodShare','Quality','90px')}
-          ${th('avgWatch','Avg Watch','90px')}
-          ${th('avgHook','Hook Rate','90px')}
-          ${th('avgDuration','Length','80px')}
-          ${th('validRate','Validated','150px')}
-          <th style="width:120px">Platform mix</th>
-        </tr></thead>
-        <tbody>
-          ${list.map(c => {
-            const g = c.orgCqr.Good, a = c.orgCqr.Average, p = c.orgCqr.Poor;
-            const nameEl = c.profileUrl
-              ? `<a href="${c.profileUrl}" target="_blank" class="creator-link">${c.name}</a>`
-              : c.name;
-            // A single-asset creator's averages are not a track record.
-            const thin = c.videos < 2
-              ? `<span class="tag-duration" title="Single asset — not yet a pattern">1 asset</span>` : '';
-            return `<tr data-press style="cursor:pointer" onclick="openCreatorDetail('${c.name.replace(/'/g,"\\'")}', this)">
-              <td><div style="display:flex;align-items:center;gap:6px">${nameEl}${thin}</div></td>
-              <td>${c.videos}</td>
-              <td>
-                <div style="display:flex;align-items:center;gap:8px;justify-content:flex-end">
-                  <div class="mini-bar-track" style="flex:1;max-width:70px">
-                    <div class="mini-bar-fill" style="width:${Math.round(c.totalViews/maxViews*100)}%;background:var(--violet)"></div>
-                  </div>
-                  <span>${fmtN(c.totalViews)}</span>
-                </div>
-              </td>
-              <td>${c.goodShare !== null
-                ? `<span style="color:${c.goodShare >= 60 ? 'var(--pos-ink)' : c.goodShare >= 30 ? 'var(--warn-ink)' : 'var(--neg-ink)'}">${c.goodShare.toFixed(0)}% Good</span>`
-                : '<span class="kpi-muted">—</span>'}</td>
-              <td>${c.avgWatch > 0 ? c.avgWatch.toFixed(1) + 's' : '—'}</td>
-              <td>${c.avgHook > 0 ? c.avgHook.toFixed(1) + '%' : '—'}</td>
-              <td>${c.avgDuration > 0 ? Math.round(c.avgDuration) + 's' : '—'}</td>
-              <td>
-                ${g + a + p > 0 ? `
-                  <div style="display:flex;height:4px;border-radius:2px;overflow:hidden;min-width:60px">
-                    ${g ? `<div style="flex:${g};background:var(--pos-ink)"></div>` : ''}
-                    ${a ? `<div style="flex:${a};background:var(--warn-ink)"></div>` : ''}
-                    ${p ? `<div style="flex:${p};background:var(--neg-ink)"></div>` : ''}
-                  </div>
-                  <div style="font:500 11px var(--font-mono);color:var(--ink-400);margin-top:4px">
-                    ${g}G / ${a}A / ${p}P
-                  </div>` : '<span class="kpi-muted">Not scored</span>'}
-              </td>
-              <td>
-                <div style="display:flex;height:4px;border-radius:2px;overflow:hidden">
-                  ${c.igShare ? `<div style="flex:${c.igShare};background:var(--navy)"></div>` : ''}
-                  ${c.ttShare ? `<div style="flex:${c.ttShare};background:var(--violet)"></div>` : ''}
-                  ${c.fbShare ? `<div style="flex:${c.fbShare};background:var(--violet-400)"></div>` : ''}
-                </div>
-                <div style="font:500 11px var(--font-mono);color:var(--ink-400);margin-top:4px">${c.platforms.join(' ')}</div>
-              </td>
-            </tr>`;
-          }).join('')}
-        </tbody>
-      </table>
-    </div>
-
-    <div class="charts-row" style="margin-top:24px">
-      <div class="chart-box">
-        <div class="chart-box-title">Creative quality by creator</div>
-        <div class="cr-note">
-          Organic CQR per creator, sorted by share of Good. CQR combines both
-          signals, so it says more than either rate on its own.
-        </div>
-        <div class="chart-container" style="height:300px"><canvas id="cr-cqr"></canvas></div>
-      </div>
-      <div class="chart-box">
-        <div class="chart-box-title">Platform mix — share of each creator's views</div>
-        <div class="cr-note">
-          Which platform a creator owns, independent of how big they are.
-        </div>
-        <div class="chart-container" style="height:300px"><canvas id="cr-mix"></canvas></div>
-      </div>
-    </div>
-
-    <div class="charts-row" style="margin-top:16px">
-      <div class="chart-box">
-        <div class="chart-box-title">Hook rate by creator</div>
-        <div class="cr-note">
-          Whether the opening stops the scroll. Bar colour is against the
-          paid benchmark for the platform the asset ran on.
-        </div>
-        <div class="chart-container" style="height:260px"><canvas id="cr-hook"></canvas></div>
-      </div>
-      <div class="chart-box">
-        <div class="chart-box-title">Hold rate by creator</div>
-        <div class="cr-note">
-          Whether the asset keeps them once hooked. A creator strong here
-          but weak on hook needs a recut, not replacing.
-        </div>
-        <div class="chart-container" style="height:260px"><canvas id="cr-hold"></canvas></div>
-      </div>
-    </div>
-
-    <div class="charts-row" style="margin-top:16px">
-      <div class="chart-box">
-        <div class="chart-box-title">Asset length vs quality</div>
-        <div class="cr-note">
-          Each point is one asset. Shows whether shorter creator content
-          scores better for this brand.
-        </div>
-        <div class="chart-container" style="height:240px"><canvas id="cr-duration"></canvas></div>
-      </div>
-      <div class="chart-box">
-        <div class="chart-box-title">Creator vs Brand Say</div>
-        <div class="cr-note">
-          Organic CQR mix, creator content against owned content.
-        </div>
-        <div class="chart-container" style="height:240px"><canvas id="cr-vs-brand"></canvas></div>
-      </div>
-    </div>
-
+    <div id="cr-roster"></div>
   </div>`;
 
-  drawCreatorCharts(list, all);
+  if (typeof enhanceSelectsIn === 'function') enhanceSelectsIn(page);
+  crPlacePill();
+  crRenderSummary();
+  crRenderRoster();
+}
+
+/** Tiles and patterns: aggregates, so they stay one screen at any scale. */
+function crRenderSummary() {
+  const el = document.getElementById('cr-summary');
+  if (!el) return;
+  const v = CR_VIEWS[CR.view];
+  const posts = crPosts();
+  const profiles = crProfiles(posts);
+  if (!posts.length) {
+    el.innerHTML = `<div class="ms-card"><div class="ms-bar-empty">
+      No ${v.label.toLowerCase()} content matches this selection. Widen a filter above.</div></div>`;
+    return;
+  }
+
+  const mix = crMix(posts);
+  const views = posts.reduce((s, d) => s + crViews(d), 0);
+  const scopeAll = (typeof ALL !== 'undefined' ? ALL : [])
+    .filter(d => CR.campaign === 'all' || d.campaign === CR.campaign)
+    .filter(d => CR.month === 'all' || d.month === CR.month);
+  const allViews = scopeAll.reduce((s, d) => s + crViews(d), 0);
+  const repeat = profiles.filter(p => p.posts.length > 1).length;
+
+  const tiles =
+    msTile(v.label, String(profiles.length),
+      repeat ? `${repeat} with more than one post` : 'one post each so far') +
+    msTile('Posts', String(posts.length),
+      `${(posts.length / Math.max(profiles.length, 1)).toFixed(1)} per ${v.one}`) +
+    msTile('Share of organic views', `${msPct(views, allViews)}%`, `${fmtN(views)} views`) +
+    msTile('Rated Good', crGoodShare(mix) === null ? '—' : `${crGoodShare(mix)}%`,
+      `of ${crPlural(crRated(mix), 'rated post')}`);
+
+  // Creators, Community and Brand Say side by side, in the same scope.
+  const compare = [
+    { label: 'Creators', posts: crPosts('creators') },
+    { label: 'Community', posts: crPosts('community') },
+    { label: 'Brand Say', posts: crBrandPosts() },
+  ].filter(r => r.posts.length);
+  const compareCard = compare.length > 1 ? msCard('Against the rest of the content', `
+    <table class="ms-table ms-table-cut">
+      <tbody>${compare.map(r => `
+        <tr${r.label === v.label ? ' class="cr-row-on"' : ''}>
+          <td class="ms-cut-k">${r.label}<div class="ms-cut-n">${crPlural(r.posts.length, 'post')}</div></td>
+          <td class="ms-mixcell">${msCqrBar(crMix(r.posts), r.posts.length)}</td>
+        </tr>`).join('')}
+      </tbody>
+    </table>`, 'organic rating, one vote per post') : '';
+
+  const before = typeof msMotionSnapshot === 'function' ? msMotionSnapshot(el) : null;
+  el.innerHTML = `
+    <div class="ms-tiles cols-4">${tiles}</div>
+    ${crPatterns(posts, v, compareCard)}`;
+  if (typeof msMotionPlay === 'function') msMotionPlay(el, before);
+}
+
+/** What works: the rating mix by length, platform and content type. */
+function crPatterns(posts, v, lead) {
+  const cut = (title, groups, ordered) => {
+    let rows = groups.map(g => ({ ...g, mix: crMix(g.items) }))
+      .filter(g => crRated(g.mix) >= CR_MIN_PATTERN);
+    if (!ordered) rows.sort((a, b) => b.items.length - a.items.length);
+    if (rows.length < 2) return '';
+    return msCard(title, `
+      <table class="ms-table ms-table-cut">
+        <tbody>${rows.map(r => `
+          <tr>
+            <td class="ms-cut-k">${msEsc(r.label)}<div class="ms-cut-n">${crPlural(r.items.length, 'post')}</div></td>
+            <td class="ms-mixcell">${msCqrBar(r.mix, r.items.length)}</td>
+          </tr>`).join('')}
+        </tbody>
+      </table>`);
+  };
+
+  const bands = [
+    { label: 'Under 15s', test: s => s > 0 && s < 15 },
+    { label: '15 to 30s', test: s => s >= 15 && s < 30 },
+    { label: '30 to 60s', test: s => s >= 30 && s < 60 },
+    { label: '60s and over', test: s => s >= 60 },
+  ];
+
+  // Per platform the post's own rating there, not its best anywhere.
+  const platGroups = CR_PLATFORMS.map(p => {
+    const items = posts.filter(d => d[p.key]).map(d => ({ ...d, igOrganic: null, ttOrganic: null, fbOrganic: null, [p.key]: d[p.key], bestOrgCqr: null }));
+    return { label: p.label, items };
+  }).filter(g => g.items.length);
+
+  // Content types grow with the roster, so the long tail folds into one row.
+  const types = {};
+  posts.forEach(d => { const t = d.contentType || 'Not classified'; (types[t] ||= []).push(d); });
+  const typeRows = Object.entries(types).sort((a, b) => b[1].length - a[1].length);
+  const typeGroups = typeRows.slice(0, CR_TYPES_SHOWN).map(([label, items]) => ({ label, items }));
+  const rest = typeRows.slice(CR_TYPES_SHOWN).flatMap(([, items]) => items);
+  if (rest.length) typeGroups.push({ label: 'Everything else', items: rest });
+
+  const cards = [
+    cut('Length', bands.map(b => ({ label: b.label, items: posts.filter(d => b.test(Number(d.duration) || 0)) })), true),
+    cut('Platform', platGroups),
+    cut('Content type', typeGroups, true),
+  ].filter(Boolean);
+  if (lead) cards.unshift(lead);
+  if (!cards.length) return '';
+
+  return `
+    <div class="ms-sub-h">How ${v.title.toLowerCase()} content is doing</div>
+    <div class="ms-note">Organic rating against the rest of the content, then by the shape of the post across
+      every ${v.one}. Lessons for the next brief.</div>
+    <div class="ms-grid cols-${Math.min(cards.length, 2)}">${cards.join('')}</div>`;
+}
+
+/** The profile cards, a page at a time. */
+function crRenderRoster() {
+  const el = document.getElementById('cr-roster');
+  if (!el) return;
+  const v = CR_VIEWS[CR.view];
+  const all = crProfiles(crPosts());
+  const list = crSorted(all);
+  const shown = list.slice(0, CR.shown);
+
+  const count = document.getElementById('cr-count');
+  if (count) count.textContent = list.length === all.length
+    ? crPlural(all.length, v.one, v.many)
+    : `${list.length} of ${crPlural(all.length, v.one, v.many)}`;
+
+  if (!list.length) {
+    el.innerHTML = `<div class="ms-card"><div class="ms-bar-empty">${
+      CR.search ? `No ${v.one} matches “${msEsc(CR.search)}”.` : `No ${v.many} in this selection.`}</div></div>`;
+    return;
+  }
+
+  el.innerHTML = `
+    <div class="cr-cards">${shown.map(crCard).join('')}</div>
+    ${list.length > shown.length ? `
+      <div class="cr-more">
+        <button class="cr-more-btn" onclick="showMoreCreators()">Show more</button>
+        <span>Showing ${shown.length} of ${list.length}</span>
+      </div>` : ''}`;
+}
+
+function crCard(p) {
+  const n = p.posts.length;
+  const initial = msEsc(p.name.replace(/^@/, '').charAt(0).toUpperCase() || '?');
+  const highlight = [
+    p.strongest ? `Strongest on ${p.strongest}` : '',
+    p.best && crGrade(p.best) === 'Good' ? 'Best post rated Good' : '',
+  ].filter(Boolean)[0] || '';
+  return `
+    <button class="cr-card" data-press onclick="openCreatorDetail(${crArg(p.name)}, this)">
+      <div class="cr-card-top">
+        <div class="cr-thumb">${initial}${p.thumb
+          ? `<img src="${msEsc(p.thumb)}" alt="" loading="lazy" onerror="this.remove()">` : ''}</div>
+        <div class="cr-card-id">
+          <div class="cr-card-name">${msEsc(p.name)}</div>
+          <div class="cr-card-meta">${crPlural(n, 'post')} · ${p.platforms.map(pl => pl.label).join(', ') || 'No platform'}</div>
+        </div>
+      </div>
+      ${crRated(p.mix) ? msCqrBar(p.mix, n) : `<div class="ms-bar-empty">Not rated yet</div>`}
+      <div class="cr-card-foot">${
+        n === 1 ? '<span class="cr-tag">1 post, not a pattern yet</span>'
+          : highlight ? `<span class="cr-good">${highlight}</span>` : ''}
+        ${p.latest ? `<span class="cr-date">Latest ${msEsc(p.latest)}</span>` : ''}
+      </div>
+    </button>`;
 }
 
 // ---------------------------------------------------------------------
-//  Charts. Two, both answering questions the table cannot.
+//  Profile panel
 // ---------------------------------------------------------------------
-let crCqr = null, crMix = null, crHook = null, crHold = null,
-    crDuration = null, crVsBrand = null;
+let crPanelShown = CR_POSTS_PAGE;
 
-const CR_GOOD = '#04785C', CR_AVG = '#8A5A12', CR_POOR = '#A32040';
-const CR_GRID = '#E6E8F0', CR_TICK = '#6B7196';
-
-function drawCreatorCharts(list, all) {
-  [crCqr, crMix, crHook, crHold, crDuration, crVsBrand]
-    .forEach(c => { if (c) c.destroy(); });
-
-  const short = n => n.length > 14 ? n.slice(0, 12) + '…' : n;
-
-  // 1. CQR mix per creator — the primary view. Sorted by share of Good
-  //    rather than volume, so the top of the chart is the best work.
-  const q = [...list].filter(c => c.scoredPosts > 0)
-    .sort((a, b) => (b.goodShare ?? -1) - (a.goodShare ?? -1)).slice(0, 12);
-  crCqr = new Chart(document.getElementById('cr-cqr'), {
-    type: 'bar',
-    data: {
-      labels: q.map(c => short(c.name)),
-      datasets: [
-        { label: 'Good',    data: q.map(c => c.orgCqr.Good),    backgroundColor: CR_GOOD },
-        { label: 'Average', data: q.map(c => c.orgCqr.Average), backgroundColor: CR_AVG },
-        { label: 'Poor',    data: q.map(c => c.orgCqr.Poor),    backgroundColor: CR_POOR }
-      ]
-    },
-    options: {
-      indexAxis: 'y', responsive: true, maintainAspectRatio: false,
-      plugins: { legend: { labels: { color: CR_TICK, font: { size: 11 }, boxWidth: 10 } },
-                 tooltip: { callbacks: { label: ctx => `${ctx.dataset.label}: ${ctx.raw} post${ctx.raw === 1 ? '' : 's'}` } } },
-      scales: {
-        x: { stacked: true, beginAtZero: true, grid: { color: CR_GRID },
-             ticks: { color: CR_TICK, precision: 0 } },
-        y: { stacked: true, grid: { display: false }, ticks: { color: CR_TICK, font: { size: 10 } } }
-      }
-    }
-  });
-
-  // 2. Platform mix, as share
-  const top = list.slice(0, 12);
-  crMix = new Chart(document.getElementById('cr-mix'), {
-    type: 'bar',
-    data: {
-      labels: top.map(c => short(c.name)),
-      datasets: [
-        { label: 'Instagram', data: top.map(c => c.igShare), backgroundColor: '#000050' },
-        { label: 'TikTok',    data: top.map(c => c.ttShare), backgroundColor: '#31117C' },
-        { label: 'Facebook',  data: top.map(c => c.fbShare), backgroundColor: '#6E5BD6' }
-      ]
-    },
-    options: {
-      indexAxis: 'y', responsive: true, maintainAspectRatio: false,
-      plugins: { legend: { labels: { color: CR_TICK, font: { size: 11 }, boxWidth: 10 } },
-                 tooltip: { callbacks: { label: ctx => `${ctx.dataset.label}: ${ctx.raw.toFixed(0)}%` } } },
-      scales: {
-        x: { stacked: true, max: 100, grid: { color: CR_GRID },
-             ticks: { color: CR_TICK, callback: v => v + '%' } },
-        y: { stacked: true, grid: { display: false }, ticks: { color: CR_TICK, font: { size: 10 } } }
-      }
-    }
-  });
-
-  // 3 & 4. Hook and hold separately, each ranked and colour-graded.
-  //    Split rather than combined because the actions differ: weak hook
-  //    means recut the opening, weak hold means recut the body.
-  const rankBar = (canvasId, key, unit, bands, chartRef) => {
-    const d = [...list].filter(c => c[key] > 0)
-      .sort((a, b) => b[key] - a[key]).slice(0, 10);
-    return new Chart(document.getElementById(canvasId), {
-      type: 'bar',
-      data: {
-        labels: d.map(c => short(c.name)),
-        datasets: [{
-          data: d.map(c => parseFloat(c[key].toFixed(1))),
-          backgroundColor: d.map(c => c[key] >= bands[0] ? CR_GOOD
-                                    : c[key] >= bands[1] ? CR_AVG : CR_POOR)
-        }]
-      },
-      options: {
-        indexAxis: 'y', responsive: true, maintainAspectRatio: false,
-        plugins: { legend: { display: false },
-                   tooltip: { callbacks: { label: ctx => `${ctx.raw}${unit}` } } },
-        scales: {
-          x: { beginAtZero: true, grid: { color: CR_GRID },
-               ticks: { color: CR_TICK, callback: v => v + unit } },
-          y: { grid: { display: false }, ticks: { color: CR_TICK, font: { size: 10 } } }
-        }
-      }
-    });
-  };
-  // Bands follow the paid benchmarks: Meta hook 10, TikTok hook 30.
-  // Using 30/10 grades against the tougher of the two.
-  crHook = rankBar('cr-hook', 'avgHook', '%', [30, 10]);
-  crHold = rankBar('cr-hold', 'avgHold', '%', [15, 7]);
-
-  // 5. Length vs quality, per asset. Points coloured by that asset's
-  //    best organic CQR, so the pattern is visible without a legend.
-  const pts = { Good: [], Average: [], Poor: [] };
-  all.forEach(c => c.assets.forEach(a => {
-    if (!a.duration) return;
-    const best = a.bestOrgCqr || a.cqr;
-    if (pts[best]) pts[best].push({ x: a.duration, y: c.goodShare ?? 0, name: a.short || a.id });
-  }));
-  crDuration = new Chart(document.getElementById('cr-duration'), {
-    type: 'scatter',
-    data: { datasets: [
-      { label: 'Good',    data: pts.Good,    backgroundColor: CR_GOOD, pointRadius: 6 },
-      { label: 'Average', data: pts.Average, backgroundColor: CR_AVG,  pointRadius: 6 },
-      { label: 'Poor',    data: pts.Poor,    backgroundColor: CR_POOR, pointRadius: 6 }
-    ]},
-    options: {
-      responsive: true, maintainAspectRatio: false,
-      plugins: { legend: { labels: { color: CR_TICK, font: { size: 11 }, boxWidth: 10 } },
-                 tooltip: { callbacks: { label: ctx => `${ctx.raw.name}: ${ctx.raw.x}s` } } },
-      scales: {
-        x: { title: { display: true, text: 'Asset length (s)', color: CR_TICK, font: { size: 11 } },
-             beginAtZero: true, grid: { color: CR_GRID }, ticks: { color: CR_TICK } },
-        y: { title: { display: true, text: "Creator's % Good", color: CR_TICK, font: { size: 11 } },
-             min: 0, max: 100, grid: { color: CR_GRID },
-             ticks: { color: CR_TICK, callback: v => v + '%' } }
-      }
-    }
-  });
-
-  // 6. Creator vs owned, on CQR mix rather than a single rate.
-  const bs = (typeof ALL !== 'undefined' ? ALL : []).filter(d => d.type === 'Brand Say');
-  const tally = arr => {
-    const t = { Good: 0, Average: 0, Poor: 0 };
-    arr.forEach(d => ['igOrganic', 'fbOrganic', 'ttOrganic'].forEach(k => {
-      const o = d[k]; if (o && t[o.cqr] !== undefined) t[o.cqr]++;
-    }));
-    return t;
-  };
-  const crAssets = []; all.forEach(c => c.assets.forEach(a => crAssets.push(a)));
-  const ct = tally(crAssets), bt = tally(bs);
-
-  crVsBrand = new Chart(document.getElementById('cr-vs-brand'), {
-    type: 'bar',
-    data: {
-      labels: ['Creator', 'Brand Say'],
-      datasets: [
-        { label: 'Good',    data: [ct.Good, bt.Good],       backgroundColor: CR_GOOD },
-        { label: 'Average', data: [ct.Average, bt.Average], backgroundColor: CR_AVG },
-        { label: 'Poor',    data: [ct.Poor, bt.Poor],       backgroundColor: CR_POOR }
-      ]
-    },
-    options: {
-      indexAxis: 'y', responsive: true, maintainAspectRatio: false,
-      plugins: { legend: { labels: { color: CR_TICK, font: { size: 11 }, boxWidth: 10 } } },
-      scales: {
-        x: { stacked: true, beginAtZero: true, grid: { color: CR_GRID },
-             ticks: { color: CR_TICK, precision: 0 } },
-        y: { stacked: true, grid: { display: false }, ticks: { color: CR_TICK } }
-      }
-    }
-  });
-}
-
-// ---------------------------------------------------------------------
-//  Detail — one creator's assets, so the conversation moves from
-//  "this creator is good" to "this asset worked, and here is why"
-// ---------------------------------------------------------------------
-/** @param {Element} [trigger] the row that was clicked, so the panel
- *  grows out of it rather than appearing from nowhere. */
 function openCreatorDetail(name, trigger) {
-  const c = buildCreators().find(x => x.name === name);
-  if (!c) return;
+  crPanelShown = CR_POSTS_PAGE;
+  // The arrow keys step through Creative Hub creatives while its panel is
+  // open; this panel shares the same overlay, so switch that off.
+  if (typeof panelFor !== 'undefined') panelFor = null;
+  crRenderDetail(name);
+  // Through the shared opener in dashboard.js, so this panel arrives the
+  // same way the Creative Hub's does and picks up the same spring state.
+  if (typeof showCreativePanel === 'function') showCreativePanel(trigger);
+  else document.getElementById('creativeModalOverlay').style.display = 'flex';
+}
 
-  const PLAT = { ig: 'Instagram', tt: 'TikTok', fb: 'Facebook' };
+function crShowMorePosts(name) {
+  crPanelShown += CR_POSTS_PAGE;
+  crRenderDetail(name);
+}
 
-  // One block per asset, and inside it one column per platform. A single
-  // combined row hid the fact that the same asset can score Good on
-  // TikTok and Poor on Instagram — which is the actionable part.
-  const assetBlocks = c.assets.map(a => {
-    const platCols = ['ig','tt','fb'].map(k => {
-      const o = a[k + 'Organic'];
-      if (!o) return `
+function crRenderDetail(name) {
+  const p = crProfiles(crPosts()).find(x => x.name === name);
+  if (!p) return;
+  const v = CR_VIEWS[CR.view];
+  const share = crGoodShare(p.mix);
+
+  const postBlocks = p.posts.slice(0, crPanelShown).map(a => {
+    const platCols = CR_PLATFORMS.map(pl => {
+      const o = a[pl.key];
+      if (!o) return a[pl.link] ? `
         <div class="cr-plat-col cr-plat-empty">
-          <div class="cr-plat-name">${PLAT[k]}</div>
-          <div class="organic-empty">Not posted</div>
-        </div>`;
-      const views = o.views || o.videoViews || 0;
+          <div class="cr-plat-name">${pl.label}</div>
+          <div class="organic-empty">No numbers yet</div>
+        </div>` : '';
       const row = (label, val) => `
         <div class="organic-stat-row"><span class="organic-stat-label">${label}</span>
         <span class="organic-stat-val">${val}</span></div>`;
       return `
         <div class="cr-plat-col">
-          <div class="cr-plat-name">${PLAT[k]}</div>
-          ${row('Views', fmtN(views))}
+          <div class="cr-plat-name">${pl.label}</div>
+          ${row('Views', fmtN(o.views || o.videoViews || 0))}
           ${row('Reach', o.reach ? fmtN(o.reach) : '—')}
-          ${row(k === 'fb' ? 'Reactions' : 'Likes', fmtN(o.likes || o.reactions || 0))}
+          ${row(pl.code === 'fb' ? 'Reactions' : 'Likes', fmtN(o.likes || o.reactions || 0))}
           ${row('Comments', fmtN(o.comments || 0))}
           ${row('Shares', fmtN(o.shares || 0))}
-          ${k !== 'fb' ? row('Saves', fmtN(o.saves || 0)) : ''}
           ${row('Avg watch', o.avgWatchTime ? o.avgWatchTime.toFixed(1) + 's' : '—')}
-          ${row('Retention', o.retentionRate ? o.retentionRate.toFixed(1) + '%' : '—')}
           <div style="margin-top:8px">
-            <span class="kpi-pill ${cqrClass(o.cqr)}">${o.cqr || 'Not scored'}</span>
+            <span class="kpi-pill ${cqrClass(o.cqr)}">${o.cqr || 'Not rated'}</span>
           </div>
         </div>`;
     }).join('');
 
-    const paid = a.spend > 0 ? `
-      <div class="cr-paid-strip">
-        <div><span class="cr-paid-label">Spend</span> ${fmt(a.spend)}</div>
-        <div><span class="cr-paid-label">Reach</span> ${fmtN(a.reach || 0)}</div>
-        <div><span class="cr-paid-label">Hook</span> ${(a.hookRate || 0).toFixed(1)}%</div>
-        <div><span class="cr-paid-label">Hold</span> ${(a.holdRate || 0).toFixed(1)}</div>
-        <div><span class="kpi-pill ${cqrClass(a.cqr)}">${a.cqr}</span></div>
-      </div>`
-      : `<div class="cr-paid-strip"><span class="kpi-muted">Not boosted — organic only</span></div>`;
-
-    const brief = (a.contentHook || (a.segments && a.segments.length)) ? `
-      <details class="org-details" style="margin-top:12px">
-        <summary class="org-summary">Creative brief
-          <span style="color:var(--ink-400);font-size:10px">Click to expand ▼</span></summary>
-        <div class="org-content">
-          ${a.contentHook ? `<div class="brief-hook"><span class="brief-hook-label">Hook</span>
-            <div class="brief-hook-text">${a.contentHook}</div></div>` : ''}
-          ${(a.segments || []).length ? `<div class="brief-segs" style="margin-top:12px">${
-            a.segments.map((sg, i2) => `<div class="seg-row">
-              <div class="seg-label">${['0–25%','25–50%','50–75%','75–100%'][i2] || ''}</div>
-              <div class="seg-text">${sg}</div></div>`).join('')
-          }</div>` : ''}
-        </div>
-      </details>` : '';
+    // Paid only as the rating it earned, never what was behind it.
+    const paid = isGrade(a.cqr) ? `
+      <div class="cr-paid-strip"><span class="cr-paid-label">Paid rating</span>
+        <span class="kpi-pill ${cqrClass(a.cqr)}">${a.cqr}</span></div>` : '';
 
     return `
       <div class="cr-asset">
         <div class="cr-asset-head">
           <div>
-            <div class="cr-asset-title">${a.short || a.id}</div>
-            <div class="cr-asset-meta">${[a.campaign, a.month, a.duration ? a.duration + 's' : null]
-              .filter(Boolean).join(' · ')}</div>
+            <div class="cr-asset-title">${msEsc(a.short || a.id)}</div>
+            <div class="cr-asset-meta">${[a.date, a.campaign, a.contentType, a.duration ? Math.round(a.duration) + 's' : null]
+              .filter(Boolean).map(msEsc).join(' · ')}</div>
           </div>
-          ${a.creativeLink ? `<button class="view-btn" onclick="window.open('${a.creativeLink}','_blank')">View ↗</button>` : ''}
+          ${a.creativeLink ? `<a class="view-btn" href="${msEsc(a.creativeLink)}" target="_blank" rel="noopener">View ↗</a>` : ''}
         </div>
         ${paid}
         <div class="cr-plat-grid">${platCols}</div>
-        ${brief}
+        ${a.contentHook ? `<div class="cr-hook"><span class="brief-hook-label">Hook</span> ${msEsc(a.contentHook)}</div>` : ''}
       </div>`;
   }).join('');
+
+  const more = p.posts.length > crPanelShown ? `
+    <div class="cr-more">
+      <button class="cr-more-btn" onclick="crShowMorePosts(${crArg(p.name)})">Show more posts</button>
+      <span>Showing ${crPanelShown} of ${p.posts.length}</span>
+    </div>` : '';
 
   document.getElementById('creativeModalContent').innerHTML = `
     <div class="cm-body">
       <div class="detail-header">
         <div>
-          <div class="detail-title">${c.profileUrl
-            ? `<a href="${c.profileUrl}" target="_blank" class="creator-link">${c.name}</a>` : c.name}</div>
-          <div class="detail-meta">${c.videos} asset${c.videos > 1 ? 's' : ''} · ${fmtN(c.totalViews)} views · ${c.platforms.join(' · ')}</div>
+          <div class="detail-title">${p.profileUrl
+            ? `<a href="${msEsc(p.profileUrl)}" target="_blank" rel="noopener" class="creator-link">${msEsc(p.name)}</a>`
+            : msEsc(p.name)}</div>
+          <div class="detail-meta">${v.title} · ${crPlural(p.posts.length, 'post')} · ${p.platforms.map(pl => pl.label).join(', ')}</div>
         </div>
         <button class="close-btn" onclick="closeCreativeModal({target:{id:'creativeModalOverlay'}})">×</button>
       </div>
-
-      <div class="detail-metrics" style="margin-bottom:20px">
-        <div class="dm"><div class="dm-label">Avg views / asset</div><div class="dm-val">${fmtN(Math.round(c.avgViews))}</div></div>
-        <div class="dm"><div class="dm-label">Quality</div><div class="dm-val">${c.goodShare !== null ? c.goodShare.toFixed(0) + '% Good' : '—'}</div>
-          <div style="font:400 12px var(--font-ui);color:var(--ink-500);margin-top:4px">${c.orgCqr.Good}G · ${c.orgCqr.Average}A · ${c.orgCqr.Poor}P</div></div>
-        <div class="dm"><div class="dm-label">Avg watch time</div><div class="dm-val">${c.avgWatch > 0 ? c.avgWatch.toFixed(1) + 's' : '—'}</div></div>
-        <div class="dm"><div class="dm-label">Paid spend</div><div class="dm-val">${c.spend > 0 ? fmt(c.spend) : '—'}</div>
-          <div style="font:400 12px var(--font-ui);color:var(--ink-500);margin-top:4px">${c.paidAssets} of ${c.videos} amplified</div></div>
+      <div class="detail-metrics" style="margin-bottom:16px">
+        <div class="dm"><div class="dm-label">Organic views</div><div class="dm-val">${fmtN(p.views)}</div>
+          <div class="cr-dm-sub">${fmtN(Math.round(p.views / p.posts.length))} per post</div></div>
+        <div class="dm"><div class="dm-label">Rated Good</div><div class="dm-val">${share === null ? '—' : share + '%'}</div>
+          <div class="cr-dm-sub">of ${crPlural(crRated(p.mix), 'rated post')}</div></div>
+        <div class="dm"><div class="dm-label">Strongest on</div><div class="dm-val">${p.strongest || '—'}</div>
+          <div class="cr-dm-sub">${p.strongest ? 'best share of Good' : p.platforms.length > 1 ? 'no clear lead yet' : 'one platform'}</div></div>
       </div>
-
-      ${assetBlocks}
+      ${crRated(p.mix) ? `<div style="margin-bottom:20px">${msCqrBar(p.mix, p.posts.length)}</div>` : ''}
+      ${postBlocks}
+      ${more}
     </div>`;
-  // Through the shared opener in dashboard.js, so this panel arrives the
-  // same way the Creative Hub's does and picks up the same spring state.
-  if (typeof showCreativePanel === 'function') showCreativePanel(trigger);
-  else document.getElementById('creativeModalOverlay').style.display = 'flex';
+
+  // The hook line is a panel-only field the list leaves out. Fetch it for
+  // the posts on show and draw again once, if any were missing.
+  const shown = p.posts.slice(0, crPanelShown).filter(a => !a._detail).map(a => a.id);
+  if (shown.length && typeof ensureDetails === 'function') {
+    ensureDetails(shown).then(() => {
+      // Only redraw if the details actually landed. Redrawing regardless
+      // asked again for the same posts, forever, and froze the page.
+      if (shown.some(id => !(p.posts.find(a => a.id === id) || {})._detail)) return;
+      const open = document.querySelector('#creativeModalContent .detail-title');
+      if (open && open.textContent.trim() === p.name) crRenderDetail(name);
+    }).catch(err => console.error('[creators] details failed', err));
+  }
 }

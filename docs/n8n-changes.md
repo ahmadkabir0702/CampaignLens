@@ -126,6 +126,12 @@ null.
 
 ---
 
+## 6. Carousels and static posts
+
+Campaign Lens now accepts photo and carousel posts for both types (migration 022). The Brand Say syncs need to include them, and the Others Say sync should be checked. The full set of changes is in `docs/n8n-carousels-statics.md`.
+
+---
+
 ## Nothing needed for community posts
 
 The Community sub-type is entered in the app when a creative is added, so

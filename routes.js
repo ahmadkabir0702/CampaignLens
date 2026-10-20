@@ -15,6 +15,7 @@ const os = require('os');
 const fs = require('fs');
 const bcrypt = require('bcryptjs');
 const { query, brandsForUser, assertBrandAllowed } = require('./db');
+const { loadFeatures, ALL_ON } = require('./server/features');
 const { checkLinks } = require('./link-check');
 const { checkContent } = require('./content-check');
 const { buildValidation } = require('./organic-validation');
@@ -47,6 +48,20 @@ const DESCRIPTION_MAX = 20;
 
 
 module.exports = function mountRoutes(app, deps = {}) {
+  // Any successful write through the API may change what the dashboard
+  // shows, so the cached payload goes. Cheaper than naming every route that
+  // writes, and it cannot miss one added later. The few posts that only
+  // read are named, because a brand switch or an Ask Lens question used to
+  // throw away every brand's build and make the next page wait on a new one.
+  const READ_ONLY_POSTS = p => p === '/switch-brand' || p === '/check-links' || p.startsWith('/chat/');
+  app.use('/api', (req, res, next) => {
+    if (req.method !== 'GET' && !READ_ONLY_POSTS(req.path)) {
+      res.on('finish', () => {
+        if (res.statusCode < 400) require('./creatives').invalidatePayload();
+      });
+    }
+    next();
+  });
   const { ai, youtubedl } = deps;
 
   // Resolve which brand this request is for: explicit ?brand=, else the
@@ -93,11 +108,7 @@ module.exports = function mountRoutes(app, deps = {}) {
       // Read once at login rather than per request. A change to someone's
       // access takes effect on their next sign-in, which is the same way
       // their brand list already behaves.
-      req.session.features = {
-        askLens:     rows[0].can_ask_lens     !== false,
-        addCreative: rows[0].can_add_creative !== false,
-        pretest:     rows[0].can_pretest      !== false,
-      };
+      req.session.features = await loadFeatures(username);
       req.session.activeBrand = access.brands[0];
       req.session.mustChangePassword = rows[0].must_change_password === true;
 
@@ -293,8 +304,7 @@ app.get('/api/brands', async (req, res) => {
         // What this account may use. The server refuses these endpoints
         // regardless; this is so the UI does not offer a button that
         // would only return 403.
-        features: req.session.features
-               || { askLens: true, addCreative: true, pretest: true }
+        features: req.session.features || ALL_ON
       });
     } catch (err) {
       res.status(500).json({ error: err.message });
@@ -399,19 +409,89 @@ app.get('/api/brands', async (req, res) => {
   });
 
   // -------------------------------------------------------------------
-  //  DASHBOARD DATA — same 11-array shape the frontend already parses
+  //  DASHBOARD DATA
+  //
+  //  The browser no longer downloads a brand's creatives up front. The
+  //  page gets the brand, campaigns, account numbers and the Creative
+  //  Hub's dropdown options here; the hub then asks /api/creatives for one
+  //  filtered, sorted page at a time (docs/scaling.md).
   // -------------------------------------------------------------------
-  const { buildPayload } = require('./creatives');
+  const C = require('./creatives');
+
+  const fail = (tag, res, err) => {
+    console.error(`[${tag}]`, err.message);
+    res.status(err.message.startsWith('Access denied') ? 403 : 500).json({ error: err.message });
+  };
+
+  // Serialised here rather than by res.json, so the size can be recorded.
+  const sendJson = (res, brand, body) => {
+    const s = JSON.stringify(body);
+    C.notePayloadSent(brand, Buffer.byteLength(s));
+    res.type('json').send(s);
+  };
 
   app.get('/api/dashboard-data', async (req, res) => {
     try {
       const brand = resolveBrand(req);
-      res.json(await buildPayload(brand));
-    } catch (err) {
-      console.error('[dashboard-data]', err.message);
-      res.status(err.message.startsWith('Access denied') ? 403 : 500)
-         .json({ error: err.message });
-    }
+      // ?lite=1 is the current page. Without it the whole list still comes
+      // back, so a tab left open across a deploy keeps working until it
+      // reloads.
+      const lite = req.query.lite === '1';
+      const payload = lite ? await C.pageMeta(brand) : await C.listPayload(brand);
+      // Account-level media numbers (spend, reach, KPIs) feed only the
+      // Media Summary. An account without it does not receive them.
+      const f = req.session.features;
+      if (f && f.media === false) payload.account = [];
+      sendJson(res, brand, payload);
+    } catch (err) { fail('dashboard-data', res, err); }
+  });
+
+  // One page of the Creative Hub: filters, search and sort as query
+  // parameters, and offset/limit for the page. See hubPage in creatives.js.
+  app.get('/api/creatives', async (req, res) => {
+    try {
+      const brand = resolveBrand(req);
+      res.json(await C.hubPage(brand, req.query));
+    } catch (err) { fail('creatives', res, err); }
+  });
+
+  // Every creative, slim, for Media Summary and Creators, which still work
+  // their figures out in the browser. Fetched only when one is opened.
+  app.get('/api/creatives/library', async (req, res) => {
+    try {
+      const f = req.session.features;
+      if (f && f.media === false && f.creators === false) {
+        return res.status(403).json({ error: 'Media Summary and Creators are not available on this account.' });
+      }
+      const brand = resolveBrand(req);
+      sendJson(res, brand, { creatives: await C.libraryPayload(brand) });
+    } catch (err) { fail('creatives-library', res, err); }
+  });
+
+  // Ids only, for the add form's "repurposed from" picker.
+  app.get('/api/creatives/ids', async (req, res) => {
+    try {
+      const brand = resolveBrand(req);
+      res.json({ ids: await C.creativeIds(brand) });
+    } catch (err) { fail('creatives-ids', res, err); }
+  });
+
+  // How big each brand's build is getting. Admin only; the same figures
+  // go to the server log on every build.
+  app.get('/api/payload-stats', (req, res) => {
+    if (req.session.role !== 'admin') return res.status(403).json({ error: 'Not permitted for this role' });
+    res.json({ brands: C.payloadStats() });
+  });
+
+  // The fields only the creative panel reads, and each creative's lineage,
+  // for one or more creatives: /api/creative-details?ids=A,B.
+  app.get('/api/creative-details', async (req, res) => {
+    try {
+      const brand = resolveBrand(req);
+      const ids = String(req.query.ids || '').split(',').map(s => s.trim()).filter(Boolean).slice(0, 200);
+      if (!ids.length) return res.status(400).json({ error: 'No creative ids given.' });
+      res.json({ details: await C.creativeDetails(brand, ids) });
+    } catch (err) { fail('creative-details', res, err); }
   });
 
   // -------------------------------------------------------------------
@@ -441,10 +521,11 @@ app.get('/api/brands', async (req, res) => {
   // what the form shows as valid is exactly what the server will accept.
   app.post('/api/check-links', async (req, res) => {
     try {
-      const { ig, fb, tt, source } = req.body || {};
-      // The form sends what it currently has selected, because a community
-      // page's Facebook post is valid where a brand's or a creator's is not.
-      const result = await checkLinks(app, query, { ig, fb, tt }, { source });
+      const { ig, fb, tt, source, format } = req.body || {};
+      // The form sends what it currently has selected: who posted it, and
+      // whether it is a video or a photo or carousel, which decides the
+      // link shapes that fit.
+      const result = await checkLinks(app, query, { ig, fb, tt }, { source, format });
       // Only worth comparing videos once every link is individually valid.
       if (result.ok) result.content = await contentFor(result.links);
       return res.json(result);
@@ -459,6 +540,10 @@ app.get('/api/brands', async (req, res) => {
     // date is no longer taken from the form. The real post date comes from the
     // platform on first sync; until then the row gets today as a placeholder.
     const { campaign, type, repurposed, originalId, creator, creator_id, description } = req.body;
+    // What the person said the post is. Decides which links are accepted.
+    // Optional, so a form loaded before this change still works.
+    const FORMATS = { video: 'Video', photo: 'Photo', carousel: 'Carousel' };
+    const format = FORMATS[String(req.body.format || '').toLowerCase()] ? String(req.body.format).toLowerCase() : null;
     // Others Say covers briefed creator content and posts by the public.
     // They are judged and acted on differently, so which one is recorded.
     const source = req.body.source || null;
@@ -492,7 +577,7 @@ app.get('/api/brands', async (req, res) => {
     let contentType = 'Video';
     try {
       const lc = await checkLinks(app, query, { ig: req.body.ig, fb: req.body.fb, tt: req.body.tt },
-        { source: sourceValue });
+        { source: sourceValue, format });
       if (!lc.ok) {
         const fieldErrors = {};
         for (const [k, v] of Object.entries(lc.fields)) if (!v.ok) fieldErrors[k] = v.error;
@@ -500,10 +585,11 @@ app.get('/api/brands', async (req, res) => {
       }
       normalised = lc.links;
       ig = normalised.ig || null; fb = normalised.fb || null; tt = normalised.tt || null;
-      // A community page's Facebook post can be a photo. The validator
-      // already worked that out, so the row is typed from it rather than
-      // assuming every creative is a video.
-      if (lc.fields.fb && lc.fields.fb.kind && lc.fields.fb.kind !== 'video') contentType = 'Photo';
+      // A first guess only. Whether the post is a video, a single image or a
+      // carousel is settled by the worker when it fetches the post, since an
+      // Instagram /p/ link or a Facebook post can be any of them.
+      if (format) contentType = FORMATS[format];
+      else if (Object.values(lc.fields).some(f => f && f.kind === 'photo')) contentType = 'Photo';
     } catch (err) {
       console.error('[add-creative] link check failed:', err.message);
       return res.status(500).json({ error: 'Could not verify the links. Try again.' });
@@ -515,7 +601,7 @@ app.get('/api/brands', async (req, res) => {
     const content = await contentFor({ ig, fb, tt });
     if (content.verdict === 'different' && !req.body.content_confirmed) {
       return res.status(409).json({
-        error: 'These links look like different videos.',
+        error: 'These links look like different posts.',
         contentWarning: content.warning, content });
     }
     // Overriding a mismatch lets the creative in, but it is not treated as
@@ -631,6 +717,7 @@ app.get('/api/brands', async (req, res) => {
             creator: creator || null,
             creatorId: creator_id || null,
             contentType,
+            format,
             mediaUrl: videoLink,
             platform: videoLink.includes('instagram.com') ? 'instagram'
                     : videoLink.includes('tiktok.com') ? 'tiktok' : 'facebook',
@@ -786,7 +873,7 @@ app.get('/api/brands', async (req, res) => {
       const brand = resolveBrand(req);
       const { creative_id, platform, action_status, actioned_by, action_date, agency } = req.body;
 
-      // Only the admin or a client user (not internal WPP/agency staff) may
+      // Only the admin or a client user (not internal agency staff) may
       // mark a recommendation actioned and assign it to an agency.
       const isAdmin = req.session.role === 'admin';
       const isClient = !req.session.isInternal;

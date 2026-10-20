@@ -1,54 +1,63 @@
 /* =====================================================================
-   WPP Media Design System v2 — Campaign Lens
-   Replaces public/css/styles.css wholesale.
+   Campaign Lens design system v3
+   Light theme only. Every existing class name is preserved, so the JS
+   keeps working.
 
-   Derived from WPP Open, not the marketing palette. Light theme only.
-   Every existing class name is preserved, so the JS keeps working.
-
-   The short version: navy does everything, type stays light, buttons
-   are outlined, cards are borderless white on a pale cool canvas.
+   Quiet cool greys, near-black text, and one primary colour (Ocean) for
+   what can be acted on or is selected. Onest throughout, sentence case.
+   Surfaces are white with hairline borders; shadows are kept for things
+   that float (panels, menus) and for hover.
    ===================================================================== */
 
-@import url('https://fonts.googleapis.com/css2?family=Rubik:wght@300;400;500;600&display=swap');
+@import url('https://fonts.googleapis.com/css2?family=Onest:wght@400;500;600&display=swap');
 
 :root{
-  --navy:#000050;
-  --ink-900:#1A1A4F; --ink-700:#33335F; --ink-600:#4A4A75;
-  --ink-500:#5A5A85; --ink-400:#6B6B90; --ink-300:#A0A0BB;
+  /* The primary colour. --navy is its old name and is kept as an alias,
+     because the CSS and JS use it for every selected and active state. */
+  --primary:#0F6E8C;
+  --navy:var(--primary);
+  --ring:rgba(15,110,140,.16);
 
-  --line:#DCDCE6; --line-soft:#EDEDF2;
-  --white:#FFFFFF; --canvas:#EAEFF3; --canvas-2:#F4F6F8; --sel:#D9EAFB; --sel-line:#B8D6F2;
+  --ink-900:#111318; --ink-700:#2E323A; --ink-600:#4B505B;
+  --ink-500:#646A76; --ink-400:#8A909B; --ink-300:#B4B9C2;
 
-  --pos:#04785C; --pos-bg:#E8F6F1;
-  --neg:#A32040; --neg-bg:#FBEEF1;
-  --warn:#8A5A12; --warn-bg:#FCF3E4;
-  --plum:#3B2A6B; --plum-bg:#EDE9F7;
+  --line:#E4E6EA; --line-soft:#EEF0F2;
+  --white:#FFFFFF; --canvas:#F3F4F6; --canvas-2:#F7F8F9;
+  --sel:color-mix(in srgb,var(--primary) 9%,#fff); --sel-line:#BFD9E2;
 
-  /* Softer, more continuous corners. One token, so cards, tiles,
-     panels and inputs all move together. */
-  --r-btn:9px; --r-card:14px; --r-pill:999px;
-  --shadow-pop:0 8px 24px -6px rgba(0,0,80,.14), 0 2px 6px rgba(0,0,80,.06);
-  /* A surface at rest still casts something, or it reads as a hole in
-     the canvas rather than a card on it. */
-  --shadow-rest:0 1px 2px rgba(0,0,80,.05), 0 1px 1px rgba(0,0,80,.03);
-  --shadow-card:0 6px 20px -6px rgba(0,0,80,.13), 0 2px 5px rgba(0,0,80,.05);
+  /* Ratings. Kept clear of the primary so a selected state never reads
+     as a grade. */
+  --pos:#1F8A5B; --pos-bg:#E7F4EE;
+  --neg:#C2414B; --neg-bg:#FBECEE;
+  --warn:#8A5E0F; --warn-bg:#FBF3E2;
+  --plum:#4B4A8F; --plum-bg:#EEEEF7;
 
-  --font:'Rubik',-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;
-  --ease:cubic-bezier(.2,0,.2,1);
+  --r-btn:8px; --r-card:10px; --r-pill:999px;
+  --shadow-pop:0 12px 32px -10px rgba(17,19,24,.25), 0 1px 3px rgba(17,19,24,.06);
+  --shadow-rest:0 0 0 1px var(--line);
+  --shadow-card:0 1px 2px rgba(17,19,24,.04), 0 6px 16px -8px rgba(17,19,24,.12);
 
-  /* Legacy aliases — the JS writes these into inline styles.
-     Mapped onto v2 rather than left at their old values. */
+  --font:'Onest',-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;
+
+  /* Motion: three speeds and two curves, used by every transition. */
+  --t-fast:120ms; --t-base:200ms; --t-slow:320ms;
+  --ease-out:cubic-bezier(.2,0,0,1);       /* things arriving */
+  --ease-move:cubic-bezier(.32,.72,0,1);   /* things moving or sliding */
+  --ease:var(--ease-out);
+
+  /* Legacy aliases — the JS writes these into inline styles. */
   --c-bg:var(--canvas);   --c-surface:var(--white);
   --c-border:var(--line); --c-text:var(--ink-700);
-  --c-muted:var(--ink-400); --c-accent:var(--navy);
+  --c-muted:var(--ink-400); --c-accent:var(--primary);
   --c-good:var(--pos);    --c-avg:var(--warn);
   --c-poor:var(--neg);    --c-inv:var(--ink-400);
   --c-bs:var(--plum);     --c-os:var(--pos);
   --c-tt:var(--ink-900);  --c-meta:var(--ink-900);
 
-  /* Chart ramp — navy monochrome first */
-  --s1:#000050; --s2:#2E2E7A; --s3:#5A5A9E; --s4:#8A8ABF; --s5:#B8B8D6; --s6:#DCDCE6;
+  /* Chart ramp, primary first */
+  --s1:#0F6E8C; --s2:#3B8BA5; --s3:#6AA8BC; --s4:#9AC5D3; --s5:#C6DFE7; --s6:#E4EFF3;
 }
+@media (prefers-reduced-motion:reduce){ :root{ --t-fast:0ms; --t-base:0ms; --t-slow:0ms } }
 
 *{box-sizing:border-box;margin:0;padding:0}
 
@@ -67,7 +76,7 @@ button{font-family:inherit}
 a:focus-visible,button:focus-visible,select:focus-visible,input:focus-visible,
 summary:focus-visible,.nav-item:focus-visible,.card:focus-visible,
 .pt:focus-visible,.sort-btn:focus-visible{
-  outline:none; box-shadow:0 0 0 3px rgba(0,0,80,.18); border-radius:var(--r-btn);
+  outline:none; box-shadow:0 0 0 3px var(--ring); border-radius:var(--r-btn);
 }
 
 /* Reduced motion is handled per component, near the bottom of this file.
@@ -75,52 +84,72 @@ summary:focus-visible,.nav-item:focus-visible,.card:focus-visible,
    and hover feedback as well as the travel. Reduced motion asks for a
    gentler equivalent, not for the interface to stop answering. */
 
-/* ---------- Shell: one top bar, no sidebar ------------------------ */
-.app{display:flex;flex-direction:column;height:100vh;overflow:hidden}
-.shell{flex:1;min-height:0;display:flex;flex-direction:column}
-.sidebar{display:none}          /* replaced by the top bar */
-.masthead{display:none}         /* folded into the top bar */
+/* ---------- Shell: sidebar on the canvas, page as one white sheet --- */
+.app{display:grid;grid-template-columns:228px minmax(0,1fr);height:100vh;overflow:hidden;background:var(--canvas)}
+.shell{min-width:0;min-height:0;display:flex;flex-direction:column;padding:8px 8px 8px 0}
+.masthead{display:none}
+.topbar{display:none}
 
-.topbar{
-  height:64px;flex-shrink:0;background:var(--white);
-  border-bottom:1px solid var(--line-soft);
-  display:flex;align-items:center;gap:28px;padding:0 24px;
-}
-.topbar-brand{display:flex;align-items:center;gap:11px;flex-shrink:0}
-.topbar-brand img{height:26px;width:auto;display:block}
-.topbar-product{
-  font:300 18px/1 var(--font);color:var(--ink-600);letter-spacing:-.01em;
-  padding-left:11px;border-left:1px solid var(--line);
-}
+.sidebar{display:flex;flex-direction:column;gap:18px;min-width:0;min-height:0;overflow-y:auto;
+  padding:18px 12px 12px 14px}
+.sb-brand{display:flex;align-items:center;gap:9px;padding:2px 8px}
+.sb-brand svg{width:20px;height:20px;flex:none;fill:none;stroke:var(--ink-900);stroke-width:2}
+.topbar-product{font:600 16px/1 var(--font);color:var(--ink-900);letter-spacing:-.015em;white-space:nowrap}
+#brand-switcher-ui .dd{display:block}
+#brand-switcher-ui .dd-brand-btn{width:100%;justify-content:flex-start}
+#brand-switcher-ui .dd-brand-btn .dd-chev{margin-left:auto}
+/* Pages that draw their own .content inside the shell's one. */
+.content .content{padding:0;max-width:none}
 
-.nav-tabs{display:flex;gap:26px}
+.nav-tabs{position:relative;display:flex;flex-direction:column;gap:1px}
 .nav-section{display:none}
-.nav-item{
-  font:400 15px/1 var(--font);color:var(--ink-600);cursor:pointer;
-  padding:7px 0;border-bottom:2px solid transparent;
-  transition:color .15s var(--ease),border-color .15s var(--ease);
-}
+.nav-label{font:500 12px/1 var(--font);color:var(--ink-400);padding:0 10px;margin:14px 0 6px}
+.nav-label:first-of-type{margin-top:0}
+.nav-label.is-empty{display:none}
+.nav-ink{position:absolute;left:0;right:0;top:0;height:0;border-radius:8px;background:var(--white);
+  box-shadow:0 1px 2px rgba(17,19,24,.06),0 0 0 1px var(--line);opacity:0;
+  transition:top var(--t-base) var(--ease-move),height var(--t-base) var(--ease-move),opacity var(--t-fast) var(--ease-out)}
+.nav-ink.on{opacity:1}
+.nav-item{position:relative;z-index:1;display:flex;align-items:center;gap:10px;height:34px;padding:0 10px;border-radius:8px;
+  font:400 14px/1 var(--font);color:var(--ink-600);cursor:pointer;white-space:nowrap;
+  transition:color var(--t-fast) var(--ease-out)}
+.nav-item svg{width:16px;height:16px;flex:none;fill:none;stroke:currentColor;stroke-width:1.7;stroke-linecap:round;stroke-linejoin:round;opacity:.7}
 .nav-item:hover{color:var(--ink-900)}
-.nav-item.active{color:var(--ink-900);font-weight:500;border-bottom-color:var(--navy)}
+.nav-item.active{color:var(--ink-900);font-weight:500}
+.nav-item.active svg{opacity:1;stroke:var(--primary)}
 .dot{display:none}
 
-.topbar-right{margin-left:auto;display:flex;align-items:center;gap:10px}
-.masthead-signout{
-  background:none;border:0;cursor:pointer;padding:0 4px;
-  font:400 14px var(--font);color:var(--ink-600);
-}
+.sb-foot{margin-top:auto;display:flex;flex-direction:column;gap:8px}
+.sb-foot .al-toggle{order:-1;width:100%;justify-content:center}
+.btn-primary{height:36px;padding:0 14px;border-radius:var(--r-btn);border:1px solid var(--primary);background:var(--primary);color:#fff;
+  font:500 14px var(--font);cursor:pointer;transition:filter var(--t-fast) var(--ease-out),transform var(--t-fast) var(--ease-out)}
+.btn-primary:hover{filter:brightness(1.08)}
+.btn-primary:active{transform:scale(.98)}
+.masthead-signout{background:none;border:0;cursor:pointer;padding:6px 10px;text-align:left;
+  font:400 13px var(--font);color:var(--ink-500)}
 .masthead-signout:hover{color:var(--ink-900)}
 
-.main{flex:1;min-height:0;overflow-y:auto}
-.content{padding:24px;max-width:1560px;margin:0 auto}
+.main{flex:1;min-height:0;overflow-y:auto;background:var(--white);border:1px solid var(--line);border-radius:10px}
+.content{padding:28px 32px 36px;max-width:1560px;margin:0 auto}
+
+/* Section switches crossfade with a small lift. */
+::view-transition-old(root){animation:vt-out var(--t-base) var(--ease-out) both}
+::view-transition-new(root){animation:vt-in var(--t-slow) var(--ease-out) both}
+@keyframes vt-out{to{opacity:0}}
+@keyframes vt-in{from{opacity:0;transform:translateY(6px)}}
+.sidebar{view-transition-name:sidebar}
+::view-transition-old(sidebar),::view-transition-new(sidebar){animation:none}
 
 /* ---------- Page head + filters ----------------------------------- */
-.page-head{display:flex;align-items:center;gap:12px;margin-bottom:16px;flex-wrap:wrap}
+.page-head{display:flex;align-items:flex-end;gap:12px 14px;margin-bottom:22px;flex-wrap:wrap}
+.page-title{min-width:0}
+#page-sub{margin-top:4px;font:400 14.5px/21px var(--font);color:var(--ink-500);max-width:62ch}
+#page-sub:empty{display:none}
 /* Tracking is size-specific. Letters read too far apart as they grow, so
    display sizes tighten and small labels open up a fraction. A single
    letter-spacing value across a type scale is wrong at one end or the
    other, and this file used to set 0 on everything down to 26px. */
-.page-head h1{font:400 26px/34px var(--font);color:var(--ink-900);letter-spacing:-.021em}
+.page-head h1{font:600 26px/32px var(--font);color:var(--ink-900);letter-spacing:-.025em}
 .page-head .spacer{flex:1}
 
 select,.search-input,.modal-input,.kfi-select{
@@ -135,7 +164,7 @@ select,.kfi-select{
   background-repeat:no-repeat;background-position:right 11px center;
 }
 select:hover,.search-input:hover{border-color:#C2C2D2}
-select:focus,.search-input:focus,.modal-input:focus{outline:none;border-color:var(--navy);box-shadow:0 0 0 3px rgba(0,0,80,.10)}
+select:focus,.search-input:focus,.modal-input:focus{outline:none;border-color:var(--navy);box-shadow:0 0 0 3px var(--ring)}
 ::placeholder{color:var(--ink-300)}
 
 .search-input{
@@ -169,7 +198,7 @@ select:focus,.search-input:focus,.modal-input:focus{outline:none;border-color:va
 .filters-count{
   display:inline-flex;align-items:center;justify-content:center;
   min-width:19px;height:19px;padding:0 5px;background:var(--navy);color:#fff;
-  border-radius:var(--r-pill);font-size:11px;font-weight:500;
+  border-radius:var(--r-pill);font-size:12px;font-weight:500;
 }
 .filters-count:empty,.filters-count[data-n="0"]{display:none}
 
@@ -219,7 +248,7 @@ select:focus,.search-input:focus,.modal-input:focus{outline:none;border-color:va
 }
 /* A tile that filters the grid says so by behaving like a control. */
 .kpi-click{cursor:pointer;transition:box-shadow .15s var(--ease),transform .15s var(--ease)}
-.kpi-click:hover{box-shadow:0 2px 10px rgba(0,0,80,.10);transform:translateY(-1px)}
+.kpi-click:hover{box-shadow:0 2px 10px rgba(17,19,24,.10);transform:translateY(-1px)}
 /* Sits beside 32px numbers, so 18px read as a caption rather than the
    tile's subject. Weight carries it without taking more room. */
 .kpi-named{font:500 21px/28px var(--font);color:var(--ink-900);letter-spacing:-.016em;
@@ -271,7 +300,7 @@ select:focus,.search-input:focus,.modal-input:focus{outline:none;border-color:va
 .kpi-list-grade{text-align:right;width:110px}
 /* Which rating the row was ranked on. A list that silently switches
    between paid and organic ratings is worse than one that says so. */
-.kpi-list-src{font:400 10px/13px var(--font);color:var(--ink-400);margin-top:3px}
+.kpi-list-src{font:400 12px/13px var(--font);color:var(--ink-400);margin-top:3px}
 .kpi,.stat-card{
   background:var(--white);border-radius:var(--r-card);padding:18px 20px;border:0;
   box-shadow:var(--shadow-rest);
@@ -281,8 +310,8 @@ select:focus,.search-input:focus,.modal-input:focus{outline:none;border-color:va
    These three used to be 13px, 28px and 13px in near-identical greys,
    so the eye had to read the tile to find the number in it. */
 .kpi-label,.stat-title{
-  font:400 12px/17px var(--font);color:var(--ink-500);
-  text-transform:none;letter-spacing:.012em;margin-bottom:7px;
+  font:400 13px/18px var(--font);color:var(--ink-500);
+  text-transform:none;letter-spacing:0;margin-bottom:7px;
 }
 .kpi-val,.stat-value{font:400 32px/37px var(--font);letter-spacing:-.025em;color:var(--ink-900)}
 .kpi-sub,.stat-sub{font:400 12.5px/18px var(--font);color:var(--ink-400);margin-top:5px}
@@ -348,16 +377,46 @@ select:focus,.search-input:focus,.modal-input:focus{outline:none;border-color:va
 
 /* ---------- Creative cards ---------------------------------------- */
 .card-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(300px,1fr));gap:14px}
+.card-more{display:flex;align-items:center;justify-content:center;gap:12px;margin:20px 0 8px;
+  font:400 13px var(--font);color:var(--ink-500);font-variant-numeric:tabular-nums}
+.card-more-btn{height:36px;padding:0 18px;border-radius:var(--r-btn);border:1px solid var(--line);
+  background:var(--white);font:500 13.5px var(--font);color:var(--ink-900);cursor:pointer}
+.card-more-btn:hover{border-color:var(--ink-300)}
+.card-more-btn:disabled{color:var(--ink-500);cursor:default}
+/* A filter answer that takes longer than a moment dims what is on screen
+   rather than blanking it, so a quick change never flashes. */
+#card-grid,#kpi-row{transition:opacity .18s ease}
+#card-grid.hub-busy,#kpi-row.hub-busy{opacity:.55}
 
-.card-grid{gap:16px}
+/* Every row of the grid is the height of the tallest card, and each card
+   is three fixed zones, so the grid stays even however much a card says. */
+.card-grid{gap:14px;grid-auto-rows:1fr;align-items:stretch}
 .card{
   background:var(--white);border:0;border-radius:var(--r-card);
-  padding:18px;cursor:pointer;
+  padding:14px;cursor:pointer;min-width:0;
+  display:flex;flex-direction:column;gap:12px;
   box-shadow:var(--shadow-rest);
-  transition:box-shadow .15s var(--ease);
+  transition:box-shadow var(--t-fast) var(--ease-out),transform var(--t-fast) var(--ease-out);
 }
-.card:hover{box-shadow:var(--shadow-card)}
-.card.selected{box-shadow:inset 0 0 0 1.5px var(--navy)}
+.card:hover{box-shadow:var(--shadow-card),0 0 0 1px var(--line)}
+.card.selected{box-shadow:0 0 0 1.5px var(--primary)}
+.card-mid{flex:1;min-height:112px;display:flex;flex-direction:column}
+.card-mid>*{flex:1}
+.card-mid-empty{display:grid;place-items:center;font:400 12.5px var(--font);color:var(--ink-400);
+  border-top:1px solid var(--line-soft)}
+.card-ratings{display:grid;grid-template-columns:1fr 1fr;gap:14px;padding-top:12px;border-top:1px solid var(--line-soft)}
+.card-ratings .card-cqr{padding-top:0;border-top:0;gap:6px;min-width:0}
+.card-ratings .card-cqr-main{min-width:0}
+.card-ratings .card-cqr-plat,.card-ratings .card-cqr-state{white-space:nowrap;overflow:hidden;text-overflow:ellipsis;min-width:0}
+.card-ratings .card-cqr-state{font-size:12px}
+.card-type-line{display:flex;align-items:center;gap:6px;min-width:0;white-space:nowrap;overflow:hidden;
+  font:400 12px/18px var(--font);color:var(--ink-500);margin-bottom:2px}
+/* On the card a rating is a dot and the word, not a capsule. */
+.card .cqr-badge{background:none;height:auto;padding:0;gap:6px;color:var(--ink-900);font:500 13px/18px var(--font)}
+.card .cqr-badge::before{content:"";width:8px;height:8px;border-radius:50%;background:var(--ink-300);flex:none}
+.card .cqr-badge.good-bg::before{background:var(--pos)}
+.card .cqr-badge.avg-bg::before{background:#C4891A}
+.card .cqr-badge.poor-bg::before{background:var(--neg)}
 
 .card-top{display:flex;align-items:center;gap:8px;margin-bottom:12px}
 .card-plat{
@@ -381,18 +440,18 @@ select:focus,.search-input:focus,.modal-input:focus{outline:none;border-color:va
    button is always visible rather than revealed on hover: it is the one
    thing on the card you can click through to, and hiding it would make
    it undiscoverable.                                                    */
-.card-head{display:flex;gap:13px;align-items:flex-start;margin-bottom:14px}
+.card-head{display:flex;gap:12px;align-items:flex-start;min-width:0}
 .card-ident{flex:1;min-width:0}
 .card-thumb{
-  position:relative;flex:0 0 96px;width:96px;aspect-ratio:4/5;
-  overflow:hidden;border-radius:10px;background:var(--canvas);
+  position:relative;flex:0 0 80px;width:80px;aspect-ratio:4/5;
+  overflow:hidden;border-radius:8px;background:var(--canvas);
   display:grid;place-items:center;
 }
 /* Sits under the image and shows through when there is none, so every
    card keeps the same shape and a missing still is visible as a gap in
    the pipeline rather than as a different-looking card. */
 .card-thumb-mark{
-  font:500 10.5px/1 var(--font);color:var(--ink-300);letter-spacing:.08em;
+  font:500 12px/1 var(--font);color:var(--ink-300);letter-spacing:.08em;
 }
 .card-thumb-none{box-shadow:inset 0 0 0 1px var(--line-soft)}
 .card-thumb img{
@@ -404,7 +463,7 @@ select:focus,.search-input:focus,.modal-input:focus{outline:none;border-color:va
   position:absolute;display:grid;place-items:center;cursor:pointer;
   border:0;padding:0;color:var(--navy);
   background:rgba(255,255,255,.92);
-  box-shadow:0 1px 6px rgba(0,0,80,.18);
+  box-shadow:0 1px 6px rgba(17,19,24,.18);
   transition:background .15s var(--ease),transform .15s var(--ease);
 }
 .card-play{right:5px;bottom:5px;width:24px;height:24px;border-radius:50%}
@@ -415,7 +474,7 @@ select:focus,.search-input:focus,.modal-input:focus{outline:none;border-color:va
 .card-play svg,.detail-play svg{margin-left:1px}
 .card-play:hover,.detail-play:hover{background:#fff;transform:scale(1.1)}
 .card-play:focus-visible,.detail-play:focus-visible{
-  outline:none;box-shadow:0 0 0 3px rgba(0,0,80,.25)
+  outline:none;box-shadow:0 0 0 3px var(--ring)
 }
 
 /* Same frame in the detail panel, sized to sit beside the title block. */
@@ -438,11 +497,11 @@ select:focus,.search-input:focus,.modal-input:focus{outline:none;border-color:va
    actually use rendered underneath at 9px in grey. Specific labels beat
    generic ones, and 9px is below reading size, so they swapped. */
 .card-name{
-  font:500 16px/21px var(--font);color:var(--ink-900);letter-spacing:-.009em;
-  overflow-wrap:anywhere;margin-bottom:2px;
+  font:600 14.5px/20px var(--font);color:var(--ink-900);letter-spacing:-.005em;
+  white-space:nowrap;overflow:hidden;text-overflow:ellipsis;
 }
 .card-id{
-  font:400 11px/15px var(--font);color:var(--ink-400);letter-spacing:.015em;
+  font:400 12px/15px var(--font);color:var(--ink-400);letter-spacing:.015em;
   font-variant-numeric:tabular-nums;margin-bottom:3px;
   /* One line. Asset IDs run to 28 characters and used to wrap into three,
      shoving everything under them down by a different amount on every
@@ -450,15 +509,16 @@ select:focus,.search-input:focus,.modal-input:focus{outline:none;border-color:va
   white-space:nowrap;overflow:hidden;text-overflow:ellipsis;
 }
 .card-id:empty{display:none}
-.card-campaign{font:400 12.5px/18px var(--font);color:var(--ink-600);margin-bottom:12px}
+.card-campaign{font:400 12.5px/18px var(--font);color:var(--ink-500);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
 /* Who posted it, on Others Say cards. Sits between the campaign line and
    the tags, and is clipped rather than wrapped: a long handle pushing the
    tags onto a third line changes the height of one card in a grid. */
 .card-creator{
-  font:400 12px/17px var(--font);color:var(--ink-500);
-  margin:-8px 0 10px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;
+  font:500 12.5px/18px var(--font);color:var(--primary);
+  min-height:18px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;
 }
-.card-tags{display:flex;gap:6px;flex-wrap:wrap;margin-bottom:0}
+.card-tags{display:flex;gap:4px;flex-wrap:nowrap;overflow:hidden;margin-top:6px}
+.card-tags>*{flex:none}
 
 .mini-bars{display:flex;flex-direction:column;gap:9px;padding-top:13px;border-top:1px solid var(--line-soft)}
 .mini-bar-row{display:grid;grid-template-columns:44px 1fr 56px;align-items:center;gap:10px}
@@ -471,9 +531,10 @@ select:focus,.search-input:focus,.modal-input:focus{outline:none;border-color:va
 .mini-bar-val{font:400 13px var(--font);color:var(--ink-900);text-align:right}
 
 .card-footer{
-  margin-top:14px;padding-top:12px;border-top:1px solid var(--line-soft);
-  display:flex;align-items:center;gap:10px;
+  margin-top:auto;padding-top:12px;border-top:1px solid var(--line-soft);
+  display:flex;align-items:center;gap:10px;min-height:39px;overflow:hidden;white-space:nowrap;
 }
+.card-footer>:last-child:not(:first-child){margin-left:auto}
 
 /* ---------- Modals ------------------------------------------------- */
 /* The scrim dims to focus and blurs what is behind, so the page reads as
@@ -494,6 +555,10 @@ select:focus,.search-input:focus,.modal-input:focus{outline:none;border-color:va
   background:var(--white);border:0;border-radius:var(--r-card);
   box-shadow:var(--shadow-pop);max-width:900px;width:100%;max-height:88vh;overflow-y:auto;
 }
+/* The creative panel holds three platform columns, two charts and the
+   brief, so it is the one window that gets the room. */
+.creative-modal{max-width:1120px;max-height:92vh;border-radius:14px}
+.creative-modal .cm-body{padding:26px 30px 30px}
 /* Enter and exit on one path: it grows out of the card that opened it and
    shrinks back into it. Blur moves with the scale so the panel reads as a
    surface arriving, not an image cross-fading. */
@@ -520,8 +585,16 @@ select:focus,.search-input:focus,.modal-input:focus{outline:none;border-color:va
 .cm-body{padding:24px}
 
 .detail-header{display:flex;align-items:flex-start;justify-content:space-between;gap:16px;margin-bottom:20px}
+.detail-nav{display:flex;align-items:center;gap:6px;flex-shrink:0}
+.detail-step{width:34px;height:34px;border-radius:var(--r-btn);border:1px solid var(--line);background:var(--white);
+  color:var(--ink-600);cursor:pointer;display:grid;place-items:center}
+.detail-step svg{fill:none;stroke:currentColor;stroke-width:1.7;stroke-linecap:round;stroke-linejoin:round}
+.detail-step:hover:not(:disabled){background:var(--canvas-2);color:var(--ink-900)}
+.detail-step:disabled{opacity:.4;cursor:default}
+.detail-pos{font:400 12.5px var(--font);color:var(--ink-500);margin:0 4px;font-variant-numeric:tabular-nums;white-space:nowrap}
+@media (max-width:640px){ .detail-pos{display:none} .creative-modal .cm-body{padding:20px 16px 24px} }
 .detail-title{
-  font:400 26px/34px var(--font);color:var(--ink-900);letter-spacing:-.021em;
+  font:600 24px/30px var(--font);color:var(--ink-900);letter-spacing:-.02em;
   display:flex;align-items:center;gap:9px;flex-wrap:wrap;
 }
 .detail-meta{font:400 14px/20px var(--font);color:var(--ink-600);margin-top:5px}
@@ -561,9 +634,9 @@ select:focus,.search-input:focus,.modal-input:focus{outline:none;border-color:va
   background:var(--canvas-2);color:var(--ink-900);
 }
 .view-btn.primary,.modal-confirm,.btn-outline.primary{
-  border-color:var(--navy);color:var(--ink-900);font-weight:500;background:var(--white);
+  border-color:var(--primary);color:#fff;font-weight:500;background:var(--primary);
 }
-.view-btn.primary:hover,.modal-confirm:hover,.btn-outline.primary:hover{background:#F4F4F8}
+.view-btn.primary:hover,.modal-confirm:hover,.btn-outline.primary:hover{background:var(--primary);color:#fff;filter:brightness(1.08)}
 .modal-cancel{border-color:transparent;color:var(--ink-600)}
 .modal-cancel:hover{background:var(--canvas-2)}
 .action-btn{height:30px;padding:0 11px;font-size:13px}
@@ -637,18 +710,18 @@ select:focus,.search-input:focus,.modal-input:focus{outline:none;border-color:va
 /* On the metric's own line, not under it: the band underneath wraps to two
    lines in a narrow card, and a right-aligned percentile beside a wrapping
    line lands against the middle of it. */
-.orgval-pct{font:400 11px var(--font);color:var(--ink-400);margin-left:6px;white-space:nowrap}
+.orgval-pct{font:400 12px var(--font);color:var(--ink-400);margin-left:6px;white-space:nowrap}
 /* ---------- Creative fatigue --------------------------------------- */
 .fat-table{width:100%;border-collapse:collapse;margin-top:4px}
 .fat-table th{font:500 11.5px/16px var(--font);color:var(--ink-400);
-  text-transform:uppercase;letter-spacing:.04em;text-align:left;
+  letter-spacing:0;text-align:left;
   padding:6px 0;border-bottom:1px solid var(--line)}
 .fat-table td{font:400 13.5px var(--font);color:var(--ink-900);
   padding:8px 0;border-bottom:1px solid var(--line-soft);vertical-align:top}
 .fat-table tr:last-child td{border-bottom:none}
 .fat-table .fat-num{text-align:right;font-variant-numeric:tabular-nums}
 .fat-table .fat-grade{text-align:right;white-space:nowrap}
-.fat-dates{font:400 11px var(--font);color:var(--ink-400);margin-top:2px}
+.fat-dates{font:400 12px var(--font);color:var(--ink-400);margin-top:2px}
 .fat-grade .fat-dates{text-align:right}
 .fat-lifetime td{color:var(--ink-600)}
 /* Qualified with .orgval-rec: the base rule is further down the file and
@@ -657,13 +730,13 @@ select:focus,.search-input:focus,.modal-input:focus{outline:none;border-color:va
 .orgval-rec.fat-improved{border-left-color:var(--pos);background:var(--pos-bg)}
 .orgval-rec.fat-held{border-left-color:var(--line);background:var(--canvas-2)}
 .orgval-rec.fat-none{border-left-color:var(--ink-300);background:var(--canvas-2)}
-.orgval-band{font:400 11px/16px var(--font);color:var(--ink-400)}
+.orgval-band{font:400 12px/16px var(--font);color:var(--ink-400)}
 .orgval-note{font:400 11.5px/16px var(--font);color:var(--ink-400);padding:4px 0 0}
 .orgval-line{font:400 12.5px/18px var(--font);color:var(--ink-600);margin-top:9px}
 .orgval-line b{font-weight:500;color:var(--ink-800)}
 .orgval-muted{color:var(--ink-400)}
-.orgval-divider{font:500 10.5px/14px var(--font);color:var(--ink-400);
-  text-transform:uppercase;letter-spacing:.06em;
+.orgval-divider{font:500 12px/14px var(--font);color:var(--ink-400);
+  letter-spacing:0;
   padding-top:11px;border-top:1px solid var(--line);margin-bottom:6px}
 .orgval-react-bar{display:flex;height:8px;border-radius:var(--r-pill);overflow:hidden;
   margin:8px 0 9px;background:var(--canvas-2)}
@@ -784,16 +857,28 @@ select:focus,.search-input:focus,.modal-input:focus{outline:none;border-color:va
 .hidden{display:none!important}
 
 /* ---------- Responsive --------------------------------------------- */
-@media (max-width:1400px){ .kpi-row{grid-template-columns:repeat(3,1fr)} }
+
 @media (max-width:1100px){
-  .topbar{gap:18px;padding:0 16px}
-  .topbar-product{display:none}
   .filters{width:min(92vw,520px)}
 }
+@media (max-width:900px){
+  /* The sidebar becomes a bar across the top, sections scroll sideways. */
+  .app{grid-template-columns:minmax(0,1fr);grid-template-rows:auto minmax(0,1fr)}
+  .sidebar{flex-direction:row;flex-wrap:wrap;align-items:center;gap:10px;padding:10px 12px;overflow:visible}
+  .sb-brand{padding:0 4px}
+  #brand-switcher-ui{flex:1;min-width:150px;max-width:260px}
+  .nav-tabs{order:3;width:100%;flex-direction:row;overflow-x:auto;scrollbar-width:none}
+  .nav-label,.nav-ink{display:none}
+  .nav-item{flex:none}
+  .nav-item.active{background:var(--white);box-shadow:0 0 0 1px var(--line)}
+  .sb-foot{margin:0 0 0 auto;flex-direction:row;align-items:center}
+  .shell{padding:0 6px 6px}
+}
 @media (max-width:768px){
-  .topbar{height:auto;flex-wrap:wrap;padding:10px 16px;gap:12px}
-  .topbar-right{width:100%;margin-left:0;flex-wrap:wrap}
-  .kpi-row{grid-template-columns:repeat(2,1fr)}
+  .kpi-row{grid-template-columns:repeat(2,minmax(0,1fr))}
+  .kpi-row > .kpi{grid-column:span 1}
+  .kpi-row > .kpi-wide{grid-column:span 2}
+  .kpi-row .kpi-val{font-size:24px;line-height:30px}
   .charts-row{grid-template-columns:1fr}
   .content{padding:16px}
   .search-input{min-width:0;flex:1}
@@ -835,8 +920,8 @@ select:focus,.search-input:focus,.modal-input:focus{outline:none;border-color:va
    plus two rows of pills, which grew a new pill every month. */
 .ms-fgroup{display:flex;flex-direction:column;gap:5px}
 .ms-flabel{
-  font:400 11px/14px var(--font);color:var(--ink-400);
-  letter-spacing:.05em;text-transform:uppercase;
+  font:400 12px/14px var(--font);color:var(--ink-400);
+  letter-spacing:0;
 }
 
 /* =====================================================================
@@ -859,9 +944,9 @@ select:focus,.search-input:focus,.modal-input:focus{outline:none;border-color:va
 .ms-tiles.cols-3{grid-template-columns:repeat(3,1fr)}
 .ms-tile{background:var(--white);border-radius:var(--r-card);
   padding:15px 16px;box-shadow:var(--shadow-rest)}
-.ms-tile-k{font:400 11px/14px var(--font);color:var(--ink-400);
-  letter-spacing:.06em;text-transform:uppercase;margin-bottom:9px}
-.ms-tile-v{font:400 25px/30px var(--font);letter-spacing:-.022em;
+.ms-tile-k{font:400 13px/18px var(--font);color:var(--ink-500);
+  letter-spacing:0;margin-bottom:9px}
+.ms-tile-v{font:500 28px/34px var(--font);letter-spacing:-.03em;
   color:var(--ink-900);font-variant-numeric:tabular-nums;
   overflow-wrap:anywhere}
 .ms-tile-s{font:400 12px/17px var(--font);color:var(--ink-500);margin-top:5px}
@@ -872,12 +957,13 @@ select:focus,.search-input:focus,.modal-input:focus{outline:none;border-color:va
 .ms-grid.cols-3{grid-template-columns:repeat(3,1fr)}
 .ms-grid.cols-2{grid-template-columns:repeat(2,1fr)}
 .ms-grid.cols-1{grid-template-columns:1fr}
+.ms-grid + .ms-grid{margin-top:12px}
 .ms-card{background:var(--white);border-radius:var(--r-card);
   padding:15px 16px;box-shadow:var(--shadow-rest)}
 .ms-card-head{font:500 13.5px/20px var(--font);color:var(--ink-900);
   margin-bottom:12px;display:flex;align-items:baseline;
   justify-content:space-between;gap:10px}
-.ms-card-note{font:400 11px/16px var(--font);color:var(--ink-400);
+.ms-card-note{font:400 12px/16px var(--font);color:var(--ink-400);
   font-weight:400;text-align:right;flex:0 0 auto}
 .ms-bar-empty{font:400 12.5px/18px var(--font);color:var(--ink-400);padding:6px 0}
 .ms-foot{font:400 11.5px/16px var(--font);color:var(--ink-400);margin-top:10px}
@@ -887,7 +973,11 @@ select:focus,.search-input:focus,.modal-input:focus{outline:none;border-color:va
    under colour-blindness without adding a line to the drawing. */
 .ms-bar{display:flex;height:9px;border-radius:var(--r-pill);
   overflow:hidden;background:var(--canvas-2);gap:2px}
-.ms-seg{display:block;height:9px}
+.ms-seg{display:block;height:9px;transition:width var(--t-slow) var(--ease-move)}
+/* A rolling digit: a clipped window onto a column of 0-9. */
+.roll-d{font-variant-numeric:tabular-nums;display:inline-block;height:1.2em;line-height:1.2em;overflow:hidden;vertical-align:bottom}
+.roll-d>span{display:flex;flex-direction:column;transition:transform var(--t-slow) var(--ease-move)}
+.roll-d i{font-style:normal;height:1.2em;text-align:center}
 .ms-keys{display:flex;flex-wrap:wrap;gap:3px 13px;margin-top:8px}
 .ms-key{display:inline-flex;align-items:center;gap:5px;
   font:400 11.5px/16px var(--font);color:var(--ink-600);
@@ -899,21 +989,21 @@ select:focus,.search-input:focus,.modal-input:focus{outline:none;border-color:va
 .ms-trend{display:flex;align-items:flex-end;gap:8px;height:124px}
 .ms-trend-col{flex:1;display:flex;flex-direction:column;align-items:center;
   height:100%;min-width:0}
-.ms-trend-v{font:400 11px/15px var(--font);color:var(--ink-600);
+.ms-trend-v{font:400 12px/15px var(--font);color:var(--ink-600);
   font-variant-numeric:tabular-nums;white-space:nowrap;margin-bottom:3px}
 /* No filled track behind the bar. A grey block above every column reads as
    a second stacked segment, and a month with nothing in it should look
    empty rather than full of grey. The baseline carries the axis instead. */
 .ms-trend-track{flex:1;width:100%;display:flex;align-items:flex-end;
   border-bottom:1px solid var(--line)}
-.ms-trend-fill{width:100%;border-radius:4px 4px 0 0}
-.ms-trend-k{font:400 10.5px/14px var(--font);color:var(--ink-400);
+.ms-trend-fill{width:100%;border-radius:4px 4px 0 0;transition:height var(--t-slow) var(--ease-move)}
+.ms-trend-k{font:400 12px/14px var(--font);color:var(--ink-400);
   margin-top:6px;white-space:nowrap}
 
 .ms-table{width:100%;border-collapse:collapse}
 .ms-table th{
-  font:400 11px/14px var(--font);color:var(--ink-400);
-  letter-spacing:.05em;text-transform:uppercase;text-align:left;
+  font:400 12px/14px var(--font);color:var(--ink-400);
+  letter-spacing:0;text-align:left;
   padding:0 10px 8px 0;border-bottom:1px solid var(--line);white-space:nowrap;
 }
 .ms-table th.n,.ms-table td.n{text-align:right;font-variant-numeric:tabular-nums}
@@ -938,7 +1028,7 @@ select:focus,.search-input:focus,.modal-input:focus{outline:none;border-color:va
 .ms-table-narrow{max-width:620px}
 .ms-table-cut td{border-bottom:1px solid var(--line-soft)}
 .ms-cut-k{white-space:nowrap;padding-right:16px}
-.ms-cut-n{font:400 11px/15px var(--font);color:var(--ink-400);margin-top:2px}
+.ms-cut-n{font:400 12px/15px var(--font);color:var(--ink-400);margin-top:2px}
 
 .ms-link{
   border:0;background:none;padding:0;cursor:pointer;
@@ -993,7 +1083,7 @@ select:focus,.search-input:focus,.modal-input:focus{outline:none;border-color:va
 
 /* A share beside the figure it divides, dimmer so the figure stays first. */
 .ms-share{
-  display:block;font:400 11px/15px var(--font);
+  display:block;font:400 12px/15px var(--font);
   color:var(--ink-400);font-variant-numeric:tabular-nums;
 }
 .ms-table td .ms-key-dot{display:inline-block;margin-right:7px;vertical-align:1px}
@@ -1059,7 +1149,7 @@ select:focus,.search-input:focus,.modal-input:focus{outline:none;border-color:va
 .lin-count{
   display:inline-flex;align-items:center;justify-content:center;
   min-width:19px;height:19px;padding:0 6px;border-radius:var(--r-pill);
-  background:var(--navy);color:#fff;font-size:11px;font-weight:500;
+  background:var(--navy);color:#fff;font-size:12px;font-weight:500;
 }
 .lin-row{
   display:grid;grid-template-columns:minmax(0,1fr) auto auto;gap:14px;align-items:center;
@@ -1070,7 +1160,7 @@ select:focus,.search-input:focus,.modal-input:focus{outline:none;border-color:va
 }
 .lin-row:last-child{margin-bottom:0}
 .lin-row:hover{border-color:var(--line);background:#fff}
-.lin-row:focus-visible{outline:none;box-shadow:0 0 0 3px rgba(0,0,80,.18)}
+.lin-row:focus-visible{outline:none;box-shadow:0 0 0 3px var(--ring)}
 .lin-row-plain{cursor:default}
 .lin-row-plain:hover{border-color:var(--line-soft)}
 .lin-name{
@@ -1100,7 +1190,7 @@ select:focus,.search-input:focus,.modal-input:focus{outline:none;border-color:va
 .dd{position:relative;display:inline-block;font-family:var(--font)}
 .dd-native{position:absolute!important;width:1px;height:1px;padding:0;margin:-1px;
   overflow:hidden;clip:rect(0 0 0 0);white-space:nowrap;border:0}
-.dd-chev{color:var(--ink-400);flex:none;transition:transform .15s var(--ease)}
+.dd-chev{color:var(--ink-400);flex:none;transition:transform var(--t-base) var(--ease-move)}
 .dd.open .dd-chev{transform:rotate(180deg)}
 .dd-tick{width:15px;height:15px;color:var(--navy);flex:none;opacity:0;margin-left:auto}
 .dd-item.on .dd-tick{opacity:1}
@@ -1112,6 +1202,13 @@ select:focus,.search-input:focus,.modal-input:focus{outline:none;border-color:va
   background:var(--white);border-radius:var(--r-card);box-shadow:var(--shadow-pop);padding:6px;
 }
 .dd.open .dd-menu{display:block}
+/* Menus and the filter panel fade and scale from where they open, and
+   close the same way. Browsers without @starting-style simply show them. */
+.dd-menu,.filters{opacity:0;transform:translateY(-4px) scale(.98);transform-origin:top left;
+  transition:opacity var(--t-base) var(--ease-out),transform var(--t-base) var(--ease-out),display var(--t-base) allow-discrete}
+.filters{transform-origin:top right}
+.dd.open .dd-menu,.filters.open{opacity:1;transform:none}
+@starting-style{.dd.open .dd-menu,.filters.open{opacity:0;transform:translateY(-4px) scale(.98)}}
 .dd-menu-brand{min-width:250px}
 .dd-list{max-height:288px;overflow-y:auto}
 .dd-cap{font:400 12px/16px var(--font);color:var(--ink-400);padding:8px 10px 5px}
@@ -1129,7 +1226,7 @@ select:focus,.search-input:focus,.modal-input:focus{outline:none;border-color:va
 }
 .dd-item:hover{background:var(--canvas-2)}
 .dd-item.on{background:var(--sel);font-weight:500}
-.dd-item:focus-visible{outline:none;box-shadow:0 0 0 2px rgba(0,0,80,.35) inset}
+.dd-item:focus-visible{outline:none;box-shadow:0 0 0 2px var(--ring) inset}
 .dd-item-txt{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 
 /* ---- filter control ---- */
@@ -1140,8 +1237,8 @@ select:focus,.search-input:focus,.modal-input:focus{outline:none;border-color:va
   transition:border-color .15s var(--ease),background-color .15s var(--ease);
 }
 .dd-btn:hover{border-color:#BFC3D4}
-.dd.open .dd-btn{border-color:var(--navy);box-shadow:0 0 0 3px rgba(0,0,80,.10)}
-.dd-btn:focus-visible{outline:none;border-color:var(--navy);box-shadow:0 0 0 3px rgba(0,0,80,.18)}
+.dd.open .dd-btn{border-color:var(--navy);box-shadow:0 0 0 3px var(--ring)}
+.dd-btn:focus-visible{outline:none;border-color:var(--navy);box-shadow:0 0 0 3px var(--ring)}
 .dd-cap-inline{font-size:12.5px;color:var(--ink-400);flex:none}
 .dd-val{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 .dd-set .dd-btn{background:var(--sel);border-color:var(--sel-line)}
@@ -1155,9 +1252,9 @@ select:focus,.search-input:focus,.modal-input:focus{outline:none;border-color:va
   cursor:pointer;font-family:var(--font);
   transition:border-color .15s var(--ease);
 }
-.dd-brand-btn:hover{border-color:#BFC3D4}
-.dd.open .dd-brand-btn{border-color:var(--navy);box-shadow:0 0 0 3px rgba(0,0,80,.10)}
-.dd-brand-btn:focus-visible{outline:none;border-color:var(--navy);box-shadow:0 0 0 3px rgba(0,0,80,.18)}
+.dd-brand-btn:hover{border-color:var(--ink-300)}
+.dd.open .dd-brand-btn{border-color:var(--navy);box-shadow:0 0 0 3px var(--ring)}
+.dd-brand-btn:focus-visible{outline:none;border-color:var(--navy);box-shadow:0 0 0 3px var(--ring)}
 .dd-static .dd-brand-btn{cursor:default}
 .dd-static .dd-brand-btn:hover{border-color:var(--line)}
 
@@ -1170,9 +1267,9 @@ select:focus,.search-input:focus,.modal-input:focus{outline:none;border-color:va
 /* Fallback when /img/brands/<slug>.svg is missing */
 .dd-mark-mono{background:var(--navy)}
 .dd-mark-mono::after{
-  content:attr(data-mono);color:#fff;font:500 11px/1 var(--font);letter-spacing:.02em;
+  content:attr(data-mono);color:#fff;font:500 12px/1 var(--font);letter-spacing:.02em;
 }
-.dd-mark-sm.dd-mark-mono::after{font-size:10px}
+.dd-mark-sm.dd-mark-mono::after{font-size:12px}
 
 .dd-brand-txt{display:flex;flex-direction:column;align-items:flex-start;line-height:1.15;min-width:0}
 .dd-brand-name{font:500 14px var(--font);color:var(--ink-900);white-space:nowrap}
@@ -1221,24 +1318,54 @@ select:focus,.search-input:focus,.modal-input:focus{outline:none;border-color:va
 }
 .cr-toolbar .search-input { min-width:240px; }
 .cr-count {
-  margin-left:auto; font:500 11px var(--font-mono); letter-spacing:.06em;
-  color:var(--ink-400); text-transform:uppercase;
+  margin-left:auto; font:400 13px var(--font); letter-spacing:0;
+  color:var(--ink-500); text-transform:none;
 }
 
-/* ---------- Creators tab: filters + asset detail ------------------- */
-.cr-flabel {
-  font:500 11px var(--font-mono); letter-spacing:.06em;
-  color:var(--ink-400); text-transform:uppercase;
-}
-.cr-pills { display:flex; gap:4px; }
-.cr-pill {
-  height:36px; padding:0 12px; border-radius:18px;
-  border:1px solid var(--line-200); background:var(--surface-0);
-  font:500 13px var(--font-ui); color:var(--ink-500); cursor:pointer;
-  display:inline-flex; align-items:center;
-}
-.cr-pill:hover { background:var(--surface-2); color:var(--ink-900); }
-.cr-pill-on { background:var(--violet); color:#fff; border-color:var(--violet); }
+/* ---------- Creators: view switch, cards, profile panel ----------- */
+.cr-views{position:relative;display:inline-flex;gap:4px;padding:4px;margin-bottom:16px;
+  background:var(--white);border-radius:var(--r-pill);box-shadow:var(--shadow-rest)}
+.cr-view{height:34px;padding:0 16px;border:0;border-radius:var(--r-pill);background:none;
+  font:500 14px var(--font);color:var(--ink-600);cursor:pointer;display:inline-flex;align-items:center;gap:8px}
+.cr-view:hover{color:var(--ink-900)}
+.cr-view{position:relative;z-index:1;transition:color var(--t-base) var(--ease-out)}
+.cr-view.on{color:var(--white)}
+.cr-view-pill{position:absolute;top:4px;bottom:4px;left:4px;width:0;border-radius:var(--r-pill);background:var(--primary);
+  transition:left var(--t-base) var(--ease-move),width var(--t-base) var(--ease-move)}
+.cr-view-n{font:400 12px var(--font);opacity:.75}
+.cr-roster-h{margin:28px 0 12px}
+.cr-row-on .ms-cut-k{font-weight:500;color:var(--ink-900)}
+
+.cr-cards{display:grid;grid-template-columns:repeat(auto-fill,minmax(260px,1fr));gap:12px}
+.cr-card{display:flex;flex-direction:column;gap:12px;text-align:left;cursor:pointer;
+  background:var(--white);border:0;border-radius:var(--r-card);padding:14px 16px;
+  box-shadow:var(--shadow-rest);font:inherit;color:inherit;min-width:0;
+  transition:box-shadow .15s var(--ease)}
+.cr-card:hover{box-shadow:var(--shadow-card)}
+.cr-card:focus-visible{outline:2px solid var(--navy);outline-offset:2px}
+.cr-card-top{display:flex;gap:12px;align-items:center;min-width:0}
+.cr-thumb{position:relative;flex:none;width:44px;height:44px;border-radius:10px;overflow:hidden;
+  background:var(--sel);color:var(--navy);display:grid;place-items:center;font:500 17px var(--font)}
+.cr-thumb img{position:absolute;inset:0;width:100%;height:100%;object-fit:cover}
+.cr-card-id{min-width:0}
+.cr-card-name{font:500 15px/20px var(--font);color:var(--ink-900);
+  overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.cr-card-meta{font:400 12.5px/18px var(--font);color:var(--ink-500)}
+.cr-card .ms-keys{margin-top:6px}
+.cr-card-foot{display:flex;justify-content:space-between;gap:8px;align-items:center;
+  font:400 12px/16px var(--font);color:var(--ink-500);margin-top:auto}
+.cr-tag{color:var(--ink-500)}
+.cr-good{color:var(--pos);font-weight:500}
+.cr-date{margin-left:auto;white-space:nowrap}
+
+.cr-more{display:flex;align-items:center;gap:12px;justify-content:center;margin:18px 0 6px;
+  font:400 13px var(--font);color:var(--ink-500)}
+.cr-more-btn{height:36px;padding:0 18px;border-radius:var(--r-pill);border:1px solid var(--line);
+  background:var(--white);font:500 13.5px var(--font);color:var(--ink-900);cursor:pointer}
+.cr-more-btn:hover{border-color:var(--ink-300)}
+
+.cr-dm-sub{font:400 12px var(--font);color:var(--ink-500);margin-top:4px}
+.cr-hook{margin-top:12px;font:400 13px/19px var(--font);color:var(--ink-700)}
 
 .cr-asset {
   border:1px solid var(--line-200); border-radius:var(--r-md);
@@ -1255,22 +1382,18 @@ select:focus,.search-input:focus,.modal-input:focus{outline:none;border-color:va
   font:500 13px var(--font-ui); color:var(--ink-900);
 }
 .cr-paid-label {
-  font:500 11px var(--font-mono); letter-spacing:.06em;
-  color:var(--ink-400); text-transform:uppercase; margin-right:6px;
+  font:400 13px var(--font); letter-spacing:0;
+  color:var(--ink-500); text-transform:none; margin-right:6px;
 }
 
 .cr-plat-grid { display:grid; grid-template-columns:repeat(3,1fr); gap:12px; }
 .cr-plat-col { border:1px solid var(--line-200); border-radius:var(--r-md); padding:12px; }
 .cr-plat-empty { opacity:.55; }
 .cr-plat-name {
-  font:500 11px var(--font-mono); letter-spacing:.08em;
-  color:var(--ink-500); text-transform:uppercase; margin-bottom:10px;
+  font:600 13.5px var(--font); letter-spacing:0;
+  color:var(--ink-900); text-transform:none; margin-bottom:10px;
 }
 @media (max-width:768px) { .cr-plat-grid { grid-template-columns:1fr; } }
-.cr-note {
-  font:400 12px/16px var(--font-ui); color:var(--ink-500);
-  margin:-8px 0 12px;
-}
 
 /* ---------- Add-creative queued confirmation ----------------------- */
 .ac-queued{text-align:left}
@@ -1337,13 +1460,13 @@ select:focus,.search-input:focus,.modal-input:focus{outline:none;border-color:va
   background:var(--white);border:1px solid var(--line);border-radius:var(--r-card);
   padding:18px 20px;margin-bottom:14px;
 }
-.so-sec-title{font:500 14px var(--font);color:var(--navy);margin-bottom:14px}
+.so-sec-title{font:500 14px var(--font);color:var(--ink-900);margin-bottom:14px}
 .so-item{margin-bottom:16px}
 .so-item:last-child{margin-bottom:0}
 .so-item-label{font:500 13px var(--font);color:var(--ink-700);margin-bottom:7px}
 
 .so-meta-form{display:grid;grid-template-columns:1fr 1fr;gap:14px}
-.so-meta-form label{font:400 11px var(--font);color:var(--ink-400);display:flex;flex-direction:column;gap:5px}
+.so-meta-form label{font:400 12px var(--font);color:var(--ink-400);display:flex;flex-direction:column;gap:5px}
 .so-meta-form input,.so-meta-form select{
   font:400 13.5px var(--font);color:var(--ink-900);border:1px solid var(--line);
   border-radius:var(--r-btn);padding:8px 10px;background:var(--white);
@@ -1351,7 +1474,7 @@ select:focus,.search-input:focus,.modal-input:focus{outline:none;border-color:va
 .so-meta-grid{display:grid;grid-template-columns:1fr 1fr;gap:12px 24px;margin:18px 0;
   font:400 13.5px var(--font);color:var(--ink-900);
 }
-.so-meta-label{display:block;font:400 11px var(--font);color:var(--ink-400);margin-bottom:2px}
+.so-meta-label{display:block;font:400 12px var(--font);color:var(--ink-400);margin-bottom:2px}
 
 .so-funnel-row{display:flex;align-items:center;gap:10px;margin-bottom:8px}
 .so-funnel-row:last-child{margin-bottom:0}
@@ -1360,13 +1483,13 @@ select:focus,.search-input:focus,.modal-input:focus{outline:none;border-color:va
   border-radius:var(--r-btn);padding:8px 10px;
 }
 .so-ftag{
-  flex:0 0 52px;text-align:center;font:500 11px var(--font);color:#fff;
+  flex:0 0 52px;text-align:center;font:500 12px var(--font);color:#fff;
   border-radius:var(--r-btn);padding:7px 0;
 }
-.so-ftag-t{background:#000050}.so-ftag-m{background:#31117C}.so-ftag-b{background:#04785C}
+.so-ftag-t{background:var(--primary)}.so-ftag-m{background:#31117C}.so-ftag-b{background:#04785C}
 
 .so-tri-inputs{display:flex;gap:12px}
-.so-tri-inputs label{flex:1;font:400 11px var(--font);color:var(--ink-400);display:flex;flex-direction:column;gap:5px}
+.so-tri-inputs label{flex:1;font:400 12px var(--font);color:var(--ink-400);display:flex;flex-direction:column;gap:5px}
 .so-tri-inputs input{font:500 13.5px var(--font);border:1px solid var(--line);border-radius:var(--r-btn);padding:7px 9px}
 
 .so-bid-row{display:flex;align-items:center;gap:14px;padding:7px 0;border-bottom:1px dashed var(--line-soft)}
@@ -1391,7 +1514,7 @@ select:focus,.search-input:focus,.modal-input:focus{outline:none;border-color:va
 .so-chip.active{background:var(--navy);border-color:var(--navy);color:#fff}
 
 .so-egrid{display:grid;grid-template-columns:repeat(auto-fit,minmax(150px,1fr));gap:12px}
-.so-egrid label{font:400 11px var(--font);color:var(--ink-400);display:flex;flex-direction:column;gap:5px}
+.so-egrid label{font:400 12px var(--font);color:var(--ink-400);display:flex;flex-direction:column;gap:5px}
 .so-egrid input{font:400 13px var(--font);border:1px solid var(--line);border-radius:var(--r-btn);padding:7px 9px}
 
 .so-dates{display:flex;gap:10px}
@@ -1482,8 +1605,8 @@ select:focus,.search-input:focus,.modal-input:focus{outline:none;border-color:va
 .detail-play[data-press].is-pressed{transform:translate(-50%,-50%) scale(.92)}
 /* Pressing a card should feel like pushing it into the page, so the lift
    it has on hover comes off at the same time. */
-.card[data-press].is-pressed{box-shadow:0 1px 3px rgba(0,0,80,.10)}
-.kpi-click.is-pressed{box-shadow:0 1px 3px rgba(0,0,80,.08)}
+.card[data-press].is-pressed{box-shadow:0 1px 3px rgba(17,19,24,.10)}
+.kpi-click.is-pressed{box-shadow:0 1px 3px rgba(17,19,24,.08)}
 
 /* A hit target you have to aim at is a latency of its own. The drawer
    close was a 20px glyph with 2px of padding. */
@@ -1503,14 +1626,14 @@ select:focus,.search-input:focus,.modal-input:focus{outline:none;border-color:va
 .grid-header{
   position:sticky;top:0;z-index:5;
   padding:12px 0 11px;margin-bottom:2px;
-  background:rgba(234,239,243,.72);
+  background:rgba(255,255,255,.86);
   -webkit-backdrop-filter:blur(18px) saturate(170%);
   backdrop-filter:blur(18px) saturate(170%);
 }
 .grid-header::after{
   content:'';position:absolute;left:0;right:0;top:100%;height:18px;
   pointer-events:none;
-  background:linear-gradient(to bottom,rgba(234,239,243,.85),rgba(234,239,243,0));
+  background:linear-gradient(to bottom,rgba(255,255,255,.85),rgba(255,255,255,0));
 }
 /* Vibrancy: text over a blurred, moving backdrop needs more contrast and
    a touch more weight than the same text on a solid panel, or it goes
@@ -1528,7 +1651,7 @@ select:focus,.search-input:focus,.modal-input:focus{outline:none;border-color:va
 
 /* A bigger surface reads as thicker: more blur and a deeper shadow than
    a chip gets. The modal is the largest floating surface here. */
-.creative-modal{box-shadow:0 24px 60px -12px rgba(0,0,80,.30),0 4px 12px rgba(0,0,80,.08)}
+.creative-modal{box-shadow:0 24px 60px -12px rgba(17,19,24,.30),0 4px 12px rgba(17,19,24,.08)}
 
 /* ---------- 3. Reduced motion ----------------------------------------
    Not "no feedback": the press, the colour and the opacity all stay. The
@@ -1605,7 +1728,7 @@ select:focus,.search-input:focus,.modal-input:focus{outline:none;border-color:va
 }
 .session-lock-card{
   background:var(--white);border-radius:var(--r-card);
-  box-shadow:0 24px 60px -12px rgba(0,0,80,.38),0 4px 12px rgba(0,0,80,.10);
+  box-shadow:0 24px 60px -12px rgba(17,19,24,.38),0 4px 12px rgba(17,19,24,.10);
   padding:30px 32px 26px;max-width:430px;width:100%;text-align:left;
   transform:translateY(var(--lock-y,0px)) scale(var(--lock-s,1));
   will-change:transform;
@@ -1624,7 +1747,7 @@ select:focus,.search-input:focus,.modal-input:focus{outline:none;border-color:va
   font:500 14.5px var(--font);letter-spacing:.002em;
 }
 .session-lock-btn:hover{background:#1A1A6B}
-.session-lock-btn:focus-visible{outline:none;box-shadow:0 0 0 3px rgba(0,0,80,.30)}
+.session-lock-btn:focus-visible{outline:none;box-shadow:0 0 0 3px var(--ring)}
 
 @media (prefers-reduced-motion:reduce){
   .session-lock-card{transform:none!important}
@@ -1643,8 +1766,8 @@ select:focus,.search-input:focus,.modal-input:focus{outline:none;border-color:va
   display:flex;flex-direction:column;gap:7px;
 }
 .card-cqr-head{
-  font:400 11px/1 var(--font);color:var(--ink-400);
-  letter-spacing:.07em;text-transform:uppercase;margin-bottom:1px;
+  font:400 12px/1 var(--font);color:var(--ink-400);
+  letter-spacing:0;margin-bottom:1px;
 }
 /* Platform and verdict on one line, the counts under it. Side by side they
    needed four columns in a card this narrow and the numbers ended up
@@ -1673,7 +1796,7 @@ select:focus,.search-input:focus,.modal-input:focus{outline:none;border-color:va
    still running and the rating is waiting for it, so this reads as
    in-progress rather than as a problem. */
 .card-validating{
-  margin-top:13px;padding-top:13px;border-top:1px solid var(--line-soft);
+  background:var(--canvas);border-radius:8px;padding:10px 12px;
   display:flex;flex-direction:column;gap:6px;
 }
 .card-validating-l{
@@ -1684,7 +1807,7 @@ select:focus,.search-input:focus,.modal-input:focus{outline:none;border-color:va
 .card-validating-track{
   height:4px;border-radius:var(--r-pill);background:var(--line-soft);overflow:hidden;
 }
-.card-validating-fill{height:4px;border-radius:var(--r-pill);background:#4747AD}
+.card-validating-fill{height:4px;border-radius:var(--r-pill);background:var(--primary)}
 .card-validating-s{font:400 11.5px/16px var(--font);color:var(--ink-400)}
 
 /* Where the panel places a rated post against the brand's own output.
@@ -1725,22 +1848,20 @@ select:focus,.search-input:focus,.modal-input:focus{outline:none;border-color:va
    TikTok" said the right thing and looked like a log line. */
 .card-status{display:flex;align-items:center;gap:7px;flex-wrap:wrap}
 .cstat{
-  display:inline-flex;align-items:center;gap:7px;
-  height:26px;padding:0 11px 0 9px;border-radius:var(--r-pill);
-  font:500 12.5px/1 var(--font);letter-spacing:.002em;
+  display:inline-flex;align-items:center;gap:6px;
+  height:auto;padding:0;border-radius:0;background:none;
+  font:400 12.5px/18px var(--font);letter-spacing:0;color:var(--ink-600);
 }
 .cstat-dot{width:7px;height:7px;border-radius:50%;flex-shrink:0}
-.cstat-plat{
-  font-weight:400;opacity:.78;
-  padding-left:7px;margin-left:1px;border-left:1px solid currentColor;
-}
-.cstat-live{background:var(--pos-bg);color:var(--pos)}
-.cstat-live .cstat-dot{background:var(--pos);box-shadow:0 0 0 3px rgba(4,120,92,.14)}
-.cstat-off{background:var(--canvas);color:var(--ink-600)}
+.cstat-plat{font-weight:500;color:var(--ink-900);margin-left:2px}
+.cstat-live{background:none;color:var(--ink-600)}
+.cstat-live .cstat-dot{background:var(--primary);box-shadow:0 0 0 3px var(--ring)}
+.cstat-off{background:none;color:var(--ink-600)}
 .cstat-off .cstat-dot{background:var(--ink-300)}
 .cstat-none{background:transparent;color:var(--ink-400);padding-left:0}
 .cstat-none .cstat-dot{background:transparent;box-shadow:inset 0 0 0 1.5px var(--ink-300)}
-.cstat-fade{background:var(--warn-bg);color:var(--warn)}
+.cstat-fade{background:none;color:var(--warn)}
+.cstat-fade .cstat-plat{color:var(--warn)}
 
 /* ---------- Organic panel: the rating leads ------------------------
    It used to be a small chip at the end of a row headed "Retention", so
@@ -1777,8 +1898,8 @@ select:focus,.search-input:focus,.modal-input:focus{outline:none;border-color:va
   background:var(--canvas-2);border-radius:var(--r-card);padding:14px 16px;
 }
 .dsum-label{
-  font:400 11px/1 var(--font);color:var(--ink-400);
-  letter-spacing:.07em;text-transform:uppercase;margin-bottom:8px;
+  font:400 12px/1 var(--font);color:var(--ink-400);
+  letter-spacing:0;margin-bottom:8px;
 }
 .dsum-val{font:400 22px/28px var(--font);letter-spacing:-.018em;color:var(--ink-900)}
 
@@ -1792,7 +1913,7 @@ select:focus,.search-input:focus,.modal-input:focus{outline:none;border-color:va
   min-height:22px;
 }
 .dsum-plat-k{
-  font:500 11px/1 var(--font);letter-spacing:.05em;color:var(--ink-400);
+  font:500 12px/1 var(--font);letter-spacing:.05em;color:var(--ink-400);
   flex:0 0 auto;
 }
 .dsum-plat-v{
@@ -1813,3 +1934,37 @@ select:focus,.search-input:focus,.modal-input:focus{outline:none;border-color:va
 .dsum-pos{color:var(--pos)}
 .dsum-warn{color:var(--warn)}
 
+
+/* ---------- Toast --------------------------------------------------
+   One line at the foot of the screen that something worked or did not.
+   Fades up in, fades out the same way. */
+.cl-toast{position:fixed;left:50%;bottom:calc(24px + env(safe-area-inset-bottom,0px));z-index:300;
+  max-width:min(520px,calc(100vw - 32px));padding:11px 16px;border-radius:10px;
+  background:var(--ink-900);color:#fff;font:400 13.5px/19px var(--font);box-shadow:var(--shadow-pop);
+  translate:-50% 0;display:none;opacity:0;transform:translateY(8px);
+  transition:opacity var(--t-base) var(--ease-out),transform var(--t-base) var(--ease-out),display var(--t-base) allow-discrete}
+.cl-toast.show{display:block;opacity:1;transform:none}
+@starting-style{.cl-toast.show{opacity:0;transform:translateY(8px)}}
+.cl-toast.is-error::before{content:"";display:inline-block;width:8px;height:8px;border-radius:50%;
+  background:#F28B92;margin-right:9px;vertical-align:1px}
+
+/* ---------- Shared motion ------------------------------------------
+   Bars grow from their start when they are drawn, a row at a time (the
+   row index arrives as --i). Windows rise into place as they open. Both
+   use the motion tokens, so reduced motion turns them off. */
+@keyframes grow-x{from{transform:scaleX(0)}}
+.grow-x{transform-origin:left center;animation:grow-x var(--t-slow) var(--ease-move) both;
+  animation-delay:calc(min(var(--i,0),12) * 24ms)}
+.no-grow{animation:none}
+
+@keyframes window-in{from{opacity:0;transform:translateY(10px) scale(.98)}}
+@keyframes scrim-in{from{opacity:0}}
+.modal-overlay{animation:scrim-in var(--t-base) var(--ease-out)}
+.modal-overlay>.modal-box,.modal-overlay>div{animation:window-in var(--t-slow) var(--ease-move)}
+
+/* A highlight that slides between the options of a switch. */
+.glide{position:relative}
+.glide-pill{position:absolute;top:3px;bottom:3px;left:3px;width:0;border-radius:7px;background:var(--white);
+  box-shadow:0 1px 2px rgba(17,19,24,.08),0 0 0 1px var(--line);pointer-events:none;
+  transition:left var(--t-base) var(--ease-move),width var(--t-base) var(--ease-move)}
+.glide>button{position:relative;z-index:1}

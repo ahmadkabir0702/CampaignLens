@@ -3,15 +3,16 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>Influencer Stats · Campaign Lens</title>
-<link href="https://fonts.googleapis.com/css2?family=Rubik:wght@400;500;600&display=swap" rel="stylesheet">
+<title>Creator Stats · Campaign Lens</title>
+<link href="https://fonts.googleapis.com/css2?family=Onest:wght@400;500;600&display=swap" rel="stylesheet">
 <style>
   :root {
-    --ink-900: #1A1A4F; --ink-700: #3B3B6B; --ink-500: #6B6B8A; --ink-300: #A8A8BE;
-    --line: #E1E0EB; --bg: #F5F5F9; --card: #FFFFFF;
-    --good: #1E8A4C; --good-bg: #E8F5EE; --warn: #B7791F; --warn-bg: #FCF3E3;
-    --bad: #B3261E; --bad-bg: #FCEBEA; --info: #1877F2; --info-bg: #E8F0FE;
-    --font: 'Rubik', system-ui, sans-serif;
+    --ink-900: #111318; --ink-700: #2E323A; --ink-500: #646A76; --ink-300: #B4B9C2;
+    --line: #E4E6EA; --bg: #F3F4F6; --card: #FFFFFF;
+    --good: #1F8A5B; --good-bg: #E7F4EE; --warn: #8A5E0F; --warn-bg: #FBF3E2;
+    --bad: #C2414B; --bad-bg: #FBECEE; --info: #0F6E8C; --info-bg: #E1EEF2;
+    --primary: #0F6E8C;
+    --font: 'Onest', system-ui, sans-serif;
   }
   * { box-sizing: border-box; }
   body { margin: 0; font: 400 14px/1.5 var(--font); color: var(--ink-900); background: var(--bg); }
@@ -19,7 +20,7 @@
            display: flex; align-items: center; justify-content: space-between; gap: 16px; }
   header h1 { font-size: 17px; font-weight: 600; margin: 0; }
   header .who { color: var(--ink-500); font-size: 13px; }
-  header select { font: inherit; padding: 6px 10px; border: 1px solid var(--line); border-radius: 6px; background: #fff; }
+  header select { font: inherit; padding: 6px 10px; border: 1px solid var(--line); border-radius: 8px; background: #fff; }
   header a { color: var(--ink-500); font-size: 13px; text-decoration: none; }
   header a:hover { color: var(--ink-900); }
   main { max-width: 1120px; margin: 0 auto; padding: 24px; display: grid; gap: 20px; }
@@ -31,11 +32,11 @@
   .banner.warn { background: var(--warn-bg); color: var(--warn); border: 1px solid #F0DDB5; }
   .grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); gap: 12px; }
   label { display: block; font-size: 12px; color: var(--ink-500); margin-bottom: 4px; }
-  input, select { width: 100%; font: inherit; padding: 8px 10px; border: 1px solid var(--line); border-radius: 6px; background: #fff; }
+  input, select { width: 100%; font: inherit; padding: 8px 10px; border: 1px solid var(--line); border-radius: 8px; background: #fff; }
   input:focus, select:focus { outline: 2px solid var(--info-bg); border-color: var(--info); }
   .row { display: flex; gap: 10px; align-items: center; margin-top: 14px; }
-  button { font: inherit; font-weight: 500; padding: 9px 16px; border-radius: 6px; border: 1px solid var(--line); background: #fff; cursor: pointer; color: var(--ink-900); }
-  button.primary { background: var(--ink-900); color: #fff; border-color: var(--ink-900); }
+  button { font: inherit; font-weight: 500; padding: 9px 16px; border-radius: 8px; border: 1px solid var(--line); background: #fff; cursor: pointer; color: var(--ink-900); }
+  button.primary { background: var(--primary); color: #fff; border-color: var(--primary); }
   button:disabled { opacity: .5; cursor: default; }
   .msg { font-size: 13px; color: var(--ink-500); }
   .msg.ok { color: var(--good); } .msg.err { color: var(--bad); }
@@ -66,7 +67,7 @@
   .modal { background: #fff; border-radius: 12px; width: min(860px, 100%); max-height: 92vh; overflow: auto; padding: 22px; }
   .modal h3 { margin: 0 0 4px; font-size: 16px; }
   .tabs { display: flex; gap: 6px; margin: 14px 0; }
-  .tab { padding: 7px 14px; border-radius: 6px; border: 1px solid var(--line); cursor: pointer; font-weight: 500; }
+  .tab { padding: 7px 14px; border-radius: 8px; border: 1px solid var(--line); cursor: pointer; font-weight: 500; }
   .tab.on { background: var(--ink-900); color: #fff; border-color: var(--ink-900); }
   .tab.off { opacity: .45; }
   .plats-form { margin-top: 14px; display: grid; gap: 10px; }
@@ -102,7 +103,7 @@
 
 <header>
   <div>
-    <h1>Influencer content</h1>
+    <h1>Creator content</h1>
     <div class="who" id="who"></div>
   </div>
   <div style="display:flex;gap:12px;align-items:center">
@@ -115,16 +116,22 @@
   <div class="banner bad" id="overdueBanner"></div>
 
   <section class="card">
-    <h2>Add influencer content</h2>
+    <h2>Add creator content</h2>
     <div class="sub" style="margin:-6px 0 12px">The creator is picked up from the post automatically. Just choose the campaign and add the links.</div>
     <div class="grid">
       <div><label>Campaign</label><select id="f_campaign"><option value="" disabled selected>Select campaign</option></select></div>
+      <div><label>Kind of post</label><select id="f_format" onchange="formatChanged()">
+        <option value="" disabled selected>Choose one</option>
+        <option value="video">Reel or video</option>
+        <option value="photo">Static image</option>
+        <option value="carousel">Carousel</option>
+      </select></div>
     </div>
     <div class="plats-form">
       <div class="plat-row">
         <label class="tgl"><input type="checkbox" id="f_ig_on" onchange="platToggle('ig')"><span class="tgl-track"></span></label>
         <div class="plat-name">Instagram</div>
-        <input id="f_ig" placeholder="https://www.instagram.com/reel/…" disabled
+        <input id="f_ig" placeholder="https://www.instagram.com/reel/… or /p/…" disabled
                onblur="checkOne('ig')" oninput="setErr('ig', '')">
       </div>
       <div class="plat-err" id="f_ig_err"></div>
@@ -138,7 +145,7 @@
       <div class="plat-row">
         <label class="tgl"><input type="checkbox" id="f_tt_on" onchange="platToggle('tt')"><span class="tgl-track"></span></label>
         <div class="plat-name">TikTok</div>
-        <input id="f_tt" placeholder="TikTok video link" disabled
+        <input id="f_tt" placeholder="TikTok video or photo link" disabled
                onblur="checkOne('tt')" oninput="setErr('tt', '')">
       </div>
       <div class="plat-err" id="f_tt_err"></div>
@@ -333,19 +340,21 @@ function readForm() {
   });
   return {
     campaign: $('f_campaign').value,
+    format: $('f_format').value,
     plats,
   };
 }
 
 function validate(f) {
   if (!f.campaign) return 'Select a campaign.';
+  if (!f.format) return 'Choose what kind of post this is: reel or video, static image, or carousel.';
   if (!PLATS.some(p => f.plats[p.k].on)) return 'Turn on at least one platform. Content with no links cannot have stats.';
   let bad = false;
   for (const p of PLATS) {
     const v = f.plats[p.k];
     if (!v.on) { setErr(p.k, ''); continue; }
     if (!v.link) { setErr(p.k, 'Add the link or turn this platform off.'); bad = true; continue; }
-    const r = window.CLLinks.validate(p.k, v.link);
+    const r = window.CLLinks.validate(p.k, v.link, { format: f.format });
     if (!r.ok && !r.needsResolve) { setErr(p.k, r.error); bad = true; }
     else setErr(p.k, '');
   }
@@ -361,12 +370,24 @@ function setErr(k, msg) {
 function checkOne(k) {
   const box = $('f_' + k + '_on'), inp = $('f_' + k);
   if (!box || !box.checked || !inp || !inp.value.trim()) return;
-  const r = window.CLLinks.validate(k, inp.value);
+  const r = window.CLLinks.validate(k, inp.value, { format: $('f_format').value });
   setErr(k, (!r.ok && !r.needsResolve) ? r.error : '');
 }
 
+// The kind of post decides which links fit, so the boxes say what to
+// paste and anything already typed is checked again.
+function formatChanged() {
+  const fmt = $('f_format').value;
+  PLATS.forEach(p => {
+    const inp = $('f_' + p.k);
+    if (inp) inp.placeholder = window.CLLinks.placeholder(fmt, p.k) || (p.label + ' link');
+    setErr(p.k, '');
+    checkOne(p.k);
+  });
+}
+
 async function serverCheck(f) {
-  const body = {};
+  const body = { format: f.format };
   PLATS.forEach(p => { if (f.plats[p.k].on) body[p.k] = f.plats[p.k].link; });
   const r = await fetch('/api/check-links', {
     method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
@@ -385,7 +406,7 @@ function contentBlock() {
   const c = CONTENT;
   if (!c) return '';
   if (c.verdict === 'different') {
-    return `<div class="content-warn"><b>These links look like different videos.</b> ${esc(c.warning || '')}
+    return `<div class="content-warn"><b>These links look like different posts.</b> ${esc(c.warning || '')}
       <div class="content-sub">Go back and check the links, or add it anyway if they really are the same content.</div></div>`;
   }
   if (c.note) return `<div class="content-note">${esc(c.note)}</div>`;
@@ -397,6 +418,7 @@ function renderReview(f) {
   const off = PLATS.filter(p => !f.plats[p.k].on).length;
   return `<div class="rv"><h4>Check before submitting</h4>
     ${line('Campaign', f.campaign)}
+    ${line('Kind of post', { video: 'Reel or video', photo: 'Static image', carousel: 'Carousel' }[f.format] || '')}
     ${PLATS.map(p => line(p.label, f.plats[p.k].on ? f.plats[p.k].link : 'Not used', !f.plats[p.k].on)).join('')}
     ${off ? `<div class="rv-warn">${off} platform${off > 1 ? 's' : ''} recorded as not used. Go back if that is wrong.</div>` : ''}
     <div class="rv-warn">Stats for this content are due within 48 hours of submitting.</div>
@@ -437,7 +459,7 @@ $('addBtn').onclick = async () => {
     $('backBtn').style.display = '';
     const differs = CONTENT && CONTENT.verdict === 'different';
     $('addBtn').textContent = differs ? 'Add anyway' : 'Confirm and add';
-    m.textContent = differs ? 'The links look like different videos. Check them before adding.'
+    m.textContent = differs ? 'The links look like different posts. Check them before adding.'
                             : 'Check the details above, then confirm.';
     REVIEWED = true;
     return;
@@ -446,6 +468,7 @@ $('addBtn').onclick = async () => {
   const body = {
     brand_id: BRAND, type: 'Others Say',
     campaign: f.campaign,
+    format: f.format,
     ig: f.plats.ig.on ? f.plats.ig.link : null,
     fb: f.plats.fb.on ? f.plats.fb.link : null,
     tt: f.plats.tt.on ? f.plats.tt.link : null,
@@ -459,7 +482,7 @@ $('addBtn').onclick = async () => {
       CONTENT = j.content || { verdict: 'different', warning: j.contentWarning };
       $('review').innerHTML = renderReview(readForm()) + contentBlock();
       $('addBtn').textContent = 'Add anyway';
-      throw new Error('The links look like different videos. Check them, or press Add anyway.');
+      throw new Error('The links look like different posts. Check them, or press Add anyway.');
     }
     if (j.fieldErrors) {
       setEditMode();

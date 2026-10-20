@@ -17,11 +17,11 @@
  *   Brand Say TikTok    needs /video/{numeric id}
  *   Instagram collab    needs the real shortcode, which share links do not carry
  *
- * One exception, and it is a deliberate one. Community pages post photos far
- * more often than video, so for Others Say content marked as coming from a
- * community page the Facebook field also accepts post and photo links. See
- * checkFbCommunity. Nothing else is relaxed: a brand's own Facebook post
- * still has to be a video, because that is what its metrics are built on.
+ * Photos and carousels are tracked as well as videos, for Brand Say and
+ * Others Say alike (migration 022). Instagram /p/ links, Facebook post and
+ * photo links, and TikTok photo posts are accepted. Whether a post is a
+ * single image, a carousel or a video is worked out when it is fetched,
+ * since an Instagram /p/ link can be any of the three.
  */
 (function (root, factory) {
   if (typeof module === 'object' && module.exports) module.exports = factory();
@@ -52,9 +52,9 @@
 
   function fail(msg) { return { ok: false, error: msg }; }
   function resolveMe() { return { ok: false, needsResolve: true }; }
-  // kind tells the caller what it got: a video, or for a community page a
-  // photo or a text post. Nothing downstream requires it yet, but a photo
-  // has no view count and so cannot be rated the way a video is.
+  // kind tells the caller what the link looks like: 'video', 'photo', or
+  // 'post' when only fetching it can say (an Instagram /p/ link or a
+  // Facebook post may be an image, a carousel or a video).
   function pass(url, id, kind) { return { ok: true, url: url, id: id, kind: kind || 'video' }; }
 
   // ---------------------------------------------------------------- Instagram
@@ -63,15 +63,15 @@
     var m = p.match(/^\/(?:reel|reels)\/([A-Za-z0-9_-]+)\/?$/);
     if (m) return pass('https://www.instagram.com/reel/' + m[1] + '/', m[1]);
 
+    // A photo, a carousel, or sometimes a reel opened from the feed.
+    m = p.match(/^\/(?:[^/]+\/)?p\/([A-Za-z0-9_-]+)\/?$/);
+    if (m) return pass('https://www.instagram.com/p/' + m[1] + '/', m[1], 'post');
+
     if (/^\/share\//.test(p)) return resolveMe();
-    if (/^\/p\//.test(p)) {
-      return fail('This is a photo or carousel link. Only reels are tracked. '
-        + 'If this is a reel, open it and copy the link from the Reels view.');
-    }
-    if (/^\/tv\//.test(p)) return fail('IGTV links are not tracked. Only reels are.');
-    if (/^\/stories\//.test(p)) return fail('Stories expire and cannot be tracked. Use the reel link.');
-    if (/^\/[^/]+\/?$/.test(p)) return fail('This is a profile link. Paste the link to the reel itself.');
-    return fail('Not a reel link. It should look like instagram.com/reel/…');
+    if (/^\/tv\//.test(p)) return fail('IGTV links are not tracked. Use the reel or post link.');
+    if (/^\/stories\//.test(p)) return fail('Stories expire and cannot be tracked. Use the reel or post link.');
+    if (/^\/[^/]+\/?$/.test(p)) return fail('This is a profile link. Paste the link to the post itself.');
+    return fail('Not a post link. It should look like instagram.com/reel/… or instagram.com/p/…');
   }
 
   // ------------------------------------------------------------------ TikTok
@@ -87,18 +87,18 @@
     var m = p.match(/^\/@([^/]+)\/video\/(\d+)\/?$/);
     if (m) return pass('https://www.tiktok.com/@' + m[1] + '/video/' + m[2], m[2]);
 
-    if (/^\/@[^/]+\/photo\//.test(p)) {
-      return fail('This is a photo slideshow. Only video posts are tracked.');
-    }
-    if (/^\/@[^/]+\/?$/.test(p)) return fail('This is a profile link. Paste the link to the video itself.');
+    // A photo post (one image or a slideshow).
+    m = p.match(/^\/@([^/]+)\/photo\/(\d+)\/?$/);
+    if (m) return pass('https://www.tiktok.com/@' + m[1] + '/photo/' + m[2], m[2], 'photo');
+    if (/^\/@[^/]+\/?$/.test(p)) return fail('This is a profile link. Paste the link to the post itself.');
     if (/^\/@[^/]+\/live/.test(p) || /^\/live/.test(p)) return fail('Live streams cannot be tracked.');
     if (/^\/tag\//.test(p)) return fail('This is a hashtag page, not a video.');
-    return fail('Not a TikTok video link. It should look like tiktok.com/@…/video/…');
+    return fail('Not a TikTok post link. It should look like tiktok.com/@…/video/… or …/photo/…');
   }
 
-  // ------------------------------------------------- Facebook, community
+  // ------------------------------------------------- Facebook, posts and photos
   /**
-   * A community page's own post, which is usually a photo.
+   * A Facebook post or photo, from a brand page, a creator or a community.
    *
    * Three shapes turn up in practice, and all three carry query junk and a
    * trailing hash that has to come off before the link is stored:
@@ -111,7 +111,7 @@
    * The id this returns is what the duplicate check matches on, so it has to
    * be the part of the URL that identifies the post and nothing else.
    */
-  function checkFbCommunity(u) {
+  function checkFbPost(u) {
     var p = u.pathname;
     var m;
 
@@ -146,7 +146,7 @@
           + '&id=' + pid, sid, 'post');
       }
     }
-    return null;   // not a community shape; fall through to the video rules
+    return null;   // not a post or photo shape; fall through to the video rules
   }
 
   // ---------------------------------------------------------------- Facebook
@@ -157,13 +157,10 @@
     if (h === 'fb.watch') return resolveMe();
     if (/^\/share\//.test(p)) return resolveMe();
 
-    // Community pages post photos more often than video, so their posts are
-    // allowed here. Checked before the video rules because a post link would
-    // otherwise be rejected by the pfbid branch below.
-    if (opts && opts.source === 'community') {
-      var c = checkFbCommunity(u);
-      if (c) return c;
-    }
+    // Posts and photos, for every type. Checked before the video rules
+    // because a post link would otherwise be rejected by them.
+    var c = checkFbPost(u);
+    if (c) return c;
 
     var m = p.match(/^\/reel\/(\d+)\/?$/);
     if (m) return pass('https://www.facebook.com/reel/' + m[1] + '/', m[1]);
@@ -178,29 +175,77 @@
     m = p.match(/^\/([^/]+)\/videos\/(?:[^/]+\/)?(\d+)\/?$/);
     if (m) return pass('https://www.facebook.com/' + m[1] + '/videos/' + m[2] + '/', m[2]);
 
-    // Past this point the link is not a video. Say which setting would make
-    // it acceptable, rather than only that it is not.
-    var asCommunity = ' Post and photo links are accepted for Others Say'
-      + ' content posted by a community page; set "Posted by" to "Community page"'
-      + ' if that is what this is.';
-
-    if (/pfbid/i.test(p) || /^\/[^/]+\/posts\//.test(p)) {
-      return fail('This is a post link, not a video link. Click into the video and '
-        + 'copy the video link instead.' + asCommunity);
-    }
-    if (/profile\.php/.test(p)) return fail('This is a profile link. Paste the link to the video itself.');
+    if (/profile\.php/.test(p)) return fail('This is a profile link. Paste the link to the post itself.');
     if (/^\/groups\//.test(p)) return fail('Group posts cannot be tracked.');
     if (/^\/photo/.test(p) || /\/photos\//.test(p)) {
-      return fail('This is a photo, and only videos are tracked here.' + asCommunity);
+      return fail('This photo link has no photo id in it. Open the photo itself and copy the link from the address bar.');
     }
-    return fail('Not a Facebook video link. It should look like facebook.com/reel/… or …/videos/…');
+    return fail('Not a Facebook post link. It should look like facebook.com/reel/…, …/videos/…, …/posts/… or a photo link.');
   }
 
   var CHECK = { ig: checkIg, tt: checkTt, fb: checkFb };
 
+  // ------------------------------------------------------------ format
+  /**
+   * The person says up front what the post is: a reel or video, or a static
+   * image or carousel. That narrows which links fit, and the error says
+   * which setting would make the link acceptable.
+   *
+   * 'video' and 'static' are the two rule sets ('photo' and 'carousel' both
+   * mean static). No format means any link shape is accepted, which is what
+   * older callers and queued jobs get.
+   */
+  function normFormat(f) {
+    f = String(f || '').toLowerCase();
+    if (f === 'video' || f === 'reel') return 'video';
+    if (f === 'static' || f === 'photo' || f === 'image' || f === 'carousel') return 'static';
+    return null;
+  }
+
+  var SWITCH_TO_STATIC = ' If it is a photo or carousel, set the kind of post to Static image or Carousel.';
+  var SWITCH_TO_VIDEO = ' If it is a reel or video, set the kind of post to Reel or video.';
+
+  function checkFormat(field, r, format, opts) {
+    if (!r.ok || !format) return r;
+    if (format === 'video') {
+      if (field === 'ig' && r.kind === 'post') {
+        return fail('This is a post link (instagram.com/p/…). For a reel, open it and copy the link from the Reels view.' + SWITCH_TO_STATIC);
+      }
+      if (field === 'tt' && r.kind === 'photo') {
+        return fail('This is a TikTok photo post. Paste the video link (tiktok.com/@…/video/…).' + SWITCH_TO_STATIC);
+      }
+      if (field === 'fb' && r.kind === 'photo') {
+        return fail('This is a Facebook photo. Paste the video link (facebook.com/reel/… or …/videos/…).' + SWITCH_TO_STATIC);
+      }
+      // A community page's video is often only reachable as a post link.
+      if (field === 'fb' && r.kind === 'post' && !(opts && opts.source === 'community')) {
+        return fail('This is a post link. Open the video and copy its link (facebook.com/reel/… or …/videos/…).' + SWITCH_TO_STATIC);
+      }
+      return r;
+    }
+    // static
+    if (r.kind === 'video') {
+      var what = { ig: 'an Instagram reel', tt: 'a TikTok video', fb: 'a Facebook video' }[field];
+      var want = {
+        ig: 'the post link (instagram.com/p/…)',
+        tt: 'the photo post link (tiktok.com/@…/photo/…)',
+        fb: 'the photo or post link',
+      }[field];
+      return fail('This is ' + what + '. Paste ' + want + '.' + SWITCH_TO_VIDEO);
+    }
+    return r;
+  }
+
+  /** Placeholder text for each field under a format, for the add forms. */
+  var PLACEHOLDER = {
+    video:  { ig: 'Instagram reel link (instagram.com/reel/…)', fb: 'Facebook video link (facebook.com/reel/… or …/videos/…)', tt: 'TikTok video link (tiktok.com/@…/video/…)' },
+    static: { ig: 'Instagram post link (instagram.com/p/…)', fb: 'Facebook photo or post link', tt: 'TikTok photo post link (tiktok.com/@…/photo/…)' },
+  };
+
   /**
    * field: 'ig' | 'fb' | 'tt'
-   * opts:  { source }  'community' widens the Facebook rules; see checkFb
+   * opts:  { source, format }  format 'video' | 'static' | 'photo' | 'carousel'
+   *        narrows the accepted links; see checkFormat
    * returns one of:
    *   { ok: true, url, id, kind }    normalised URL and the id matchers use
    *   { ok: false, error }           show this under the field
@@ -217,10 +262,13 @@
       return fail('This is a ' + LABEL[actual] + ' link. Put it in the '
         + LABEL[actual] + ' field instead.');
     }
-    return CHECK[field](u, opts || {});
+    var o = opts || {};
+    return checkFormat(field, CHECK[field](u, o), normFormat(o.format), o);
   }
 
   return { validate: validate, platformOf: function (raw) {
     var u = parse(raw); return u ? platformOf(u) : null;
-  }, LABEL: LABEL };
+  }, LABEL: LABEL, normFormat: normFormat, placeholder: function (format, field) {
+    var f = normFormat(format); return f ? PLACEHOLDER[f][field] : null;
+  } };
 });

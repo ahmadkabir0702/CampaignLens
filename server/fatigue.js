@@ -1,14 +1,10 @@
 // =====================================================================
 //  fatigue.js — does a creative still perform the way it used to
 //
-//  The rating every screen shows is a lifetime figure, and two things
-//  about how it is built hide decay:
-//
-//    the lifetime CQR is the BEST single day the creative ever had, so
-//    one Good day in week one keeps it Good forever;
-//
-//    the lifetime rates are unweighted day averages, so seventy days of
-//    history drown last week.
+//  The rating every screen shows is a lifetime figure: the whole run,
+//  weighted by impressions (migration 023; before that it was the best
+//  single day). A lifetime figure still hides decay, because seventy days
+//  of history drown last week.
 //
 //  v_paid_windowed grades slices of time with the same functions, so
 //  "Good at launch, Average now" is a real comparison. This module reads
@@ -209,9 +205,14 @@ async function fatigueFor(brandId, creativeId) {
   let history = [];
   try {
     const h = await query(
+      // Rows written when the rules or benchmarks changed (migration 023
+      // onward) are left out: the rating moved because the rule did, not
+      // because the creative did. Read through to_jsonb so this works
+      // whether or not the reason column exists yet.
       `select channel, platform, cqr, cqr_lifetime, changed_at, is_first
-         from cqr_history
+         from cqr_history h
         where creative_id = $1
+          and coalesce(to_jsonb(h) ->> 'reason', '') <> 'rule change'
         order by changed_at`, [creativeId]);
     history = h.rows;
   } catch (err) {

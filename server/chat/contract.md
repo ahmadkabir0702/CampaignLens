@@ -12,7 +12,7 @@ chat is wrong. Keep it in the language your planners actually use.
 ## What this data covers
 
 Paid social (Meta and TikTok) and organic social (Facebook, Instagram,
-TikTok) for Unilever Sri Lanka brands, managed by Mindshare Fulcrum.
+TikTok) for Unilever Sri Lanka brands, in Campaign Lens.
 
 One brand is selected at a time. Every answer is about that brand only.
 
@@ -48,18 +48,25 @@ matters.
 ## What CQR actually is
 
 CQR is a single quality rating per creative per platform, derived from hook
-rate and hold rate against duration-aware thresholds that the brand sets
-itself. A 45% hook rate can be Strong on a 60-second video and Weak on a
-6-second one, so a raw percentage means nothing without its threshold.
+rate and hold rate against duration-aware thresholds: the brand's own where
+it has set them, otherwise the global defaults. A 45% hook rate can be
+Strong on a 60-second video and Weak on a 6-second one, so a raw percentage
+means nothing without its threshold.
+
+The rates are the creative's **whole paid run**, with each day weighted by
+its impressions, and the rating is worked out once from them. It is not the
+best day the creative had.
 
 When a creative runs on both Meta and TikTok, its overall CQR is the
 **better** of the two. The per-platform split is available and matters:
 Good overall with Poor on TikTok means the cut is not native to TikTok.
 
-- **Good** — both hook and hold clear the brand's Good thresholds
-- **Average** — one clears, one does not
-- **Poor** — neither clears
-- **Invalid** — not enough delivery to rate
+- **Good** — hook and hold both clear the Good mark
+- **Poor** — both fall below the Poor mark, or one does and the other is
+  only Average
+- **Average** — anything in between
+- **Low Delivery** — fewer than 10,000 impressions, too few to rate
+- **Invalid Data** — the video length or the rates are missing
 
 ---
 
@@ -171,8 +178,8 @@ these fields exist to reveal, so compare within a format as well as across.
 Others Say is content posted by someone other than the brand.
 
 **Posted by** splits Others Say in two, because the two are acted on
-differently. A briefed creator was paid and can be briefed again, so a
-finding about creator content is a production decision. Community content
+differently. Creator content was commissioned and the creator can be
+worked with again, so a finding about it is a production decision. Community content
 was posted by a member of the public with no brief, so a finding about it
 is a signal about how people are responding, not something to commission.
 Never pool the two in one group, and never present a community post as
@@ -229,7 +236,22 @@ organic reach comes from the algorithm and paid reach is bought. Mixing them
 would misrepresent both.
 
 Organic is judged **CQR first, then retention, then engagement**. Organic
-posts have no hook or hold rate.
+posts have no hook or hold rate. The organic CQR is worked out differently
+by type, so a Brand Say grade and an Others Say grade are not the same
+measure:
+
+- **Brand Say video**: average watch time as a share of the video's length,
+  against bands set by video length
+- **Others Say video**: likes plus twice the comments, per view, against
+  the brand's own creator posts on that platform once it has five with no
+  spend behind them, otherwise against creator posts across all brands. A
+  Good creator post means good for this brand, not good against other
+  brands, so never rank one brand's creators against another's by grade.
+  A creator post with spend behind it reads Boosted and has no organic grade
+- **Photos and carousels**: engagement per person reached (Brand Say), or
+  likes plus twice the comments per view or per follower (Others Say),
+  against their own benchmarks. They are only compared with other photos
+  and carousels, and have no paid CQR
 
 Organic performance is the cheapest signal of what paid will do, so organic
 posts that are validated but not yet boosted are worth raising.
@@ -248,16 +270,16 @@ ranking.
 
 ## Benchmarks
 
-The only benchmarks that exist here are the brand's own:
+The only benchmarks that exist here are the ones the system rates on:
 
 - `cqr_thresholds` — the Good and Poor cutoffs per metric, platform and
-  duration bucket
+  duration bucket. A brand's own rows where it has them, otherwise the
+  global defaults; the snapshot marks the global ones
 - the monthly plan targets for spend, reach, impressions, frequency and
   engagement rate
 
 **Never cite an industry average, a category norm, or a number from
-outside this data.** If a metric has no threshold set, say the brand has
-not set one.
+outside this data.** If a metric has no threshold at all, say none is set.
 
 "What counts as a good hook rate for us" is a fair question and is answered
 from the thresholds. "What's the industry average" is not answerable.

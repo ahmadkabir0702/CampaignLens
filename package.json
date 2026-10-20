@@ -1,7 +1,7 @@
 {
-  "name": "lifebuoy-dashboard-backend",
+  "name": "campaign-lens",
   "version": "1.0.0",
-  "description": "Backend for Lifebuoy Campaign Dashboard",
+  "description": "Campaign Lens",
   "main": "server.js",
   "scripts": {
     "start": "node server.js",
@@ -21,7 +21,8 @@
     "pg": "^8.11.5",
     "youtube-dl-exec": "^3.0.12",
     "@anthropic-ai/sdk": "^0.105.0",
-    "form-data": "^4.0.0"
+    "form-data": "^4.0.0",
+    "compression": "^1.7.4"
   },
   "engines": {
     "node": ">=18"

@@ -21,7 +21,7 @@ const fs = require('fs');
 const os = require('os');
 const path = require('path');
 const axios = require('axios');
-const { storeThumbnail } = require('./thumbnails');
+const { storeThumbnail, fetchImage, storeImage } = require('./thumbnails');
 const { Worker } = require('bullmq');
 const IORedis = require('ioredis');
 const { query } = require('./db');
@@ -57,6 +57,8 @@ const SC_ENDPOINT = {
 // time-indexed, so to say "hold rate collapses at 6s and here is what was on
 // screen at 6s" the descriptions have to sit on the same time grid.
 const SEG_SECONDS = Number(process.env.SEGMENT_SECONDS || 2);
+// Instagram allows 20 slides, TikTok 35. Twenty is plenty to read a post.
+const MAX_SLIDES = Number(process.env.MAX_SLIDES || 20);
 const MAX_SEGMENTS = Number(process.env.MAX_SEGMENTS || 60);
 
 /**
@@ -253,6 +255,186 @@ For the next five keys, judge ONLY the first 3 seconds. Ignore everything after 
 Return only the JSON object. No markdown, no commentary.`;
 }
 
+// ── Photos and carousels ──────────────────────────────────────────────────────
+// Same vocabulary as videos wherever it applies, so statics sit in the same
+// columns and the same Ask Lens crosstabs. Values that only make sense for
+// video (a dance, a sound, talking to camera) are left out of the enums.
+const STATIC_FORMATS = ['product_demo', 'testimonial', 'lifestyle', 'tutorial', 'ugc', 'animation', 'other'];
+const STATIC_HOOKS = ['question', 'bold_claim', 'problem', 'product_reveal', 'product_in_use',
+  'everyday_moment', 'text_overlay', 'before_after', 'unexpected_visual'];
+const STATIC_NARRATIVES = ['problem_solution', 'story', 'tips', 'demo', 'montage', 'testimonial_arc'];
+
+const STATIC_SCHEMA = {
+  type: 'object',
+  properties: {
+    format: { type: 'string', enum: STATIC_FORMATS },
+    product_role: { type: 'string', enum: ['hero', 'featured', 'incidental', 'absent'] },
+    format_note: { type: 'string' },
+    hook: { type: 'string' },
+    slides: {
+      type: 'array',
+      items: {
+        type: 'object',
+        properties: {
+          i: { type: 'number' },
+          d: { type: 'string' },
+          on_screen: { type: 'string', enum: ['person', 'product', 'text', 'scene', 'mixed'] },
+          product_visible: { type: 'boolean' },
+          has_text: { type: 'boolean' },
+        },
+        required: ['i', 'd', 'on_screen', 'product_visible', 'has_text'],
+      },
+    },
+    content_intent: {
+      type: 'string',
+      enum: ['educate', 'entertain', 'demonstrate', 'prove', 'announce', 'inspire', 'promote_offer'],
+    },
+    narrative_structure: { type: 'string', enum: STATIC_NARRATIVES },
+    hook_device: { type: 'string', enum: STATIC_HOOKS },
+    hook_subject: { type: 'string', enum: ['person', 'product', 'text', 'scene'] },
+    opens_with_product: { type: 'boolean' },
+    opens_with_face: { type: 'boolean' },
+    has_text_overlay: { type: 'boolean' },
+    logo_first_slide: { type: 'boolean' },
+    cta: { type: 'boolean' },
+    language: { type: 'string', enum: ['sinhala', 'tamil', 'english', 'mixed', 'none'] },
+    talent: { type: 'string', enum: ['creator', 'celebrity', 'model', 'everyday_person', 'none'] },
+    production_style: { type: 'string', enum: ['phone_shot', 'polished'] },
+    aspect_ratio: { type: 'string', enum: ['vertical', 'square', 'horizontal'] },
+  },
+  required: ['format', 'product_role', 'format_note', 'hook', 'slides', 'content_intent', 'narrative_structure',
+             'hook_device', 'hook_subject', 'opens_with_product', 'opens_with_face', 'has_text_overlay',
+             'logo_first_slide', 'cta', 'language', 'talent', 'production_style', 'aspect_ratio'],
+  propertyOrdering: ['format', 'product_role', 'format_note', 'hook', 'slides', 'content_intent', 'narrative_structure',
+                     'hook_device', 'hook_subject', 'opens_with_product', 'opens_with_face', 'has_text_overlay',
+                     'logo_first_slide', 'cta', 'language', 'talent', 'production_style', 'aspect_ratio'],
+};
+
+function buildStaticPrompt(count, caption) {
+  const many = count > 1;
+  const first = many ? 'first slide' : 'image';
+  return `${many ? `These are the ${count} slides of one social media carousel post, in order. Each image is preceded by its slide number.`
+                 : 'This is a single-image social media post.'}
+The post's caption is given at the end. Describe the post the way a creative strategist would.
+
+Return ONE JSON object with these keys:
+
+"format": exactly one of "product_demo" (the product and what it does is the subject), "testimonial" (someone vouches for it from experience), "lifestyle" (mood, scenery, daily life; the product is part of the scene), "tutorial" (steps, a routine or tips), "ugc" (casual creator-style photos), "animation" (illustration or graphic design with no photography), "other".
+
+"product_role": "hero" (the product is the subject${many ? ' of most slides' : ''}), "featured" (a clear moment, not throughout), "incidental" (in the background or brief), "absent" (never shown).
+
+"format_note": one sentence on what this post is and who or what is shown, in relation to the brand.
+
+"hook": 1-2 sentences on what grabs attention on the ${many ? 'first slide, the one people see in the feed' : 'image'}.
+
+"slides": ${many ? `exactly ${count} objects, one per slide, in order` : 'one object'}:
+  { "i": <slide number from 1>,
+    "d": "<one or two sentences: what is shown, and any text on the slide written out word for word>",
+    "on_screen": the dominant thing, one of "person", "product", "text", "scene", "mixed",
+    "product_visible": true if the product is visible,
+    "has_text": true if there is text on the image }
+WRITE ON-IMAGE TEXT IN ITS OWN LANGUAGE AND SCRIPT. Sri Lankan posts are often in Sinhala or Tamil, sometimes mixed with English. Do not translate and do not leave words out.
+
+"content_intent": exactly one of "educate", "entertain", "demonstrate", "prove", "announce", "inspire", "promote_offer". If the post carries a contest, deal, price or offer, choose "promote_offer".
+
+"narrative_structure": exactly one of "problem_solution", "story", "tips", "demo", "montage" (a set of separate images), "testimonial_arc".
+
+For the next four keys, judge ONLY the ${first}:
+"hook_device": exactly one of "question", "bold_claim", "problem", "product_reveal", "product_in_use", "everyday_moment", "text_overlay", "before_after", "unexpected_visual". Choose the one a viewer notices first.
+"hook_subject": one of "person", "product", "text", "scene".
+"opens_with_product": true if the product is visible.
+"opens_with_face": true if a human face is visible.
+
+"has_text_overlay": true if any slide has text on it.
+"logo_first_slide": true if the brand name or logo is visible on the ${first}.
+"cta": true if the post explicitly asks people to act (buy, visit, enter, comment, follow, tap), on an image or in the caption.
+"language": the main language of the text on the images and the caption: "sinhala", "tamil", "english", "mixed", or "none".
+"talent": "creator", "celebrity", "model", "everyday_person" or "none".
+"production_style": "phone_shot" (informal, native to social) or "polished" (professionally shot or designed).
+"aspect_ratio": "vertical", "square" or "horizontal".
+
+Caption, between the markers:
+<<<
+${String(caption || '(no caption)').slice(0, 2000)}
+>>>
+
+Return only the JSON object. No markdown, no commentary.`;
+}
+
+/** Read a photo or carousel. imgs: [{ buf, mime }] in slide order. */
+async function analyseStatic(ai, imgs, caption) {
+  const parts = [];
+  imgs.forEach((img, i) => {
+    if (imgs.length > 1) parts.push({ text: `Slide ${i + 1}:` });
+    parts.push({ inlineData: { mimeType: img.mime, data: img.buf.toString('base64') } });
+  });
+  parts.push({ text: buildStaticPrompt(imgs.length, caption) });
+
+  const result = await geminiCall('image analysis', () => ai.models.generateContent({
+    model: GEMINI_MODEL,
+    contents: [{ role: 'user', parts }],
+    config: {
+      responseMimeType: 'application/json',
+      responseSchema: STATIC_SCHEMA,
+      maxOutputTokens: 8000,
+      ...(THINKING_BUDGET !== null && Number.isFinite(THINKING_BUDGET)
+        ? { thinkingConfig: { thinkingBudget: THINKING_BUDGET } }
+        : {}),
+    },
+  }));
+  const u = result.usageMetadata || {};
+  console.log(`[gemini] static model=${GEMINI_MODEL} images=${imgs.length} in=${u.promptTokenCount || 0} `
+    + `out=${u.candidatesTokenCount || 0} thinking=${u.thoughtsTokenCount || 0}`);
+  return JSON.parse(String(result.text || '').replace(/```json|```/g, '').trim());
+}
+
+/** The creatives columns for a static, in the same shape attributeColumns returns. */
+function staticAttributeColumns(a, slides) {
+  const withProduct = slides.filter(sl => sl.product_visible === true).length;
+  return {
+    content_intent: pick(a.content_intent, ['educate', 'entertain', 'demonstrate', 'prove', 'announce', 'inspire', 'promote_offer']),
+    narrative_structure: pick(a.narrative_structure, STATIC_NARRATIVES),
+    hook_device: pick(a.hook_device, STATIC_HOOKS),
+    hook_subject: pick(a.hook_subject, ['person', 'product', 'text', 'scene']),
+    hook_pace: null,                       // no cuts in a still
+    opens_with_product: bool(a.opens_with_product),
+    opens_with_face: bool(a.opens_with_face),
+    has_text_overlay: bool(a.has_text_overlay),
+    logo_first_3s: bool(a.logo_first_slide),
+    captions: null,
+    voiceover: null,
+    music: null,
+    cta: bool(a.cta),
+    language: pick(a.language, ['sinhala', 'tamil', 'english', 'mixed', 'none']),
+    talent: pick(a.talent, ['creator', 'celebrity', 'model', 'everyday_person', 'none']),
+    production_style: pick(a.production_style, ['phone_shot', 'polished']),
+    aspect_ratio: pick(a.aspect_ratio, ['vertical', 'square', 'horizontal']),
+    timeline_attrs: '[]',
+    time_to_product_s: null,
+    product_screen_pct: slides.length ? Math.round(withProduct / slides.length * 100) : null,
+    cuts_per_10s: null,
+  };
+}
+
+/**
+ * Fetch every slide once, keep a permanent copy, and return the images for
+ * analysis alongside the slide list to store. A slide that cannot be
+ * fetched stays in the list without a picture rather than being dropped,
+ * so slide numbers still line up with the post.
+ */
+async function collectSlides(creativeId, meta) {
+  const list = (meta.slides || []).slice(0, MAX_SLIDES);
+  const imgs = [];
+  const slides = [];
+  for (let i = 0; i < list.length; i++) {
+    const img = await fetchImage(list[i].urls);
+    const stored = img ? await storeImage(`${creativeId}_s${i + 1}`, img) : null;
+    slides.push({ i: i + 1, type: list[i].type, image: stored });
+    if (img) imgs.push({ buf: img.buf, mime: img.mime, slide: i + 1 });
+  }
+  return { slides, imgs, total: (meta.slides || []).length };
+}
+
 // ── Step 1: CDN link ──────────────────────────────────────────────────────────
 function platformOf(url) {
   const h = (() => { try { return new URL(url).hostname.toLowerCase(); } catch (e) { return ''; } })();
@@ -282,59 +464,113 @@ function fromScrapeCreators(platform, body) {
   if (platform === 'ig') {
     const m = body && body.data && body.data.xdt_shortcode_media;
     if (!m) return null;
-    if (!m.is_video || !m.video_url) throw new Error('Instagram post is not a video.');
     const edges = (m.edge_media_to_caption && m.edge_media_to_caption.edges) || [];
+    const handle = m.owner && m.owner.username ? String(m.owner.username).toLowerCase() : null;
+    const posted_at = m.taken_at_timestamp ? new Date(m.taken_at_timestamp * 1000).toISOString() : null;
+    const likes = m.like_and_view_counts_disabled ? null
+      : num((m.edge_media_preview_like && m.edge_media_preview_like.count) ?? m.like_count);
+    const comments = num(m.comment_count ?? (m.edge_media_to_parent_comment && m.edge_media_to_parent_comment.count)
+      ?? (m.edge_media_to_comment && m.edge_media_to_comment.count));
+    const coauthors = Array.isArray(m.coauthor_producers)
+      ? m.coauthor_producers.map(x => x && x.username ? String(x.username).toLowerCase() : null).filter(Boolean)
+      : [];
+    const followers = num(m.owner && ((m.owner.edge_followed_by && m.owner.edge_followed_by.count) ?? m.owner.follower_count));
+
+    // A photo or a carousel. A carousel's slides can include videos; those
+    // are read from their cover frame, the slide itself is not downloaded.
+    const children = (m.edge_sidecar_to_children && m.edge_sidecar_to_children.edges) || [];
+    const isCarousel = children.length > 0 || /Sidecar/i.test(m.__typename || '');
+    if (isCarousel || !m.is_video || !m.video_url) {
+      const nodes = children.length ? children.map(e => e && e.node).filter(Boolean) : [m];
+      const slides = nodes.map(nd => ({
+        type: nd.is_video ? 'video' : 'image',
+        urls: igImageCandidates(nd),
+      })).filter(sl => sl.urls.length);
+      if (!slides.length) throw new Error('Instagram post has no video and no image we could find.');
+      return {
+        kind: slides.length > 1 ? 'carousel' : 'photo',
+        slides, download_url: null, duration: null,
+        caption: (edges[0] && edges[0].node && edges[0].node.text) || '',
+        thumbnail_url: slides[0].urls,
+        handle, posted_at, followers, coauthors,
+        stats: { views: null, likes, comments, shares: null, saves: null },
+      };
+    }
     return {
+      kind: 'video',
       download_url: m.video_url,
       duration: num(m.video_duration),
       caption: (edges[0] && edges[0].node && edges[0].node.text) || '',
       thumbnail_url: [m.thumbnail_src, m.display_url].filter(Boolean),
       // The same response carries the first stats, so influencer creatives
       // get numbers the moment they are added instead of hours later.
-      handle: m.owner && m.owner.username ? String(m.owner.username).toLowerCase() : null,
-      posted_at: m.taken_at_timestamp ? new Date(m.taken_at_timestamp * 1000).toISOString() : null,
+      handle, posted_at, followers,
       stats: {
         // Absent means the creator hides it. Never write zero for hidden.
         views: num(m.video_play_count),
-        likes: m.like_and_view_counts_disabled ? null : num(m.edge_media_preview_like && m.edge_media_preview_like.count),
-        comments: num(m.comment_count),
+        likes,
+        comments,
         shares: null,  // Instagram does not expose these publicly
         saves: null,
       },
-      coauthors: Array.isArray(m.coauthor_producers)
-        ? m.coauthor_producers.map(x => x && x.username ? String(x.username).toLowerCase() : null).filter(Boolean)
-        : [],
+      coauthors,
     };
   }
   if (platform === 'tt') {
     const d = body && body.aweme_detail;
     if (!d) return null;
     const v = d.video || {};
+    const st = d.statistics || {};
+    const ttStats = {
+      views: num(st.play_count),
+      likes: num(st.digg_count),
+      comments: num(st.comment_count),
+      shares: num(st.share_count),
+      saves: num(st.collect_count),
+    };
+    const ttBase = {
+      caption: d.desc || '',
+      handle: d.author && d.author.unique_id ? String(d.author.unique_id).toLowerCase() : null,
+      posted_at: d.create_time ? new Date(d.create_time * 1000).toISOString() : null,
+      item_id: d.aweme_id ? String(d.aweme_id) : null,
+      linked_ig: d.author && d.author.ins_id ? String(d.author.ins_id) : null,
+      is_paid_partnership: d.is_paid_partnership === true,
+      followers: num(d.author && d.author.follower_count),
+      stats: ttStats,
+    };
+
+    // A photo post: one image or a slideshow, set to music.
+    const images = (d.image_post_info && Array.isArray(d.image_post_info.images)) ? d.image_post_info.images : [];
+    if (images.length) {
+      const slides = images.map(im => ({
+        type: 'image',
+        urls: []
+          .concat((im.display_image && im.display_image.url_list) || [])
+          .concat((im.owner_watermark_image && im.owner_watermark_image.url_list) || [])
+          .concat((im.thumbnail && im.thumbnail.url_list) || [])
+          .filter(Boolean),
+      })).filter(sl => sl.urls.length);
+      if (slides.length) {
+        slides.forEach(sl => { sl.urls = displayableFirst(sl.urls); });
+        return { ...ttBase, kind: slides.length > 1 ? 'carousel' : 'photo', slides,
+                 download_url: null, duration: null, thumbnail_url: slides[0].urls };
+      }
+    }
+
     // Prefer the clean file; fall back through the play addresses.
     const pick = (o) => (o && Array.isArray(o.url_list) && o.url_list[0]) || null;
     const url = pick(v.download_no_watermark_addr) || pick(v.play_addr_h264) || pick(v.play_addr);
-    if (!url) throw new Error('TikTok response has no video file.');
+    if (!url) throw new Error('TikTok response has no video file and no photos.');
     const ms = num(v.duration);
-    const st = d.statistics || {};
     return {
+      kind: 'video',
       download_url: url,
       duration: ms === null ? null : ms / 1000,
       caption: d.desc || '',
       // Every cover URL, browser-friendly formats first. TikTok lists .heic
       // before .jpeg and no browser can display HEIC.
       thumbnail_url: coverCandidates(v),
-      handle: d.author && d.author.unique_id ? String(d.author.unique_id).toLowerCase() : null,
-      posted_at: d.create_time ? new Date(d.create_time * 1000).toISOString() : null,
-      item_id: d.aweme_id ? String(d.aweme_id) : null,
-      linked_ig: d.author && d.author.ins_id ? String(d.author.ins_id) : null,
-      is_paid_partnership: d.is_paid_partnership === true,
-      stats: {
-        views: num(st.play_count),
-        likes: num(st.digg_count),
-        comments: num(st.comment_count),
-        shares: num(st.share_count),
-        saves: num(st.collect_count),
-      },
+      ...ttBase,
     };
   }
   if (platform === 'fb') {
@@ -349,6 +585,7 @@ function fromScrapeCreators(platform, body) {
       handle: body.author && body.author.handle ? String(body.author.handle).toLowerCase() : null,
       posted_at: body.creation_time || null,
       post_id: body.post_id ? String(body.post_id) : null,
+      followers: num(body.author && (body.author.follower_count ?? body.author.followers)),
       stats: {
         views: num(body.view_count),
         likes: num(body.like_count),
@@ -359,12 +596,10 @@ function fromScrapeCreators(platform, body) {
     };
 
     if (!url) {
-      // No video file. For a community page that is the normal case rather
-      // than a failure: they post photos far more often than video. Return
-      // it as a photo and let the processor decide whether this particular
-      // creative was allowed to be one.
-      const image = firstImage(body);
-      if (!image) {
+      // No video file: a photo, or an album of several. Every type may be
+      // one now (migration 022).
+      const images = allImages(body);
+      if (!images.length) {
         // Neither a video nor a picture we recognise. List what the response
         // did contain, so the failure email says what to map next time
         // instead of only that it did not work.
@@ -372,8 +607,9 @@ function fromScrapeCreators(platform, body) {
         throw new Error('Facebook post has no video and no image we could find. '
           + `Fields returned: ${keys || 'none'}.`);
       }
-      return { ...base, kind: 'photo', download_url: null, duration: null,
-               thumbnail_url: [image] };
+      const slides = images.slice(0, MAX_SLIDES).map(u => ({ type: 'image', urls: [u] }));
+      return { ...base, kind: slides.length > 1 ? 'carousel' : 'photo', slides,
+               download_url: null, duration: null, thumbnail_url: [images[0]] };
     }
 
     return { ...base, kind: 'video',
@@ -408,6 +644,46 @@ function firstImage(body) {
     }
   }
   return null;
+}
+
+/**
+ * Every picture on a Facebook post, in order, for albums. Same field
+ * guessing as firstImage, but collecting rather than stopping at one.
+ */
+function allImages(body) {
+  const out = [];
+  const add = (u) => { if (typeof u === 'string' && /^https?:/i.test(u) && !out.includes(u)) out.push(u); };
+  const fromItem = (it) => {
+    if (!it) return;
+    if (typeof it === 'string') return add(it);
+    add(it.url || it.uri || it.src || it.image_url || (it.image && (it.image.uri || it.image.src || it.image)));
+    const subs = it.subattachments && (it.subattachments.data || it.subattachments);
+    if (Array.isArray(subs)) subs.forEach(fromItem);
+  };
+  for (const key of ['images', 'photos', 'attachments', 'media', 'album']) {
+    const list = body[key];
+    if (Array.isArray(list)) list.forEach(fromItem);
+    else if (list && Array.isArray(list.data)) list.data.forEach(fromItem);
+  }
+  if (!out.length) { const one = firstImage(body); if (one) add(one); }
+  return out;
+}
+
+/** Instagram image candidates for one node: largest rendition first. */
+function igImageCandidates(nd) {
+  const res = Array.isArray(nd.display_resources)
+    ? [...nd.display_resources].sort((a, b) => (b.config_width || 0) - (a.config_width || 0)).map(r => r.src)
+    : [];
+  const cand = [nd.display_url, ...res, nd.thumbnail_src];
+  const iv = nd.image_versions2 && nd.image_versions2.candidates;
+  if (Array.isArray(iv)) cand.push(...iv.map(c => c && c.url));
+  return [...new Set(cand.filter(u => typeof u === 'string' && /^https?:/i.test(u)))];
+}
+
+/** Browser-friendly formats first: TikTok lists .heic before .jpeg. */
+function displayableFirst(urls) {
+  const good = urls.filter(u => /\.(jpe?g|png|webp)(\?|$)/i.test(u));
+  return [...new Set(good.concat(urls.filter(u => !good.includes(u))))];
 }
 
 async function resolveViaScrapeCreators(mediaUrl) {
@@ -819,21 +1095,67 @@ function makeProcessor(ai) {
       await job.updateProgress({ step: 'resolving', pct: 10 });
       const meta = await resolveMediaUrl(mediaUrl);
 
-      // A community page's post is usually a photo, and there is no file to
-      // download and nothing for the model to watch. The creative is still
-      // worth having: it carries the engagement numbers, which is the whole
-      // reason for tracking community content.
-      const isPhoto = meta.kind === 'photo';
-      if (isPhoto && !(d.type === 'Others Say' && d.source === 'community')) {
-        throw new Error('This Facebook post is a photo, not a video. '
-          + 'Only Others Say content posted by a community page can be a photo.');
+      // A photo or a carousel, on any platform and for either type. There is
+      // no file to watch, so the slides are fetched, kept, and read as
+      // images instead (migration 022).
+      const isStatic = meta.kind === 'photo' || meta.kind === 'carousel';
+      // The person chose the kind of post when adding it, and the link rules
+      // follow that choice. The fetched post is still the truth: a mismatch
+      // that got past the rules is logged and the post's real kind is used.
+      if (d.format && (d.format !== 'video') !== isStatic) {
+        console.warn(`[worker] ${creativeId}: added as ${d.format} but the post is a ${meta.kind}; using ${meta.kind}`);
       }
 
       let a = {};
       let timeline = [];
       let safeDur = null;
+      let staticInfo = null;
 
-      if (!isPhoto) {
+      if (isStatic) {
+        await job.updateProgress({ step: 'reading slides', pct: 40 });
+        const col = await collectSlides(creativeId, meta);
+        if (!col.imgs.length) throw new Error('Could not download any image from this post. It may be private or deleted.');
+
+        await job.updateProgress({ step: 'analysing', pct: 60 });
+        // The numbers are the main reason to track a static, so a failed
+        // read of the images does not stop the creative being added.
+        // geminiCall has already retried anything transient.
+        let sa = null;
+        if (ai) {
+          try { sa = await analyseStatic(ai, col.imgs, meta.caption); }
+          catch (e) { console.warn(`[worker] ${creativeId}: slides added without analysis: ${e.message}`); }
+        }
+        // The model numbers slides among the images it was sent; map those
+        // back to the post's own slide numbers.
+        const read = new Map();
+        for (const x of (sa && Array.isArray(sa.slides) ? sa.slides : [])) {
+          const img = col.imgs[Number(x.i) - 1];
+          if (img) read.set(img.slide, x);
+        }
+        const slides = col.slides.map(sl => {
+          const x = read.get(sl.i) || {};
+          return {
+            ...sl,
+            d: x.d ? String(x.d).trim() : null,
+            on_screen: x.on_screen || null,
+            product_visible: typeof x.product_visible === 'boolean' ? x.product_visible : null,
+            has_text: typeof x.has_text === 'boolean' ? x.has_text : null,
+          };
+        });
+        a = sa ? {
+          hook: sa.hook || null,
+          format: pick(sa.format, STATIC_FORMATS),
+          product_role: pick(sa.product_role, ['hero', 'featured', 'incidental', 'absent']),
+          format_note: sa.format_note || null,
+        } : {};
+        staticInfo = {
+          slides, total: col.total,
+          contentType: meta.kind === 'carousel' ? 'Carousel' : 'Photo',
+          attrs: staticAttributeColumns(sa || {}, slides),
+        };
+      }
+
+      if (!isStatic) {
         await job.updateProgress({ step: 'downloading', pct: 30 });
         videoPath = path.join(os.tmpdir(), `creative_${job.id}.mp4`);
         await streamToFile(meta.download_url, videoPath);
@@ -912,7 +1234,25 @@ function makeProcessor(ai) {
         }
       }
 
-      const at = attributeColumns(a);
+      const at = staticInfo ? staticInfo.attrs : attributeColumns(a);
+
+      // A Facebook post link with a pfbid token carries no numeric id, and
+      // the Brand Say matcher needs one at the end of the link. When the
+      // post was fetched from that link, store the numeric form instead.
+      let fbLink = d.fb;
+      if (fbLink && /\/posts\/pfbid/i.test(fbLink)) {
+        // The analysed post is usually Instagram; then the Facebook post is
+        // fetched once more just for its id (one scraper credit).
+        let fm = platformOf(mediaUrl) === 'fb' ? meta : null;
+        if (!fm) {
+          try { fm = await resolveMediaUrl(fbLink); }
+          catch (e) { console.warn(`[worker] ${creativeId}: Facebook post id not resolved: ${e.message}`); }
+        }
+        if (fm && fm.post_id && /^\d+$/.test(fm.post_id) && fm.handle) {
+          fbLink = `https://www.facebook.com/${fm.handle}/posts/${fm.post_id}`;
+        }
+      }
+
       await query(
         `insert into creatives
            (creative_id, brand_id, date, campaign, type, is_repurposed,
@@ -949,7 +1289,7 @@ function makeProcessor(ai) {
            cuts_per_10s = excluded.cuts_per_10s,
            attrs_version = 1`,
         [creativeId, d.brand, d.date, d.campaign, d.type, d.repurposed,
-         d.originalId, d.ig, d.fb, d.tt,
+         d.originalId, d.ig, fbLink, d.tt,
          d.source || null,
          d.creatorLed === undefined ? null : d.creatorLed,
          a.hook || null, safeDur, JSON.stringify(timeline),
@@ -958,10 +1298,16 @@ function makeProcessor(ai) {
          at.content_intent, at.narrative_structure, at.hook_device, at.hook_subject, at.hook_pace,
          at.opens_with_product, at.opens_with_face, at.has_text_overlay,
          at.timeline_attrs, at.time_to_product_s, at.product_screen_pct, at.cuts_per_10s,
-         isPhoto ? 'Photo' : 'Video']
+         staticInfo ? staticInfo.contentType : 'Video']
       );
 
       await saveTags(creativeId, at);
+
+      if (staticInfo) {
+        await query(`update creatives set slides = $2, slide_count = $3 where creative_id = $1`,
+          [creativeId, JSON.stringify(staticInfo.slides), staticInfo.total])
+          .catch(e => console.error(`[worker] ${creativeId}: slides not saved (run migration 022): ${e.message}`));
+      }
 
       // Influencer content: the post we just fetched already carries its
       // first stats, handle and posted time. Writing them now means the
@@ -969,30 +1315,41 @@ function makeProcessor(ai) {
       // and saves the sync one credit. Brand Say keeps its existing path:
       // its numbers come from the Meta and TikTok business APIs, which also
       // supply reach and watch time that a public post does not.
-      if (d.type === 'Others Say' && meta.stats) {
+      // Brand Say photos and carousels get the public numbers too, so they
+      // show something before the organic sync covers them; the sync's own
+      // figures (reach, saves, shares) replace these when it runs.
+      if ((d.type === 'Others Say' || staticInfo) && meta.stats) {
         // platformOf reads the link itself and returns the short code, so
         // there is one source of truth rather than a second spelling
         // assembled in routes.js and mapped back here.
         try { await writeFirstStats(creativeId, platformOf(mediaUrl), meta); }
         catch (e) { console.error(`[worker] ${creativeId}: first stats not written: ${e.message}`); }
+        // Statics with no public views are read per follower.
+        if (meta.followers) {
+          await query(`update organic_perf set followers = $3 where creative_id = $1 and platform = $2`,
+            [creativeId, platformOf(mediaUrl), meta.followers])
+            .catch(e => console.error(`[worker] ${creativeId}: follower count not saved: ${e.message}`));
+        }
       }
 
       // Every creative, both types: keep a permanent copy of the thumbnail.
       // The platform's link expires within hours, so the file itself is
       // stored. Never fatal: a missing picture is cosmetic.
-      const storedThumb = await storeThumbnail(creativeId, meta.thumbnail_url);
+      // A static's first slide is already stored, so it doubles as the thumbnail.
+      const firstSlide = staticInfo && staticInfo.slides.find(sl => sl.image);
+      const storedThumb = firstSlide ? firstSlide.image : await storeThumbnail(creativeId, meta.thumbnail_url);
       if (storedThumb) {
         await query(`update creatives set thumbnail_url = $2 where creative_id = $1`, [creativeId, storedThumb])
           .catch(e => console.error(`[worker] ${creativeId}: thumbnail url not saved: ${e.message}`));
       }
 
-      console.log(isPhoto
-        ? `[worker] ${creativeId}: added ${platform} photo post (no video to analyse)`
+      console.log(staticInfo
+        ? `[worker] ${creativeId}: added ${platform} ${staticInfo.contentType.toLowerCase()} (${staticInfo.total} slide${staticInfo.total === 1 ? '' : 's'}${a.hook ? ', analysed' : ', not analysed'})`
         : `[worker] ${creativeId}: analysed ${platform} (${safeDur === null ? '?' : safeDur}s, ${timeline.length} segments) and added`);
 
       notifySuccess({
         creativeId, brand: d.brand, campaign: d.campaign, platform,
-        duration: safeDur, hook: a.hook || (isPhoto ? 'Photo post' : null),
+        duration: safeDur, hook: a.hook || (staticInfo ? `${staticInfo.contentType} post` : null),
         addedBy: d.addedBy, addedByName: d.addedByName, addedByEmail: d.addedByEmail,
       }).catch(e => console.error('[worker] notify:', e.message));
 
@@ -1002,7 +1359,7 @@ function makeProcessor(ai) {
       // itself arrives about 5 minutes later through the brainsuite queue.
       // Only for brands switched on (brands.bs_auto_score). Never fatal:
       // scoreCreative catches its own errors.
-      if (!isPhoto && videoPath) {
+      if (!isStatic && videoPath) {
         try { await job.updateProgress({ step: 'scoring', pct: 95 }); } catch (e) { /* progress is cosmetic */ }
         const bs = await scoreCreative({
           creativeId, brandId: d.brand, type: d.type, platform,
@@ -1052,6 +1409,13 @@ function startWorker(ai) {
     lockDuration: 10 * 60 * 1000,
     stalledInterval: 30 * 1000,
     maxStalledCount: 3,
+  });
+
+  // A finished job has written to creatives, so the cached dashboard
+  // payload is stale. Only reaches the web process's cache when the worker
+  // runs in-process; a standalone worker relies on the cache's short expiry.
+  worker.on('completed', () => {
+    try { require('./creatives').invalidatePayload(); } catch (e) { /* cache is an aside */ }
   });
 
   // A job whose worker vanished is not a real failure: it never got to run.
@@ -1123,6 +1487,7 @@ async function classifyExisting(ai, row) {
   let videoPath = null;
   try {
     const meta = await resolveMediaUrl(link);
+    if (meta.kind && meta.kind !== 'video') throw new Error('photo or carousel, not a video: skipped');
     videoPath = path.join(os.tmpdir(), `backfill_${row.creative_id}.mp4`);
     await streamToFile(meta.download_url, videoPath);
     const hint = typeof meta.duration === 'number' ? meta.duration : (row.duration_s ? Number(row.duration_s) : null);
@@ -1152,9 +1517,12 @@ module.exports = {
   classifyExisting, attributeColumns, deriveTimelineMetrics, saveTags,
   // Exported so the photo path and the platform routing can be tested
   // without calling the scraper or touching a database.
-  fromScrapeCreators, firstImage, writeFirstStats, platformOf,
+  fromScrapeCreators, firstImage, allImages, writeFirstStats, platformOf,
+  analyseStatic, buildStaticPrompt, staticAttributeColumns, STATIC_SCHEMA, collectSlides,
   // Brainsuite's retry path downloads a creative again the same way.
   resolveMediaUrl, streamToFile,
+  // The job itself, so it can be run in tests without Redis.
+  _makeProcessor: makeProcessor,
 };
 
 // Standalone mode: node worker.js

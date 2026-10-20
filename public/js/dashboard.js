@@ -101,14 +101,104 @@ const parseNum = (val) => {
     return parseFloat(String(val).replace(/[^0-9.-]+/g, "")) || 0;
 };
 
+// The browser no longer holds the brand's whole creative list. The
+// Creative Hub asks the server for one filtered, sorted page at a time
+// (docs/scaling.md). ALL is filled only when Media Summary or Creators is
+// opened, since both still work out their figures from every creative.
 let ALL = [];
+let LIBRARY_FOR = null, LIBRARY_LOADING = null;
+// Every creative seen in a page, a tile or a lineage list, by id, so the
+// panel can open it without another round trip.
+const LOADED = new Map();
+// Panel-only fields already fetched, by id. Kept apart from LOADED so a
+// creative that comes back in a later page keeps them.
+const DETAILS = new Map();
+
+// ---------------------------------------------------------------------
+//  Sliding highlights
+//
+//  A switch is redrawn as HTML when it changes, so its highlight is a new
+//  element every time. glide() remembers where the highlight for a given
+//  switch last sat and slides the new one from there to the selected
+//  option. The first time, it simply appears in place.
+// ---------------------------------------------------------------------
+const GLIDE_AT = new Map();
+function glide(key, root) {
+  if (!root) return;
+  const on = root.querySelector('[aria-pressed="true"],[aria-selected="true"],.on');
+  if (!on) return;
+  let pill = root.querySelector(':scope > .glide-pill');
+  if (!pill) { pill = document.createElement('span'); pill.className = 'glide-pill'; pill.setAttribute('aria-hidden', 'true'); root.prepend(pill); }
+  root.classList.add('glide');
+  const to = { left: on.offsetLeft, width: on.offsetWidth };
+  const from = GLIDE_AT.get(key) || to;
+  pill.style.transition = 'none';
+  pill.style.left = from.left + 'px'; pill.style.width = from.width + 'px';
+  pill.offsetHeight;
+  pill.style.transition = '';
+  pill.style.left = to.left + 'px'; pill.style.width = to.width + 'px';
+  GLIDE_AT.set(key, to);
+}
+
+/**
+ * Bars that are redrawn slide from the length they had to the new one.
+ * Call with the bars before the redraw (read with barWidths) and the new
+ * ones after; bars are matched by the key function, so a reordered list
+ * still moves each bar from its own old length.
+ */
+function barWidths(els, key) {
+  const m = new Map();
+  els.forEach((el, i) => m.set(key(el, i), el.style.width));
+  return m;
+}
+function slideBars(els, before, key) {
+  const pairs = els.map((el, i) => {
+    const to = el.style.width, from = before.get(key(el, i));
+    el.classList.add('no-grow');
+    el.style.transition = 'none';
+    el.style.width = from || '0%';
+    return [el, to];
+  });
+  if (pairs.length) pairs[0][0].offsetHeight;
+  pairs.forEach(([el, to]) => { el.style.transition = 'width var(--t-slow) var(--ease-move)'; el.style.width = to; });
+}
+
+// ---------------------------------------------------------------------
+//  Toasts
+//
+//  One short line at the foot of the screen that something worked or did
+//  not, in place of the browser's alert box, which stops the page and
+//  looks like a different product. Errors stay up longer and are read
+//  out straight away by screen readers.
+// ---------------------------------------------------------------------
+let toastTimer = null;
+function toast(message, tone) {
+  let el = document.getElementById('cl-toast');
+  if (!el) {
+    el = document.createElement('div');
+    el.id = 'cl-toast';
+    el.className = 'cl-toast';
+    document.body.appendChild(el);
+  }
+  const err = tone === 'error';
+  el.setAttribute('role', err ? 'alert' : 'status');
+  el.classList.toggle('is-error', err);
+  el.textContent = String(message || '');
+  el.classList.remove('show');
+  el.offsetHeight;
+  el.classList.add('show');
+  clearTimeout(toastTimer);
+  toastTimer = setTimeout(() => el.classList.remove('show'), err ? 6000 : 3200);
+}
 let ACCOUNT_OVERVIEW = [];
 let CAMPAIGNS = [];
 // How long a post is left alone before its organic numbers are read. Sent
 // by the API so the card and the rating cannot disagree about it; the
 // fallback only applies if an older server is still answering.
 let VALIDATION_HOURS = 24;
-let BRAND_NAME = '';
+let BRAND_NAME = '', BRAND_ID = '';
+// The Creative Hub's dropdown options and how many creatives the brand has.
+let HUB_OPTIONS = { months: [], campaigns: [], contentTypes: [] };
 let currentPlatform = 'both', currentSort = 'date', sortAscending = false, selectedId = null;
 let currentPage = 'creatives';
 let chartsInit = {};
@@ -118,7 +208,17 @@ let AGENCIES = [], CURRENT_USER = '', CURRENT_ROLE = '', CURRENT_IS_INTERNAL = f
 // What this account may use. Starts closed: the controls are only put on
 // the page once the server has said so, so a failed or slow /api/brands
 // shows nothing rather than briefly offering a button that would 403.
-let FEATURES = { askLens: false, addCreative: false, pretest: false };
+let FEATURES = { askLens: false, addCreative: false, pretest: false, media: false, creators: false, sov: false };
+
+// Pages that need a feature. A page not listed here (the Creative Hub) is
+// open to every account.
+const PAGE_FEATURE = { pretests: 'pretest', kpi: 'media', creators: 'creators', sov: 'sov' };
+
+/** The page to show for a request: the one asked for, or the Creative Hub if this account may not see it. */
+function allowedPage(page) {
+  const flag = PAGE_FEATURE[page];
+  return flag && FEATURES[flag] === false ? 'creatives' : page;
+}
 
 /**
  * Put the page in the shape this account's access allows.
@@ -128,9 +228,23 @@ let FEATURES = { askLens: false, addCreative: false, pretest: false };
  * there is no reason to ship markup for something nobody can use.
  */
 function applyFeatures() {
-  if (!FEATURES.pretest) {
-    document.querySelector('.nav-item[onclick*="pretests"]')?.remove();
+  for (const [page, flag] of Object.entries(PAGE_FEATURE)) {
+    const nav = document.querySelector(`.nav-item[onclick*="setNav('${page}'"]`);
+    if (FEATURES[flag] === false) nav?.remove();
+    else nav?.classList.remove('hidden');
   }
+  // A group label with no sections left under it goes too.
+  document.querySelectorAll('.nav-label').forEach(label => {
+    let n = label.nextElementSibling, any = false;
+    while (n && !n.classList.contains('nav-label')) {
+      if (n.classList.contains('nav-item') && !n.classList.contains('hidden')) any = true;
+      n = n.nextElementSibling;
+    }
+    label.classList.toggle('is-empty', !any);
+  });
+  placeNavInk(false);
+  // If a removed page was open, go back to the Creative Hub.
+  if (typeof currentPage !== 'undefined' && allowedPage(currentPage) !== currentPage) setNav('creatives');
   if (!FEATURES.addCreative) {
     document.querySelector('.topbar-right button[onclick*="openAddCreativeModal"]')?.remove();
     document.getElementById('addCreativeModal')?.remove();
@@ -152,7 +266,7 @@ async function loadBrands() {
     CURRENT_USER = (user && user.displayName) || '';
     CURRENT_ROLE = (user && user.role) || '';
     CURRENT_IS_INTERNAL = !!isInternal;
-    FEATURES = Object.assign({ askLens: true, addCreative: true, pretest: true }, features || {});
+    FEATURES = Object.assign({ askLens: true, addCreative: true, pretest: true, media: true, creators: true, sov: true }, features || {});
     applyFeatures();
     const sel = document.getElementById('brand-switcher');
     if (!sel) return;
@@ -176,14 +290,11 @@ async function switchBrand(brandId) {
       throw new Error(e.error || `${res.status} ${res.statusText}`);
     }
     selectedId = null;
+    // Redraws whichever tab is open, Media Summary and Creators included.
     await loadData();
-    // Re-render whichever tab is open, so the switch is not lost on tab change
-    if (currentPage === 'kpi' && typeof renderKPIDashboard === 'function') {
-      renderKPIDashboard();
-    }
     if (typeof PreTest !== 'undefined') PreTest.onBrandChange(currentPage);
   } catch (e) {
-    alert('Could not switch brand: ' + e.message);
+    toast('Could not switch brand: ' + e.message, 'error');
   }
 }
 
@@ -252,26 +363,35 @@ function showSkeleton() {
 async function loadData() {
   isLoading = true;
   showSkeleton();
+  // A new brand, or the same one after a write: nothing kept from before
+  // can be trusted.
+  LOADED.clear(); DETAILS.clear(); HUB_CACHE.clear();
+  ALL = []; LIBRARY_FOR = null; LIBRARY_LOADING = null;
+  HUB.seq++;
+  HUB.shownFor = null;
   try {
-    const response = await fetch('/api/dashboard-data');
+    const response = await fetch('/api/dashboard-data?lite=1');
     if (!response.ok) throw new Error("Backend connection failed.");
     const data = await response.json();
-    ALL              = data.creatives;
     ACCOUNT_OVERVIEW = data.account;
     CAMPAIGNS        = data.campaigns;
     BRAND_NAME       = data.brand.name;
+    BRAND_ID         = data.brand.id;
+    HUB_OPTIONS      = data.options || HUB_OPTIONS;
     if (data.validationHours) VALIDATION_HOURS = Number(data.validationHours);
 
     const bn = document.getElementById('brand-name');
     if (bn) bn.textContent = BRAND_NAME;
 
-    if (ALL.length === 0) {
+    if (!data.total) {
       document.getElementById('kpi-row').innerHTML =
         `<div class="load-msg">No creatives added for ${BRAND_NAME} yet. Use Add creative to enter one.</div>`;
       // Clear the previous brand's cards — returning early used to leave
       // them on screen next to a message saying there were none.
       document.getElementById('card-grid').innerHTML = '';
       document.getElementById('grid-count').textContent = '0 creatives';
+      const more = document.getElementById('card-more');
+      if (more) more.remove();
       populateFilters();
       if (typeof enhanceFilterDropdowns === 'function') enhanceFilterDropdowns();
       if (typeof repaintFilterDropdowns === 'function') repaintFilterDropdowns();
@@ -281,12 +401,14 @@ async function loadData() {
       const kpEmpty = document.getElementById('page-kpi');
       if (currentPage === 'kpi' && kpEmpty) kpEmpty.innerHTML =
         `<div class="load-msg">No creatives added for ${BRAND_NAME} yet. Use Add creative to enter one.</div>`;
+      if (currentPage === 'creators' && typeof renderCreatorTab === 'function') renderCreatorTab();
       return;
     }
     populateFilters();
     if (typeof enhanceFilterDropdowns === 'function') enhanceFilterDropdowns();
     if (typeof repaintFilterDropdowns === 'function') repaintFilterDropdowns();
     if (typeof syncFilterPills === 'function') syncFilterPills();
+    isLoading = false;
     render();
   } catch(err) {
     document.getElementById('kpi-row').innerHTML =
@@ -302,6 +424,67 @@ async function loadData() {
   } finally {
     isLoading = false;
   }
+}
+
+// ---------------------------------------------------------------------
+//  The whole library, for Media Summary and Creators
+//
+//  Both pages still work their figures out from every creative, so they
+//  load the slim list the first time either is opened for a brand, and
+//  draw once it is here. The Creative Hub never waits on it.
+// ---------------------------------------------------------------------
+function ensureLibrary() {
+  if (LIBRARY_FOR === BRAND_ID) return Promise.resolve(ALL);
+  if (LIBRARY_LOADING) return LIBRARY_LOADING;
+  const brand = BRAND_ID;
+  const p = fetch('/api/creatives/library')
+    .then(r => { if (!r.ok) throw new Error(`Couldn't load the creatives (${r.status}).`); return r.json(); })
+    .then(({ creatives }) => {
+      if (LIBRARY_LOADING !== p) return ALL;   // the brand changed meanwhile
+      ALL = creatives || [];
+      LIBRARY_FOR = brand;
+      return ALL;
+    })
+    .finally(() => { if (LIBRARY_LOADING === p) LIBRARY_LOADING = null; });
+  LIBRARY_LOADING = p;
+  return p;
+}
+
+/** Draw a page that needs the library, with its skeleton until the library is here. */
+function withLibrary(page, draw) {
+  const el = document.getElementById(`page-${page}`);
+  if (LIBRARY_FOR !== BRAND_ID && el && page === 'kpi') el.innerHTML = skeletonKpiPage();
+  if (LIBRARY_FOR !== BRAND_ID && el && page === 'creators') el.innerHTML = `<div class="content">${skeletonKpiPage()}</div>`;
+  ensureLibrary().then(() => {
+    if (currentPage === page) draw();
+  }).catch(err => {
+    if (currentPage !== page || !el) return;
+    el.innerHTML = `<div class="load-msg load-msg-error">${err.message}
+      <button class="load-retry" onclick="render()">Try again</button></div>`;
+  });
+}
+
+/** A creative by id from anything this page has loaded. */
+function findCreative(id) {
+  return LOADED.get(id) || (ALL || []).find(x => x.id === id) || null;
+}
+
+/**
+ * Who posted a creative: its own handle, with a link to that profile on
+ * the platform it was posted from. Falls back to the profile it is filed
+ * under for creatives synced before handles were recorded.
+ */
+const CREATOR_PROFILE_URL = {
+  ig: h => `https://www.instagram.com/${h}`,
+  tt: h => `https://www.tiktok.com/@${h}`,
+  fb: h => `https://www.facebook.com/${h}`,
+};
+function creatorInfo(d) {
+  const h = d && d.creatorHandle ? String(d.creatorHandle).replace(/^@/, '') : '';
+  if (!h) return extractCreatorInfo(d && d.creatorProfile, d && d.ttLink);
+  const hs = d.handles || {};
+  const plat = ['ig', 'tt', 'fb'].find(p => hs[p] && String(hs[p]).toLowerCase() === h.toLowerCase());
+  return { username: '@' + h, profileUrl: plat ? CREATOR_PROFILE_URL[plat](hs[plat]) : null };
 }
 
 function extractCreatorInfo(creatorProfile, ttLink) {
@@ -321,9 +504,9 @@ function extractCreatorInfo(creatorProfile, ttLink) {
 }
 
 function populateFilters() {
-  const months       = [...new Set(ALL.map(d=>d.month))].filter(Boolean).sort();
-  const campaigns    = [...new Set(ALL.map(d=>d.campaign))].filter(Boolean).sort();
-  const contentTypes = [...new Set(ALL.map(d=>d.contentType).filter(Boolean))].sort();
+  // Options come from the server with the page, worked out over every
+  // creative, so a filter never offers less than the brand has.
+  const { months, campaigns, contentTypes } = HUB_OPTIONS;
 
   const mSel = document.getElementById('month-filter');
   if (mSel) { mSel.innerHTML = '<option value="all">All months</option>'; months.forEach(m => { const o = document.createElement('option'); o.value=m; o.textContent=m; mSel.appendChild(o); }); }
@@ -335,20 +518,47 @@ function populateFilters() {
   if (ctSel) { ctSel.innerHTML = '<option value="all">All content types</option>'; contentTypes.forEach(ct => { const o = document.createElement('option'); o.value=ct; o.textContent=ct; ctSel.appendChild(o); }); }
 }
 
+// Each page opens with its title and one line on what it shows.
+const PAGE_HEADS = {
+  creatives: { title: 'Creative Hub',   sub: 'Every creative for the brand, newest first, with its rating.' },
+  kpi:       { title: 'Media Summary',  sub: 'What went out, how it did organically, and what the paid creative taught us.' },
+  creators:  { title: 'Creators',       sub: 'Every creator and community page that has posted about the brand.' },
+  pretests:  { title: 'Pre-tests',      sub: 'Score a video before it goes live.' },
+  sov:       { title: 'Share of voice', sub: 'The brand\'s share of the conversation in its category.' },
+  signoff:   { title: 'Campaign Sign-Off', sub: 'One record per campaign, cleared before it goes live.' },
+};
+
+// The white tab behind the active section slides to it.
+function placeNavInk(animate) {
+  const ink = document.getElementById('nav-ink');
+  const on = document.querySelector('.nav-tabs .nav-item.active');
+  if (!ink) return;
+  if (!on || !on.offsetHeight) { ink.classList.remove('on'); return; }
+  if (!animate) ink.style.transition = 'none';
+  ink.style.top = on.offsetTop + 'px';
+  ink.style.height = on.offsetHeight + 'px';
+  ink.classList.add('on');
+  if (!animate) { ink.offsetHeight; ink.style.transition = ''; }
+}
+window.addEventListener('resize', () => placeNavInk(false));
+if (document.fonts) document.fonts.ready.then(() => placeNavInk(false));
+
 function setNav(page, element) {
-    // The nav item is removed for accounts without pre-tests, but setNav
-    // is also reachable from code and from a bookmarked state, so the
-    // page itself refuses rather than relying on the link being gone.
-    if (page === 'pretests' && !FEATURES.pretest) page = 'creatives';
+    // Nav items are removed for pages an account may not use, but setNav
+    // is also reachable from code (links inside other pages), so the page
+    // itself refuses rather than relying on the link being gone.
+    page = allowedPage(page);
+    if (element && !element.matches(`[onclick*="setNav('${page}'"]`)) element = null;
     ['page-creatives', 'page-kpi', 'page-creators', 'page-pretests'].forEach(id => {
         const el = document.getElementById(id);
         if (el) el.classList.add('hidden');
     });
     const selectedPage = document.getElementById(`page-${page}`);
     if (selectedPage) selectedPage.classList.remove('hidden');
-    const titles = { 'creatives': 'Creative Hub', 'kpi': 'Media Summary', 'creators': 'Creators', 'pretests': 'Pre-tests' };
     const titleEl = document.getElementById('topbar-title');
-    if (titleEl) titleEl.innerText = titles[page] || '';
+    if (titleEl) titleEl.innerText = (PAGE_HEADS[page] || {}).title || '';
+    const subEl = document.getElementById('page-sub');
+    if (subEl) subEl.innerText = (PAGE_HEADS[page] || {}).sub || '';
     document.querySelectorAll('.nav-item').forEach(el => el.classList.remove('active'));
     if (element) {
         element.classList.add('active');
@@ -357,17 +567,20 @@ function setNav(page, element) {
         if (navLink) navLink.classList.add('active');
     }
     currentPage = page;
+    placeNavInk(true);
     // Only the Creative Hub uses the topbar filter row. The KPI tab has
     // its own filter state and the Creators tab has its own controls, so
     // showing it on either would give two competing filter systems.
     const topFilters = document.querySelector('.topbar .filters');
     if (topFilters) topFilters.style.display = (page === 'creatives') ? 'flex' : 'none';
+    // A brand switched on another tab leaves the hub showing its skeleton.
+    if (page === 'creatives' && !isLoading && HUB.shownFor !== BRAND_ID) loadHub();
     if (page === 'kpi') {
         if (isLoading) showSkeleton();
-        else if (typeof renderKPIDashboard === 'function') renderKPIDashboard();
+        else if (typeof renderKPIDashboard === 'function') withLibrary('kpi', renderKPIDashboard);
     }
-    if (page === 'creators' && typeof renderCreatorTab === 'function') {
-        renderCreatorTab();
+    if (page === 'creators' && !isLoading && typeof renderCreatorTab === 'function') {
+        withLibrary('creators', renderCreatorTab);
     }
     if (typeof PreTest !== 'undefined') PreTest.onPage(page);
 }
@@ -393,100 +606,141 @@ function toggleSortDir() {
   render();
 }
 
-function getData() {
-  let data = ALL;
-  if (currentPlatform === 'meta') {
-    data = ALL.filter(d => d.platform === 'meta' || d.platform === 'both').map(d => {
-      if (d.platform === 'both' && d._meta) {
-        return { ...d, reach: d._meta.reach, hookRate: d._meta.hookRate, holdRate: d._meta.holdRate, spend: d._meta.spend, impressions: d._meta.impressions, cqr: d._meta.cqr, hookQual: d._meta.hookQual, holdQual: d._meta.holdQual, vtr: d._meta.vtr, watchTime: d._meta.watchTime, adStatus: d._meta.adStatus, ret: d._meta.ret };
-      }
-      return d;
-    });
-  }
-  if (currentPlatform === 'tiktok') {
-    data = ALL.filter(d => d.platform === 'tiktok' || d.platform === 'both').map(d => {
-      if (d.platform === 'both' && d._tt) {
-        return { ...d, reach: d._tt.reach, hookRate: d._tt.hookRate, holdRate: d._tt.holdRate, spend: d._tt.spend, impressions: d._tt.impressions, cqr: d._tt.cqr, hookQual: d._tt.hookQual, holdQual: d._tt.holdQual, vtr: d._tt.vtr, watchTime: d._tt.watchTime, adStatus: d._tt.adStatus, ret: d._tt.ret };
-      }
-      return d;
-    });
-  }
-    
-  const searchQ = (document.getElementById('search-filter')       || {}).value?.toLowerCase() || '';
-  const tf      = (document.getElementById('type-filter')         || {}).value || 'all';
-  const mf      = (document.getElementById('month-filter')        || {}).value || 'all';
-  const campf   = (document.getElementById('campaign-filter')     || {}).value || 'all';
-  const sf      = (document.getElementById('status-filter')       || {}).value || 'all';
-  const vf      = (document.getElementById('validation-filter')   || {}).value || 'all';
-  const ctf     = (document.getElementById('content-type-filter') || {}).value || 'all';
-  const af      = (document.getElementById('action-filter')       || {}).value || 'all';
-  const of      = (document.getElementById('origin-filter')       || {}).value || 'all';
-  const srcf    = (document.getElementById('source-filter')       || {}).value || 'all';
+// ---------------------------------------------------------------------
+//  The Creative Hub's query
+//
+//  Filters, search and sort are read from the controls and sent to the
+//  server, which answers with one page and the total (server/hub.js).
+// ---------------------------------------------------------------------
+const HUB_FILTERS = {
+  type: 'type-filter', month: 'month-filter', campaign: 'campaign-filter',
+  status: 'status-filter', validation: 'validation-filter', contentType: 'content-type-filter',
+  action: 'action-filter', origin: 'origin-filter', source: 'source-filter',
+};
 
-  if (tf !== 'all')   data = data.filter(d => d.type === tf);
-  if (mf !== 'all')   data = data.filter(d => d.month === mf);
-  if (campf !== 'all') data = data.filter(d => d.campaign === campf);
-  if (ctf !== 'all')  data = data.filter(d => d.contentType === ctf);
-  if (af === 'actioned') {
-    data = data.filter(d => {
-      const actRoot = d.actionStatus ? d.actionStatus.toLowerCase() : '';
-      const actMeta = (d._meta && d._meta.actionStatus) ? d._meta.actionStatus.toLowerCase() : '';
-      const actTt   = (d._tt && d._tt.actionStatus) ? d._tt.actionStatus.toLowerCase() : '';
-      return actRoot === 'actioned' || actMeta === 'actioned' || actTt === 'actioned';
-    });
+function hubParams() {
+  const p = new URLSearchParams();
+  if (currentPlatform !== 'both') p.set('platform', currentPlatform);
+  const q = ((document.getElementById('search-filter') || {}).value || '').trim();
+  if (q) p.set('q', q);
+  for (const [k, id] of Object.entries(HUB_FILTERS)) {
+    const v = (document.getElementById(id) || {}).value || 'all';
+    if (v !== 'all') p.set(k, v);
   }
-  if (af === 'not_actioned') {
-    data = data.filter(d => {
-      const hasRec  = d.recommendation || (d._meta && d._meta.recommendation) || (d._tt && d._tt.recommendation);
-      const actRoot = d.actionStatus ? d.actionStatus.toLowerCase() : '';
-      const actMeta = (d._meta && d._meta.actionStatus) ? d._meta.actionStatus.toLowerCase() : '';
-      const actTt   = (d._tt && d._tt.actionStatus) ? d._tt.actionStatus.toLowerCase() : '';
-      const isActed = actRoot === 'actioned' || actMeta === 'actioned' || actTt === 'actioned';
-      return hasRec && !isActed;
-    });
-  }
-if (sf === 'ACTIVE')                data = data.filter(d => d.adStatus === 'ACTIVE');
-  if (sf === 'STOPPED')               data = data.filter(d => d.adStatus === 'STOPPED');
-  if (sf === 'BOOSTED')               data = data.filter(d => d.isBoosted);
-  if (sf === 'NOT_BOOSTED')           data = data.filter(d => !d.isBoosted);
-  if (sf === 'VALIDATED_NOT_BOOSTED') data = data.filter(d => d.isValidated && !d.isBoosted);
-  if (sf === 'FATIGUING')             data = data.filter(d => d.fatiguing && d.boostState === 'running');
-  if (sf === 'BOOST_ENDED')           data = data.filter(d => d.boostState === 'ended');
-  if (srcf === 'brand')     data = data.filter(d => d.type === 'Brand Say');
-  if (srcf === 'creator_led') data = data.filter(d => d.type === 'Brand Say' && d.creatorLed);
-  if (srcf === 'creator')   data = data.filter(d => d.type === 'Others Say' && d.source !== 'community');
-  if (srcf === 'community') data = data.filter(d => d.source === 'community');
-  if (of === 'original')       data = data.filter(d => !d.isRepurposed);
-  if (of === 'repurposed')     data = data.filter(d => d.isRepurposed);
-  if (of === 'has_repurposed') data = data.filter(d => repurposesOf(d.id).length > 0);
-  if (vf === 'validated')     data = data.filter(d => d.isValidated);
-  if (vf === 'not_validated') data = data.filter(d => !d.isValidated);
-  if (searchQ) data = data.filter(d => matchesSearch(d, searchQ));
-
-  return [...data].sort((a,b) => {
-    let valA = 0, valB = 0;
-    // Hook and hold were sortable and are not any more: both are paid-only,
-    // so they ranked every unboosted creative as a zero.
-    if (currentSort==='reach') { valA = a.reach; valB = b.reach; }
-    else if (currentSort==='spend') { valA = a.spend; valB = b.spend; }
-    else if (currentSort==='cqr')   { const o={Good:0,Average:1,Poor:2,Invalid:3}; valB=(o[a.cqr]??4); valA=(o[b.cqr]??4); }
-    // Date Posted had a button but no branch here, so it silently did nothing.
-    // Blank dates sort last in either direction rather than jumping to the top.
-    else if (currentSort==='date')  { valA = ts(a.date);    valB = ts(b.date); }
-    else if (currentSort==='added') { valA = ts(a.addedAt); valB = ts(b.addedAt); }
-    return sortAscending ? valA - valB : valB - valA;
-  });
+  p.set('sort', currentSort);
+  p.set('dir', sortAscending ? 'asc' : 'desc');
+  return p;
 }
 
-// Missing dates must not out-rank real ones. -Infinity in ascending order and
-// the same value flipped in descending keeps them at the bottom either way.
-function ts(v) {
-  if (!v) return sortAscending ? Infinity : -Infinity;
-  const t = Date.parse(v);
-  return Number.isNaN(t) ? (sortAscending ? Infinity : -Infinity) : t;
+// Responses are kept for a short while, so going back to a filter or a
+// sort you just had is instant. Cleared with everything else on reload.
+const HUB_CACHE = new Map();     // query string -> { at, data }
+const HUB_CACHE_MS = 30 * 1000;
+
+function remember(items) {
+  for (const d of items || []) {
+    const det = DETAILS.get(d.id);
+    if (det) applyDetail(d, det);
+    LOADED.set(d.id, d);
+  }
 }
 
-function hookColor(v) { return v>=40?'#04785C':v>=20?'#8A5A12':'#A32040'; }
+async function fetchHub(qs) {
+  const hit = HUB_CACHE.get(qs);
+  if (hit && Date.now() - hit.at < HUB_CACHE_MS) return hit.data;
+  const r = await fetch('/api/creatives?' + qs);
+  if (!r.ok) {
+    const e = await r.json().catch(() => ({}));
+    throw new Error(e.error || `${r.status} ${r.statusText}`);
+  }
+  const data = await r.json();
+  HUB_CACHE.set(qs, { at: Date.now(), data });
+  if (HUB_CACHE.size > 60) HUB_CACHE.delete(HUB_CACHE.keys().next().value);
+  return data;
+}
+
+/** How many creatives the filters as set now would show. For the Apply button. */
+async function hubCount() {
+  const p = hubParams();
+  p.delete('sort'); p.delete('dir');
+  p.set('limit', '0');
+  return (await fetchHub(p.toString())).total;
+}
+
+// What the grid is showing: the query, the creatives loaded so far in
+// order, the total, and where the next page starts.
+const HUB = { base: '', items: [], total: 0, nextOffset: null, pending: null, seq: 0, shownFor: null };
+
+/**
+ * Load the first page for the current filters, with the tiles.
+ *
+ * The cards already on screen stay there until the new ones arrive, and
+ * only dim if the answer takes longer than a moment, so a quick change
+ * never flashes.
+ */
+async function loadHub() {
+  const base = hubParams();
+  const first = new URLSearchParams(base);
+  first.set('limit', String(CARD_PAGE));
+  first.set('summary', '1');
+  const seq = ++HUB.seq;
+  const grid = document.getElementById('card-grid');
+  const row = document.getElementById('kpi-row');
+  const slow = setTimeout(() => {
+    if (seq !== HUB.seq) return;
+    grid && grid.classList.add('hub-busy');
+    row && row.classList.add('hub-busy');
+  }, 300);
+  try {
+    const data = await fetchHub(first.toString());
+    if (seq !== HUB.seq) return;
+    remember(data.items);
+    remember(data.summaryItems);
+    HUB.base = base.toString();
+    HUB.items = data.items.slice();
+    HUB.total = data.total;
+    HUB.nextOffset = data.nextOffset;
+    HUB.pending = null;
+    HUB.shownFor = BRAND_ID;
+    renderKPIs(data.summary);
+    renderCards();
+  } catch (err) {
+    if (seq !== HUB.seq) return;
+    console.error('[hub]', err);
+    if (grid) grid.innerHTML = `<div class="load-msg load-msg-error">Couldn't load the creatives. ${err.message}
+      <button class="load-retry" onclick="render()">Try again</button></div>`;
+  } finally {
+    clearTimeout(slow);
+    if (seq === HUB.seq) {
+      grid && grid.classList.remove('hub-busy');
+      row && row.classList.remove('hub-busy');
+    }
+  }
+}
+
+/** The next page for the grid as it is now. One request at a time; resolves false if the query changed. */
+function fetchNextPage() {
+  if (HUB.nextOffset === null) return Promise.resolve(false);
+  if (HUB.pending) return HUB.pending;
+  const seq = HUB.seq;
+  const p = new URLSearchParams(HUB.base);
+  p.set('offset', String(HUB.nextOffset));
+  p.set('limit', String(CARD_PAGE));
+  const pending = fetchHub(p.toString()).then(data => {
+    if (seq !== HUB.seq) return false;
+    remember(data.items);
+    // The server's build can move on between pages; never show a card twice.
+    const have = new Set(HUB.items.map(x => x.id));
+    HUB.items.push(...data.items.filter(x => !have.has(x.id)));
+    HUB.nextOffset = data.nextOffset;
+    HUB.total = data.total;
+    return true;
+  }).finally(() => { if (HUB.pending === pending) HUB.pending = null; });
+  HUB.pending = pending;
+  return pending;
+}
+
+function hookColor(v) { return v>=40?'#1F8A5B':v>=20?'#8A5E0F':'#C2414B'; }
 function cqrClass(c)  { return {Good:'good-bg',Average:'avg-bg',Poor:'poor-bg',Invalid:'inv-bg'}[c]||'inv-bg'; }
 
 /**
@@ -521,6 +775,11 @@ const STATE_SHORT = {
   'No Duration':   'No length on file',
   'No Watch Time': 'No watch time',
   'No Threshold':  'No benchmark set',
+  'No Reach':      'No reach yet',
+  'No Followers':  'No follower count',
+  'Not Rated':     'Not rated',
+  'Low Delivery':  'Under 10k impressions',
+  'Invalid Data':  'Missing data',
 };
 const STATE_WHY = {
   'Boosted':       'Spend is behind this post, so its organic numbers include paid delivery. The paid rating is the one that applies.',
@@ -530,6 +789,11 @@ const STATE_WHY = {
   'No Duration':   'The video length is missing, so retention cannot be worked out.',
   'No Watch Time': 'No average watch time came back, which is what the rating needs.',
   'No Threshold':  'No benchmark is set for this platform.',
+  'No Reach':      'No reach or views have come back yet. Photos and carousels are rated on engagement per person reached.',
+  'No Followers':  'No follower count came back for this account. Photos and carousels from creators are rated on engagement per follower.',
+  'Not Rated':     'The paid rating is built on video watch rates, so photos and carousels are not given one. Read them on spend and reach, and on the organic engagement rating.',
+  'Low Delivery':  'Fewer than 10,000 impressions so far, which is too few to rate. The hook and hold rates are shown, but they are not graded until delivery passes 10,000.',
+  'Invalid Data':  'The video length or the hook and hold numbers are missing, so this cannot be rated.',
 };
 const stateShort = (v) => STATE_SHORT[v] || v;
 
@@ -599,60 +863,22 @@ function paidState(d) {
 function fmt(n)  { return n>=1000000?'Rs. '+(n/1000000).toFixed(1)+'M':n>=1000?'Rs. '+(n/1000).toFixed(0)+'K':'Rs. '+n; }
 function fmtN(n) { return n>=1000000?(n/1000000).toFixed(1)+'M':n>=1000?(n/1000).toFixed(0)+'K':String(n); }
 
-// ---------------------------------------------------------------------
-//  Search
-//  Matches the creative ID, its short name, the creator, the campaign, and
-//  any of the three post links. Pasting a link from the address bar brings
-//  its own query string, and the stored link usually has a different one, so
-//  a plain substring check would miss. The identifying part of the URL is
-//  pulled out of both sides and compared instead.
-// ---------------------------------------------------------------------
-
-// instagram.com/reel/Dc6Vb-6zw5g/?utm_source=... -> dc6vb-6zw5g
-// tiktok.com/@vaseline_sl/video/7682474116825320712 -> 7682474116825320712
-function postKey(url) {
-  if (!url) return '';
-  const clean = String(url).split('?')[0].split('#')[0].replace(/\/+$/, '');
-  const segs = clean.split('/').filter(Boolean);
-  const last = segs[segs.length - 1] || '';
-  // Skip a trailing path word like "reel" or "video" with no id after it.
-  if (/^(reel|reels|video|videos|p|share|v)$/i.test(last)) return '';
-  return last.toLowerCase();
-}
-
-function matchesSearch(d, q) {
-  q = (q || '').trim().toLowerCase();
-  if (!q) return true;
-
-  const links = [d.igLink, d.fbLink, d.ttLink].filter(Boolean);
-
-  // If a URL was pasted, compare on the post id rather than the whole string.
-  const looksLikeUrl = /^https?:\/\//i.test(q) || /\.(com|net|org|me)\//i.test(q);
-  const qKey = postKey(q);
-  if (qKey && qKey.length > 4) {
-    if (links.some(l => postKey(l) === qKey)) return true;
-    if (links.some(l => String(l).toLowerCase().includes(qKey))) return true;
-    // A pasted link that matches no post is a miss, not a reason to fall
-    // through to substring matching on the domain.
-    if (looksLikeUrl) return false;
-  } else if (looksLikeUrl) {
-    // A URL with no identifiable post in it (".../reel/") would otherwise
-    // substring-match every creative on that platform.
-    return false;
-  }
-
-  const fields = [d.id, d.short, d.creatorProfile, d.campaign, ...links];
-  return fields.some(v => String(v || '').toLowerCase().includes(q));
-}
+// Search runs on the server now (searchMatcher in server/hub.js), which
+// also understands a pasted post link.
 
 function render() {
-  const data = getData();
-  if (currentPage === 'creatives') {
-    renderKPIs(data);
-    renderCards(data);
-  } else if (currentPage === 'kpi') {
-    if (typeof renderKpiTab === 'function') renderKpiTab(data);
-  }
+  if (currentPage === 'creatives') loadHub();
+  else if (currentPage === 'kpi' && typeof renderKpiTab === 'function') withLibrary('kpi', renderKpiTab);
+  else if (currentPage === 'creators' && typeof renderCreatorTab === 'function') withLibrary('creators', renderCreatorTab);
+}
+
+// Search waits for typing to pause, so each keystroke is not a request.
+// Enter searches at once.
+let searchTimer = null;
+function onSearchInput(e) {
+  clearTimeout(searchTimer);
+  if (e && e.key === 'Enter') return render();
+  searchTimer = setTimeout(render, 250);
 }
 
 /**
@@ -666,7 +892,7 @@ const KPI_RANK = { Good: 0, Average: 1, Poor: 2 };
 // The ranked five behind each named tile, filled by renderKPIs and read
 // by the drawer. Each entry is { d, grade, src } rather than a bare
 // creative, because the rating a tile ranked on is not always the one
-// stored on the creative — see ratedBy.
+// stored on the creative — see ratedBy in server/hub.js.
 const KPI_LISTS = { top: [], weak: [] };
 // What the drawer calls each list. Set by renderKPIs, because the weak
 // list's heading depends on whether anything was running to rank.
@@ -674,6 +900,8 @@ const KPI_HEADS = { top: '', weak: '' };
 
 /**
  * The best organic grade this creative earned, across its platforms.
+ * Media Summary and Creators use it; server/hub.js has the same rule for
+ * the tiles.
  *
  * Grades and states share one column, so a platform can come back
  * 'Boosted' or 'Too Early' where a rating would go. isGrade filters those
@@ -689,86 +917,28 @@ function bestOrganicGrade(d) {
   return isGrade(d.bestOrgCqr) ? d.bestOrgCqr : null;
 }
 
-/**
- * The rating to judge a creative on, and where it came from.
- *
- * Paid first: once there is spend behind a post its organic numbers
- * include paid delivery, so the paid rating is the only honest one. With
- * no spend there is no paid rating, and the organic one is all there is.
- *
- * Both named tiles used to rank on d.cqr, which is the paid rating alone.
- * On a brand that has not boosted anything yet that is undefined on every
- * creative, so both tiles read "Nothing to show" against a dashboard full
- * of rated creatives.
- */
-function ratedBy(d) {
-  if (isGrade(d.cqr)) return { d, grade: d.cqr, src: 'paid' };
-  const o = bestOrganicGrade(d);
-  return o ? { d, grade: o, src: 'organic' } : null;
-}
-
 const srcWord = (src) => src === 'paid' ? 'paid rating' : 'organic rating';
 
-function renderKPIs(data) {
-  const totalAssets = data.length;
-  const bsCount = data.filter(d => d.type === 'Brand Say').length;
-  const osCount = data.filter(d => d.type === 'Others Say').length;
-
-  // Three boost states. A creative switched off after running is not the
-  // same thing as one that never had spend, and "not boosted" read as both.
-  const running = data.filter(d => d.boostState === 'running').length;
-  const ended   = data.filter(d => d.boostState === 'ended').length;
-  const never   = data.filter(d => d.boostState === 'never').length;
-
-  // Views against views. Impressions counted a different thing from the
-  // organic figure beside it, so the two were never comparable.
-  let orgViews = 0;
-  data.forEach(d => {
-    if (d.igOrganic) orgViews += (d.igOrganic.views || 0);
-    if (d.fbOrganic) orgViews += (d.fbOrganic.videoViews || 0);
-    if (d.ttOrganic) orgViews += (d.ttOrganic.views || 0);
-  });
-  const paidViews = data.reduce((s, d) => s + (d.paidViews || 0), 0);
+/**
+ * The tiles, from the figures the server worked out for the filters as
+ * they are (summarize in server/hub.js). The named tiles' creatives came
+ * with the same response, so their drawer opens without another request.
+ */
+function renderKPIs(sum) {
+  sum = sum || {};
+  const totalAssets = sum.total || 0;
+  const bsCount = sum.brandSay || 0, osCount = sum.othersSay || 0;
+  const running = sum.running || 0, ended = sum.ended || 0, never = sum.never || 0;
+  const orgViews = sum.orgViews || 0, paidViews = sum.paidViews || 0;
   const viewTotal = orgViews + paidViews;
   const orgShare = viewTotal ? Math.round((orgViews / viewTotal) * 100) : 0;
+  const readyToBoost = sum.readyToBoost || 0;
+  const fatiguing = sum.fatiguing || 0;
 
-  const readyToBoost = data.filter(d => d.needsBoostWarning).length;
-  const fatiguing = data.filter(d => d.fatiguing && d.boostState === 'running').length;
-
-  const thisMonth = new Date().toISOString().slice(0, 7);
-  // Every creative that has a rating at all, paid or organic.
-  const rated = data.map(ratedBy).filter(Boolean);
-  const rk = r => KPI_RANK[r.grade];
-  const newest = (a, b) => String(b.d.date || '').localeCompare(String(a.d.date || ''));
-
-  // Five of each, kept for the drawer. The tile names the leader; the
-  // rest are one click away rather than another page.
-  //
-  // "This month" is the current calendar month by publish date, so early
-  // in a month this is a short list and in a quiet month an empty one.
-  KPI_LISTS.top = rated
-    .filter(r => (r.d.date || '').startsWith(thisMonth))
-    .sort((a, b) => rk(a) - rk(b) || (b.d.reach || 0) - (a.d.reach || 0))
-    .slice(0, 5);
-
-  // Worst first, then most recent. Deliberately NOT by spend: the figure
-  // on a creative is its lifetime spend, and most of that was spent while
-  // it was still performing. Showing it against a creative that has only
-  // just turned weak reads as money already wasted, which is not what
-  // happened.
-  //
-  // What is running on paid money comes first, because that is the one
-  // worth acting on today. With nothing boosted there is nothing live to
-  // rank, so the tile falls back to the weakest organically rated creative
-  // and renames itself instead of going blank.
-  const live = rated
-    .filter(r => r.src === 'paid' && r.d.boostState === 'running')
-    .sort((a, b) => rk(b) - rk(a) || newest(a, b));
-  const weakIsLive = live.length > 0;
-  KPI_LISTS.weak = weakIsLive ? live.slice(0, 5)
-    : rated.filter(r => r.src === 'organic')
-           .sort((a, b) => rk(b) - rk(a) || newest(a, b))
-           .slice(0, 5);
+  const entry = e => { const d = LOADED.get(e.id); return d ? { d, grade: e.grade, src: e.src } : null; };
+  KPI_LISTS.top = (sum.top || []).map(entry).filter(Boolean);
+  KPI_LISTS.weak = (sum.weak || []).map(entry).filter(Boolean);
+  const weakIsLive = !!sum.weakIsLive;
 
   KPI_HEADS.top = 'Best rated this month';
   KPI_HEADS.weak = weakIsLive
@@ -1000,13 +1170,15 @@ function cardMediaHTML(d) {
   const play = open ? `<button class="card-play" data-press title="Open on ${escapeHtml(links[0].name)}"
        aria-label="Open on ${escapeHtml(links[0].name)}"
        onclick="event.stopPropagation();window.open('${escapeHtml(open)}','_blank','noopener')"
-      >${playMark(13)}</button>` : '';
+      >${d.isStatic ? openMark(12) : playMark(13)}</button>` : '';
+  const stack = d.isStatic && d.slideCount > 1
+    ? `<span class="card-thumb-stack" title="${d.slideCount} slides">${d.slideCount}</span>` : '';
   const img = d.thumbnail
     ? `<img src="${escapeHtml(d.thumbnail)}" alt="" loading="lazy" onerror="this.remove()">`
     : '';
   return `<div class="card-thumb${d.thumbnail ? '' : ' card-thumb-none'}"
        ${d.thumbnail ? '' : 'title="No still frame on file for this creative"'}>
-    <span class="card-thumb-mark">${mark}</span>${img}${play}
+    <span class="card-thumb-mark">${mark}</span>${img}${stack}${play}
   </div>`;
 }
 
@@ -1014,6 +1186,13 @@ function platformLinks(d) {
   return PLATFORM_LINKS
     .filter(p => d[p.key])
     .map(p => ({ name: p.name, url: d[p.key] }));
+}
+
+// An arrow out, for photos and carousels: there is nothing to play.
+function openMark(size) {
+  return `<svg viewBox="0 0 24 24" width="${size}" height="${size}" aria-hidden="true">
+    <path d="M9 7h8v8M17 7 7.5 16.5" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
+  </svg>`;
 }
 
 // A play triangle. Same mark on the card and in the detail panel so the
@@ -1080,7 +1259,8 @@ function detailSummaryHTML(d) {
   const orgCells = ORG_PLATFORMS
     .filter(pl => d[pl.link] || d[pl.key])
     .map(pl => ({ label: pl.label, v: (d[pl.key] || {}).cqr || null }));
-  const paid = (d.cqr && d.cqr !== 'Invalid') ? d.cqr : null;
+  const paid = isGrade(d.cqr) ? d.cqr : null;
+  const paidNote = !paid && d.cqr && d.cqr !== 'Invalid' && d.cqr !== 'Not Rated' ? d.cqr : null;
 
   let status, statusCls, statusSub = '';
   if (ps.running.length) {
@@ -1107,7 +1287,7 @@ function detailSummaryHTML(d) {
                        : `<span class="dsum-plat-v dsum-plat-none">${o.v ? stateShort(o.v) : '—'}</span>`}</span>`
         ).join('')}</div>` : `<div class="dsum-val dsum-quiet">Not rated</div>`}
     </div>
-    ${cell('Paid CQR', paid || (d.boostState === 'never' ? 'No spend yet' : 'Not rated'),
+    ${cell('Paid CQR', paid || (paidNote ? stateShort(paidNote) : (d.boostState === 'never' ? 'No spend yet' : 'Not rated')),
            paid ? 'dsum-' + cqrClass(paid) : 'dsum-quiet')}
     ${cell('Pre-test Score', d.bsScore === null || d.bsScore === undefined ? 'Not scored' : d.bsScore,
            d.bsScore === null || d.bsScore === undefined ? 'dsum-quiet' : '',
@@ -1169,9 +1349,81 @@ function validationStrip(d, platformNames) {
   </div>`;
 }
 
-function renderCards(data) {
-  document.getElementById('grid-count').textContent = `${data.length} creatives`;
-  document.getElementById('card-grid').innerHTML = data.map(d => {
+// ---------------------------------------------------------------------
+//  The grid, a page at a time
+//
+//  The server sends CARD_PAGE creatives per request. The next page is
+//  asked for as soon as one is drawn, so it is usually already here by
+//  the time the end of the grid comes into view, or the button under it
+//  is pressed.
+// ---------------------------------------------------------------------
+const CARD_PAGE = 48;
+let CARD_SHOWN = 0, cardObserver = null, appending = false;
+
+function renderCards() {
+  document.getElementById('grid-count').textContent =
+    `${HUB.total.toLocaleString()} creative${HUB.total === 1 ? '' : 's'}`;
+  CARD_SHOWN = 0;
+  document.getElementById('card-grid').innerHTML = '';
+  appendCards();
+}
+
+async function appendCards() {
+  const grid = document.getElementById('card-grid');
+  if (!grid || appending) return;
+  appending = true;
+  const seq = HUB.seq;
+  try {
+    if (CARD_SHOWN >= HUB.items.length && HUB.nextOffset !== null) {
+      paintMore('loading');
+      if (!(await fetchNextPage()) || seq !== HUB.seq) return;
+    }
+    const next = HUB.items.slice(CARD_SHOWN, CARD_SHOWN + CARD_PAGE);
+    grid.insertAdjacentHTML('beforeend', next.map(cardHTML).join(''));
+    CARD_SHOWN += next.length;
+    paintMore();
+    // Ahead of need, so scrolling rarely waits.
+    if (HUB.items.length - CARD_SHOWN < CARD_PAGE) fetchNextPage().catch(() => {});
+  } catch (err) {
+    console.error('[hub] next page failed', err);
+    if (seq === HUB.seq) paintMore('error');
+  } finally {
+    appending = false;
+  }
+}
+
+/** The row under the grid: progress, a button, and what the observer watches. */
+function paintMore(state) {
+  const grid = document.getElementById('card-grid');
+  let more = document.getElementById('card-more');
+  const done = CARD_SHOWN >= HUB.items.length && HUB.nextOffset === null;
+  if (done) {
+    if (more) more.remove();
+    return;
+  }
+  if (!more) {
+    more = document.createElement('div');
+    more.id = 'card-more';
+    more.className = 'card-more';
+    grid.after(more);
+  }
+  const shown = `Showing ${CARD_SHOWN.toLocaleString()} of ${HUB.total.toLocaleString()}`;
+  more.innerHTML = state === 'error'
+    ? `<button class="card-more-btn" data-press onclick="appendCards()">Try again</button>
+       <span>Couldn't load more. ${shown}</span>`
+    : `<button class="card-more-btn" data-press onclick="appendCards()"${state === 'loading' ? ' disabled' : ''}>${
+        state === 'loading' ? 'Loading…' : 'Show more'}</button>
+       <span>${shown}</span>`;
+  if (state || !('IntersectionObserver' in window)) return;
+  if (!cardObserver) cardObserver = new IntersectionObserver(entries => {
+    if (entries.some(e => e.isIntersecting)) appendCards();
+  }, { rootMargin: '600px 0px' });
+  cardObserver.disconnect();
+  cardObserver.observe(more);
+}
+
+function cardHTML(d) {
+  {
 
 
     const kidCount = repurposesOf(d.id).length;
@@ -1179,15 +1431,17 @@ function renderCards(data) {
       ? `<span class="tag-repurposed">Repurposed</span>`
       : (kidCount ? `<span class="tag-lineage">${kidCount} repurposed</span>` : '');
     const valTag  = d.isValidated  ? `<span class="tag-validated">✓ Validated</span>` : '';
-    const durTag  = d.duration     ? `<span class="tag-duration">${fmtDur(d.duration)}</span>` : '';
+    const durTag  = d.isStatic
+      ? (d.slideCount > 1 ? `<span class="tag-duration">${d.slideCount} slides</span>` : '')
+      : (d.duration ? `<span class="tag-duration">${fmtDur(d.duration)}</span>` : '');
     const ctTag   = d.contentType  ? `<span class="tag-content-type">${d.contentType}</span>` : '';
 
     // Type and sub-type in one chip. BS, Creator-led and Community page
     // used to sit as three separate chips saying one thing between them.
     const isBS = d.type === 'Brand Say';
     const typeText = isBS
-      ? (d.creatorLed ? 'BS · Creator-led' : 'BS')
-      : (d.source === 'community' ? 'OS · Community' : 'OS');
+      ? (d.creatorLed ? 'Brand Say · Creator-led' : 'Brand Say')
+      : (d.source === 'community' ? 'Others Say · Community' : 'Others Say · Creator');
 
     // Per platform: what it did, and how it was rated.
     //
@@ -1268,43 +1522,37 @@ function renderCards(data) {
     // creator-led Brand Say is fronted by one, so both carry a handle the
     // card never showed: two posts from very different accounts were
     // indistinguishable until you opened them.
-    const ci = (d.type === 'Others Say' || d.creatorLed) && typeof extractCreatorInfo === 'function'
-      ? extractCreatorInfo(d.creatorProfile, d.ttLink) : null;
-    const creatorTag = ci && ci.username
-      ? `<div class="card-creator" title="${escapeHtml(ci.username)}">${escapeHtml(ci.username)}</div>` : '';
+    const ci = (d.type === 'Others Say' || d.creatorLed) ? creatorInfo(d) : null;
+    // Always drawn, empty when there is no creator, so every card keeps the
+    // same rows and the grid stays even.
+    const creatorTag = `<div class="card-creator"${ci && ci.username ? ` title="${escapeHtml(ci.username)}"` : ''}>${
+      ci && ci.username ? escapeHtml(ci.username) : ''}</div>`;
 
 
+    // Three fixed zones (who and what, the ratings, the state) so every card
+    // in the grid is the same height whatever it carries.
+    const ratings = (orgBlock || paidVals) ? `<div class="card-ratings">
+        <div class="card-cqr"><div class="card-cqr-head">Organic</div>${orgBlock || '<span class="card-cqr-state">No numbers yet</span>'}</div>
+        <div class="card-cqr"><div class="card-cqr-head">Paid</div>${paidVals || '<span class="card-cqr-state">Not on paid</span>'}</div>
+      </div>` : '';
     return `<div class="card ${d.id===selectedId?'selected':''}" data-press onclick="selectCard('${d.id}', this)">
-      <div class="card-top">
-        <div style="display:flex;align-items:center;gap:6px;flex-wrap:wrap">
-          <span class="card-type ${isBS?'bs-tag':'os-tag'}">${typeText}</span>${repTag}
-        </div>
-      </div>
       <div class="card-head">
         ${cardMediaHTML(d)}
         <div class="card-ident">
-          <div class="card-name">${d.short || d.id}</div>
-          <div class="card-id" title="${escapeHtml(d.id)}">${d.short && d.short !== d.id ? d.id : ''}</div>
+          <div class="card-type-line">${typeText}${repTag}</div>
+          <div class="card-name" title="${escapeHtml(d.id)}">${d.short || d.id}</div>
           <div class="card-campaign">${d.campaign} · ${d.month}</div>
           ${creatorTag}
           <div class="card-tags">${durTag}${ctTag}${valTag}</div>
         </div>
       </div>
-      ${validating}
-      ${orgBlock ? `<div class="card-cqr">
-        <div class="card-cqr-head">Organic</div>
-        ${orgBlock}
-      </div>` : ''}
-      ${paidVals ? `<div class="card-cqr">
-        <div class="card-cqr-head">Paid</div>
-        ${paidVals}
-      </div>` : ''}
+      <div class="card-mid">${validating || ratings || '<div class="card-mid-empty">No numbers yet</div>'}</div>
     <div class="card-footer">
       ${statusPill(d)}
       ${typeof PreTest !== 'undefined' ? PreTest.cardBadge(d) : ''}
     </div>
     </div>`;
-  }).join('');
+  }
 }
 
 let retChart = null, radarChart = null;
@@ -1395,9 +1643,147 @@ function showCreativePanel(trigger) {
   installModalDrag();
 }
 
-function selectCard(id, trigger) {
-  const item = ALL.find(d => d.id === id);
-  if (!item) return;
+// ---------------------------------------------------------------------
+//  Panel-only fields, fetched when needed
+//
+//  The list leaves out the scene timeline, the brief and the
+//  recommendation text, which only the panel reads, and the creative's
+//  lineage. They are fetched the first time a creative is opened and
+//  merged into it, so a second open is instant.
+// ---------------------------------------------------------------------
+function applyDetail(d, det) {
+  const { _meta, _tt, lineage, ...rest } = det;
+  Object.assign(d, rest);
+  if (_meta && d._meta) Object.assign(d._meta, _meta);
+  if (_tt && d._tt) Object.assign(d._tt, _tt);
+  d._lineage = lineage || null;
+  d._detail = true;
+}
+
+// A creative can be held twice: as a hub card (LOADED) and in the library
+// Media Summary and Creators use (ALL). Details go on every copy, or a
+// caller waiting on its own copy never sees them arrive.
+function copiesOf(id) {
+  const out = [];
+  const hub = LOADED.get(id);
+  if (hub) out.push(hub);
+  const lib = (ALL || []).find(x => x.id === id);
+  if (lib && lib !== hub) out.push(lib);
+  return out;
+}
+
+async function ensureDetails(ids) {
+  const want = ids.filter(id => {
+    if (DETAILS.has(id)) {
+      for (const d of copiesOf(id)) if (!d._detail) applyDetail(d, DETAILS.get(id));
+      return false;
+    }
+    return copiesOf(id).some(d => !d._detail);
+  });
+  if (!want.length) return;
+  for (let i = 0; i < want.length; i += 200) {
+    const chunk = want.slice(i, i + 200);
+    const r = await fetch('/api/creative-details?ids=' + chunk.map(encodeURIComponent).join(','));
+    if (!r.ok) throw new Error(`details ${r.status}`);
+    const { details } = await r.json();
+    for (const id of chunk) {
+      // Marked fetched even when the server had nothing for it, so a
+      // creative with no details is not asked for again on every open.
+      const det = details[id] || {};
+      DETAILS.set(id, det);
+      for (const d of copiesOf(id)) applyDetail(d, det);
+      if (det.lineage) remember([det.lineage.origin, ...(det.lineage.repurposes || [])].filter(Boolean));
+    }
+  }
+}
+
+function panelSkeleton() {
+  return `<div class="cm-body" aria-busy="true">
+    <div class="sk" style="height:22px;width:45%;margin-bottom:10px"></div>
+    <div class="sk" style="height:14px;width:30%;margin-bottom:22px"></div>
+    <div class="sk" style="height:84px;margin-bottom:16px"></div>
+    <div class="sk" style="height:220px;margin-bottom:16px"></div>
+    <div class="sk" style="height:160px"></div>
+  </div>`;
+}
+
+// Previous and next step through the grid as it is filtered and sorted
+// now, without closing the panel.
+function panelNavHTML(id) {
+  const i = HUB.items.findIndex(x => x.id === id);
+  if (i < 0 || HUB.total < 2) return '';
+  const btn = (dir, label, on, path) => `<button class="detail-step" data-press aria-label="${label}" ${on ? '' : 'disabled'}
+      onclick="panelStep(${dir})"><svg viewBox="0 0 12 12" width="14" height="14"><path d="${path}"/></svg></button>`;
+  return btn(-1, 'Previous creative', i > 0, 'M7.5 2.5 4 6l3.5 3.5') +
+    `<span class="detail-pos">${(i + 1).toLocaleString()} of ${HUB.total.toLocaleString()}</span>` +
+    btn(1, 'Next creative', i < HUB.total - 1, 'M4.5 2.5 8 6 4.5 9.5');
+}
+
+async function panelStep(dir) {
+  const from = panelFor;
+  const i = HUB.items.findIndex(x => x.id === from);
+  if (i < 0) return;
+  // Past the last loaded creative, the next page comes first.
+  if (!HUB.items[i + dir] && dir > 0) {
+    try { await fetchNextPage(); } catch (e) { return toast("Couldn't load the next creative.", 'error'); }
+    if (panelFor !== from) return;
+  }
+  const next = HUB.items[i + dir];
+  if (!next) return;
+  // Keep the grid behind the panel in step, so closing lands on it.
+  while (CARD_SHOWN <= i + dir && CARD_SHOWN < HUB.items.length) {
+    const before = CARD_SHOWN;
+    await appendCards();
+    if (CARD_SHOWN === before) break;
+  }
+  selectedId = next.id;
+  document.querySelectorAll('#card-grid .card.selected').forEach(c => c.classList.remove('selected'));
+  const card = document.querySelector(`#card-grid .card[onclick*="selectCard('${next.id}'"]`);
+  if (card) card.classList.add('selected');
+  openPanelFor(next);
+  const panel = document.getElementById('creativeModalContent');
+  if (panel) panel.scrollTop = 0;
+}
+
+document.addEventListener('keydown', (e) => {
+  const overlay = document.getElementById('creativeModalOverlay');
+  if (!overlay || overlay.style.display !== 'flex' || !panelFor) return;
+  if (e.target.closest && e.target.closest('input,textarea,select,[contenteditable]')) return;
+  if (e.key === 'ArrowRight') { e.preventDefault(); panelStep(1); }
+  if (e.key === 'ArrowLeft') { e.preventDefault(); panelStep(-1); }
+});
+
+let panelFor = null;
+function openPanelFor(item) {
+  const id = item.id;
+  panelFor = id;
+  const fill = () => {
+    if (panelFor !== id) return;   // another creative was opened meanwhile
+    try {
+      renderDetail(item);
+    } catch (err) {
+      console.error('[hub] renderDetail failed, panel still opened', err);
+    }
+  };
+  if (item._detail) fill();
+  else {
+    document.getElementById('creativeModalContent').innerHTML = panelSkeleton();
+    ensureDetails([id]).catch(err => console.error('[hub] details failed, showing what the list has', err)).then(fill);
+  }
+}
+
+async function selectCard(id, trigger) {
+  let item = LOADED.get(id);
+  // Opened from somewhere other than the grid (Ask Lens, a lineage row,
+  // another page) before any page carried it.
+  if (!item) {
+    try {
+      const r = await fetch('/api/creatives?ids=' + encodeURIComponent(id));
+      if (r.ok) remember((await r.json()).items);
+    } catch (e) { console.error('[hub] could not load', id, e); }
+    item = LOADED.get(id);
+  }
+  if (!item) return toast("Couldn't find that creative.", 'error');
   const { overlay } = modalEls();
   overlay.style.display = 'flex';
   // The panel opens whatever happens while filling it. renderDetail
@@ -1405,11 +1791,7 @@ function selectCard(id, trigger) {
   // throw in there used to abort this function before the animation
   // started, leaving a panel on screen at scale 0.94 with a transparent
   // scrim: invisible, but covering the page and swallowing clicks.
-  try {
-    renderDetail(item);
-  } catch (err) {
-    console.error('[hub] renderDetail failed, panel still opened', err);
-  }
+  openPanelFor(item);
   showCreativePanel(trigger);
 }
 
@@ -1513,19 +1895,33 @@ function installModalDrag() {
   panel.addEventListener('pointercancel', release);
 }
 
-function getMetricsHTML(item, titleLabel) {
+function getMetricsHTML(item, titleLabel, isStatic) {
   if (!item) return '';
-  const cqrColorClass = item.cqr === 'Good' ? 'cqr-good' : (item.cqr === 'Average' ? 'cqr-avg' : 'cqr-poor');
+  if (isStatic) {
+    // No video, so no hook or hold rate and no rating built on them.
+    const cpm = item.impressions > 0 ? item.spend / item.impressions * 1000 : null;
+    return `
+    <div style="margin-bottom:12px;">
+      <div style="font-size:11px;font-weight:700;color:var(--c-muted);margin-bottom:6px;text-transform:uppercase;">${titleLabel} Paid Stats</div>
+      <div class="detail-metrics" style="margin-bottom:6px;">
+        <div class="dm"><div class="dm-label">Spend</div><div class="dm-val">${fmt(item.spend)}</div></div>
+        <div class="dm"><div class="dm-label">Reach</div><div class="dm-val">${fmtN(item.reach)}</div><div style="font-size:10px;color:var(--c-muted);margin-top:2px;">Impr: ${fmtN(item.impressions)}</div></div>
+        <div class="dm"><div class="dm-label">CPM</div><div class="dm-val">${cpm === null ? '—' : fmt(Math.round(cpm))}</div></div>
+        <div class="dm"><div class="dm-label">Paid CQR</div><div class="dm-val dsum-quiet" title="${escapeHtml(STATE_WHY['Not Rated'])}">Not rated</div><div style="font-size:10px;color:var(--c-muted);margin-top:2px;">Video-only rating</div></div>
+      </div>
+    </div>`;
+  }
+  const cqrColorClass = item.cqr === 'Good' ? 'cqr-good' : (item.cqr === 'Average' ? 'cqr-avg' : (item.cqr === 'Poor' ? 'cqr-poor' : 'dsum-quiet'));
   const hlValFormatted = item.holdRate >= 1000 ? (item.holdRate/1000).toFixed(1)+'K' : (item.holdRate||0).toFixed(1);
   const durLabel = item.duration ? `<div style="font-size:10px;color:var(--c-muted);margin-top:3px;">Duration: ${fmtDur(item.duration)}</div>` : '';
   return `
     <div style="margin-bottom:12px;">
       <div style="font-size:11px;font-weight:700;color:var(--c-muted);margin-bottom:6px;text-transform:uppercase;">${titleLabel} Paid Stats</div>
       <div class="detail-metrics" style="margin-bottom:6px;">
-        <div class="dm"><div class="dm-label">CQR</div><div class="dm-val big-cqr ${cqrColorClass}">${item.cqr||'—'}</div>${durLabel}</div>
+        <div class="dm"><div class="dm-label">CQR</div><div class="dm-val big-cqr ${cqrColorClass}" title="${escapeHtml(STATE_WHY[item.cqr] || '')}">${isGrade(item.cqr) ? item.cqr : (item.cqr ? escapeHtml(stateShort(item.cqr)) : '—')}</div>${durLabel}</div>
         <div class="dm"><div class="dm-label">Spend &amp; Reach</div><div class="dm-val">${fmt(item.spend)}</div><div style="font-size:10px;color:var(--c-muted);margin-top:2px;">Reach: ${fmtN(item.reach)} | Impr: ${fmtN(item.impressions)}</div></div>
         <div class="dm"><div class="dm-label">Hook Rate</div><div class="dm-val" style="color:${hookColor(item.hookRate)}">${(item.hookRate||0).toFixed(1)}%</div><div><span class="kpi-pill ${cqrClass(item.hookQual)}">${item.hookQual||'—'}</span></div></div>
-        <div class="dm"><div class="dm-label">Hold Rate</div><div class="dm-val" style="color:#000050">${hlValFormatted}</div><div><span class="kpi-pill ${cqrClass(item.holdQual)}">${item.holdQual||'—'}</span></div></div>
+        <div class="dm"><div class="dm-label">Hold Rate</div><div class="dm-val" style="color:var(--ink-900)">${hlValFormatted}</div><div><span class="kpi-pill ${cqrClass(item.holdQual)}">${item.holdQual||'—'}</span></div></div>
       </div>
     </div>`;
 }
@@ -1588,7 +1984,7 @@ function getRecHTML(item, titleLabel) {
   if (!item) return '';
   if (item.recommendation) {
     const isActioned = item.actionStatus && item.actionStatus.toLowerCase() === 'actioned';
-    // Only the admin (role='admin') or a client user (not internal WPP/agency
+    // Only the admin (role='admin') or a client user (not internal agency
     // staff) may mark a recommendation actioned and assign it to an agency.
     // Everyone else sees the same pending state with no way to act on it.
     const canAssignAgency = CURRENT_ROLE === 'admin' || !CURRENT_IS_INTERNAL;
@@ -1615,7 +2011,8 @@ function buildOrganicHTML(d) {
 
   const igBox = !ig ? `<div class="organic-box"><div class="organic-platform">Instagram</div><div class="organic-empty">No data</div></div>` : `<div class="organic-box">
     <div class="organic-platform">Instagram</div>
-    <div class="organic-stat-row"><span class="organic-stat-label">Views</span><span class="organic-stat-val">${fmtN(ig.views||0)}</span></div>
+    ${d.isStatic && !ig.views ? '' : `<div class="organic-stat-row"><span class="organic-stat-label">Views</span><span class="organic-stat-val">${fmtN(ig.views||0)}</span></div>`}
+    ${d.isStatic && ig.reach ? `<div class="organic-stat-row"><span class="organic-stat-label">Reach</span><span class="organic-stat-val">${fmtN(ig.reach)}</span></div>` : ''}
     <div class="organic-stat-row"><span class="organic-stat-label">Likes</span><span class="organic-stat-val">${fmtN(ig.likes||0)}</span></div>
     <div class="organic-stat-row"><span class="organic-stat-label">Comments</span><span class="organic-stat-val">${fmtN(ig.comments||0)}</span></div>
     <div class="organic-stat-row"><span class="organic-stat-label">Saves</span><span class="organic-stat-val">${fmtN(ig.saves||0)}</span></div>
@@ -1627,7 +2024,8 @@ function buildOrganicHTML(d) {
 
   const fbBox = !fb ? `<div class="organic-box"><div class="organic-platform">Facebook</div><div class="organic-empty">No data</div></div>` : `<div class="organic-box">
     <div class="organic-platform">Facebook</div>
-    <div class="organic-stat-row"><span class="organic-stat-label">Video Views</span><span class="organic-stat-val">${fmtN(fb.videoViews||0)}</span></div>
+    ${d.isStatic && !fb.videoViews ? '' : `<div class="organic-stat-row"><span class="organic-stat-label">${d.isStatic ? 'Views' : 'Video Views'}</span><span class="organic-stat-val">${fmtN(fb.videoViews||0)}</span></div>`}
+    ${d.isStatic && fb.reach ? `<div class="organic-stat-row"><span class="organic-stat-label">Reach</span><span class="organic-stat-val">${fmtN(fb.reach)}</span></div>` : ''}
     <div class="organic-stat-row"><span class="organic-stat-label">Reactions</span><span class="organic-stat-val">${fmtN(fb.reactions||0)}</span></div>
     <div class="organic-stat-row"><span class="organic-stat-label">Comments</span><span class="organic-stat-val">${fmtN(fb.comments||0)}</span></div>
     <div class="organic-stat-row"><span class="organic-stat-label">Shares</span><span class="organic-stat-val">${fmtN(fb.shares||0)}</span></div>
@@ -1821,7 +2219,7 @@ function buildValidationHTML(v) {
   // What a planner needs from this panel is the same three things either
   // way: what the audience did, where it places against the brand's own
   // output, and whether to act. All three survive without the arithmetic.
-  const DIM_COLOUR = (pct) => pct >= 70 ? '#04785C' : pct >= 40 ? '#C07A12' : '#A32040';
+  const DIM_COLOUR = (pct) => pct >= 70 ? '#1F8A5B' : pct >= 40 ? '#C4891A' : '#C2414B';
   const ord = (n) => ordinal(n);
 
   // Each dimension as a rank. The faint mark at the midpoint is the
@@ -1897,7 +2295,10 @@ function buildValidationHTML(v) {
         ${p.not_working ? `<div class="orgval-line"><b>Not working</b> ${esc(p.not_working)}</div>` : ''}
       </div>` : '';
 
-    return `${thin}${summary}${dimBars(dims)}${wn}`;
+    const against = p.rated_against
+      ? `<div class="orgval-line orgval-muted">${esc(p.rated_against)}</div>` : '';
+
+    return `${thin}${summary}${dimBars(dims)}${wn}${against}`;
   };
 
   // "Boost — " with nothing after the dash is what an empty recommendation
@@ -1998,7 +2399,50 @@ function buildValidationHTML(v) {
   return `${split}${flags}<div class="orgval-grid">${platBlocks}</div>${winners}`;
 }
 
+/** The brief for a photo or carousel: what each slide shows. */
+function buildSlidesBriefHTML(d) {
+  const slides = Array.isArray(d.slides) ? d.slides : [];
+  if (!d.contentHook && !slides.length) return '';
+  const esc = s => String(s ?? '').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
+  const FORMAT_LABEL = {
+    product_demo:'Product demo', testimonial:'Testimonial', lifestyle:'Lifestyle', tutorial:'Tutorial',
+    ugc:'UGC', animation:'Graphic design', other:'Other',
+  };
+  const ROLE_LABEL = {
+    hero:'Product is the subject', featured:'Product featured',
+    incidental:'Product incidental', absent:'Product not shown',
+  };
+  const many = (d.slideCount || slides.length) > 1;
+  const metaBits = [
+    FORMAT_LABEL[d.format] ? `<span class="brief-tag">${FORMAT_LABEL[d.format]}</span>` : '',
+    ROLE_LABEL[d.productRole] ? `<span class="brief-tag brief-tag-quiet">${ROLE_LABEL[d.productRole]}</span>` : '',
+    `<span class="brief-tag brief-tag-quiet">${many ? `${d.slideCount || slides.length} slides` : 'Single image'}</span>`,
+  ].filter(Boolean).join('');
+  const more = d.slideCount && d.slideCount > slides.length
+    ? `<div class="brief-note">The first ${slides.length} of ${d.slideCount} slides are shown.</div>` : '';
+  const rows = slides.map(sl => `<div class="brief-slide">
+      <div class="brief-slide-img">${sl.image
+        ? `<img src="${esc(sl.image)}" alt="Slide ${sl.i}" loading="lazy" onerror="this.remove()">` : ''}
+        ${sl.type === 'video' ? '<span class="brief-slide-vid">Video</span>' : ''}</div>
+      <div class="brief-slide-body">
+        <div class="brief-slide-n">${many ? `Slide ${sl.i}` : 'Image'}</div>
+        <div class="brief-scene-text">${sl.d ? esc(sl.d) : '<span style="color:var(--c-muted)">Not described.</span>'}</div>
+      </div>
+    </div>`).join('');
+  return `
+    <details class="org-details" style="margin-top:12px;">
+      <summary class="org-summary">Creative Brief <span style="color:var(--c-muted);font-size:10px;">Click to expand ▼</span></summary>
+      <div class="org-content">
+        ${metaBits ? `<div class="brief-tags">${metaBits}</div>` : ''}
+        ${d.formatNote ? `<div class="brief-note">${esc(d.formatNote)}</div>` : ''}
+        ${d.contentHook ? `<div class="brief-hook"><span class="brief-hook-label">${many ? 'First slide' : 'Hook'}</span><div class="brief-hook-text">${esc(d.contentHook)}</div></div>` : ''}
+        ${rows ? `<div class="brief-timeline-head"><span class="brief-hook-label">${many ? 'Slide by slide' : 'The image'}</span></div><div class="brief-slides">${rows}</div>${more}` : ''}
+      </div>
+    </details>`;
+}
+
 function buildCreativeBriefHTML(d) {
+  if (d.isStatic) return buildSlidesBriefHTML(d);
   const timeline = Array.isArray(d.timeline) ? d.timeline : [];
   const hasQuartiles = d.segments && d.segments.length > 0;
   if (!d.contentHook && !timeline.length && !hasQuartiles) return '';
@@ -2070,14 +2514,16 @@ function fmtBriefTs(t) {
 
 // ── Lineage ───────────────────────────────────────────────────────────────────
 // Repurposed assets carry extractedOrigId pointing back at their source.
+// Both come with the creative's details, worked out by the server over
+// the whole brand (creativeDetails in creatives.js).
 function repurposesOf(id) {
-  if (!id || typeof ALL === 'undefined') return [];
-  return ALL.filter(x => x.isRepurposed && x.extractedOrigId === id);
+  const d = id && LOADED.get(id);
+  return (d && d._lineage && d._lineage.repurposes) || [];
 }
 
 function originOf(d) {
-  if (!d.isRepurposed || !d.extractedOrigId || typeof ALL === 'undefined') return null;
-  return ALL.find(x => x.id === d.extractedOrigId) || null;
+  if (!d.isRepurposed || !d.extractedOrigId) return null;
+  return (d._lineage && d._lineage.origin) || null;
 }
 
 function lineageRow(x) {
@@ -2126,10 +2572,10 @@ function renderDetail(d) {
   const platLabel = d.platform === 'both' ? 'Meta & TikTok' : (d.platform==='tiktok'?'TikTok':'Meta');
   let statsHTML = '', recsHTML = '';
   if (d.platform === 'both') {
-    statsHTML = getMetricsHTML(d._meta, 'Meta') + getMetricsHTML(d._tt, 'TikTok');
+    statsHTML = getMetricsHTML(d._meta, 'Meta', d.isStatic) + getMetricsHTML(d._tt, 'TikTok', d.isStatic);
     recsHTML  = getRecHTML(d._meta, 'Meta') + getRecHTML(d._tt, 'TikTok');
   } else {
-    statsHTML = getMetricsHTML(d, d.platform==='meta'?'Meta':'TikTok');
+    statsHTML = getMetricsHTML(d, d.platform==='meta'?'Meta':'TikTok', d.isStatic);
     recsHTML  = getRecHTML(d, d.platform==='meta'?'Meta':'TikTok');
   }
 
@@ -2153,7 +2599,7 @@ function renderDetail(d) {
       ${previewLink ? `<button class="detail-play" data-press title="Open on ${escapeHtml(previewLink.name)}"
          aria-label="Open on ${escapeHtml(previewLink.name)}"
          onclick="window.open('${escapeHtml(previewLink.url)}','_blank','noopener')"
-        >${playMark(26)}</button>` : ''}
+        >${d.isStatic ? openMark(22) : playMark(26)}</button>` : ''}
     </div>` : '';
 
   let valUI = '';
@@ -2167,7 +2613,7 @@ function renderDetail(d) {
 
   let creatorHTML = '';
   if (d.type === 'Others Say') {
-    const creator = extractCreatorInfo(d.creatorProfile, d.ttLink);
+    const creator = creatorInfo(d);
     if (creator) {
       const linkEl = creator.profileUrl
         ? `<a href="${creator.profileUrl}" target="_blank" class="creator-link">${creator.username} ↗</a>`
@@ -2177,19 +2623,21 @@ function renderDetail(d) {
   }
 
   const metaParts = [platLabel, d.campaign, d.month];
-  if (d.duration) metaParts.push(fmtDur(d.duration));
-  if (d.contentType) metaParts.push(d.contentType);
+  if (d.duration && !d.isStatic) metaParts.push(fmtDur(d.duration));
+  if (d.contentType) metaParts.push(d.contentType + (d.isStatic && d.slideCount > 1 ? ` of ${d.slideCount} slides` : ''));
 
   document.getElementById('creativeModalContent').innerHTML = `
     <div class="cm-body">
       <div class="detail-header">
         <div>
-          <div class="detail-title">${d.short}<span class="card-type ${d.type==='Brand Say'?'bs-tag':'os-tag'}" style="margin-left:6px">${d.type}</span>${d.source==='community'?'<span class="card-type community-tag" style="margin-left:4px">Community page</span>':''}${d.creatorLed?'<span class="card-type creator-led-tag" style="margin-left:4px">Creator-led</span>':''}${valUI}</div>
+          <div class="detail-title">${d.short}<span class="card-type ${d.type==='Brand Say'?'bs-tag':'os-tag'}" style="margin-left:6px">${d.type}</span>${d.source==='community'?'<span class="card-type community-tag" style="margin-left:4px">Community</span>':''}${d.creatorLed?'<span class="card-type creator-led-tag" style="margin-left:4px">Creator-led</span>':''}${valUI}</div>
           <div class="detail-meta">${metaParts.join(' · ')}</div>
           ${creatorHTML}${repText}${linkBtns}
         </div>
         ${previewHTML}
-        <button class="close-btn" data-press onclick="closeCreativeModal({target:{id:'creativeModalOverlay'}})">×</button>
+        <div class="detail-nav">${panelNavHTML(d.id)}
+          <button class="close-btn" data-press aria-label="Close" onclick="closeCreativeModal({target:{id:'creativeModalOverlay'}})">×</button>
+        </div>
       </div>
 
       ${detailSummaryHTML(d)}
@@ -2215,10 +2663,10 @@ function renderDetail(d) {
 
       <div style="margin-top:14px">${recsHTML}</div>
 
-      <div class="charts-row" style="margin-top:14px;">
+      ${d.isStatic ? '' : `<div class="charts-row" style="margin-top:14px;">
         <div class="chart-box"><div class="chart-box-title">Retention drop-off</div><div class="chart-container" style="height:160px"><canvas id="retChart"></canvas></div></div>
         <div class="chart-box"><div class="chart-box-title">Performance radar</div><div class="chart-container" style="height:160px"><canvas id="radarChart"></canvas></div></div>
-      </div>
+      </div>`}
     </div>`;
 
   // Organic opens by default now, and ontoggle only fires when the open
@@ -2226,11 +2674,13 @@ function renderDetail(d) {
   const openOrg = document.querySelector('#creativeModalContent details.org-details[open]');
   if (openOrg) loadOrganicValidation(openOrg, d.id);
 
-  if (retChart)   retChart.destroy();
-  if (radarChart) radarChart.destroy();
+  if (retChart)   { retChart.destroy(); retChart = null; }
+  if (radarChart) { radarChart.destroy(); radarChart = null; }
+  // A photo or carousel has no retention curve and no hook or hold rate.
+  if (d.isStatic) return;
 
-  const gc = '#DCDCE6';   // gridlines, line-200
-  const tc = '#6B6B90';   // axis labels, ink-400
+  const gc = '#E4E6EA';   // gridlines, line-200
+  const tc = '#8A909B';   // axis labels, ink-400
   const norm = v => Math.min(Math.round(v), 100);
 
   const retDatasets = [], radDatasets = [];
@@ -2306,12 +2756,12 @@ function closeActionModal() {
 async function confirmAction() {
   const name   = CURRENT_USER;
   const agency = document.getElementById('actionAgencyInput').value;
-  if (!agency) return alert("Please select an agency.");
+  if (!agency) return toast("Please select an agency.", 'error');
   const btn = document.getElementById('modalConfirmBtn');
   const origText = btn.innerText;
   btn.innerText = 'Updating...'; btn.disabled = true;
   try {
-    const creative = ALL.find(c => c.id === pendingAction.id);
+    const creative = findCreative(pendingAction.id);
     const platform = pendingAction.platform === 'Meta' ? 'meta' : 'tiktok';
     const sourceItem = platform === 'meta' ? (creative._meta || creative) : (creative._tt || creative);
     const dateStr = new Date().toISOString().slice(0, 10);
@@ -2335,10 +2785,14 @@ async function confirmAction() {
     sourceItem.actionBy = name;
     sourceItem.actionDate = dateStr;
     sourceItem.agency = agency;
+    // The server's copy changed, so pages kept from before would show the
+    // old state, and the "not actioned" filter would still list it.
+    HUB_CACHE.clear();
     closeActionModal();
     renderDetail(creative);
+    toast('Marked as actioned.');
   } catch(err) {
-    alert("Failed to update: " + err.message);
+    toast("Couldn't update it: " + err.message, 'error');
   } finally {
     btn.innerText = origText; btn.disabled = false;
   }
@@ -2350,7 +2804,7 @@ function openAddCreativeModal() {
   const campaignSelect = document.getElementById('ac-campaign');
   const campaigns = CAMPAIGNS.length > 0
     ? CAMPAIGNS
-    : [...new Set(ALL.map(c => c.campaign).filter(c => c && c !== 'Unknown'))];
+    : HUB_OPTIONS.campaigns.filter(c => c && c !== 'Unknown');
   campaignSelect.innerHTML = '<option value="" disabled selected>Select Campaign</option>';
   if (campaigns.length === 0) {
     campaignSelect.innerHTML += '<option value="Cool Fresh">Cool Fresh</option>';
@@ -2358,11 +2812,16 @@ function openAddCreativeModal() {
     campaigns.forEach(c => { campaignSelect.innerHTML += `<option value="${c}">${c}</option>`; });
   }
   const orgIdSelect = document.getElementById('ac-original-id');
-  const creativeIds = [...new Set(ALL.map(c => c.id).filter(id => id))];
   orgIdSelect.innerHTML = '<option value="" disabled selected>Select Original Creative ID</option>';
   if (typeof enhanceSelectsIn === 'function') enhanceSelectsIn('addCreativeModal');
   if (typeof repaintFilterDropdowns === 'function') repaintFilterDropdowns();
-  creativeIds.forEach(id => { orgIdSelect.innerHTML += `<option value="${id}">${id}</option>`; });
+  // Every id in the brand, which the page no longer holds, so it is asked
+  // for here. Only matters once "repurposed" is picked, well after this.
+  fetch('/api/creatives/ids').then(r => r.ok ? r.json() : { ids: [] }).then(({ ids }) => {
+    orgIdSelect.insertAdjacentHTML('beforeend',
+      (ids || []).map(id => `<option value="${escapeHtml(id)}">${escapeHtml(id)}</option>`).join(''));
+    if (typeof repaintFilterDropdowns === 'function') repaintFilterDropdowns();
+  }).catch(err => console.error('[add] creative ids', err));
   // Last, not first: the styled controls have to exist before anything can
   // be hidden, or they are built visible around a hidden select.
   toggleCreativeFields();
@@ -2517,7 +2976,7 @@ async function regenerateDescription() {
   } catch (err) {
     // yt-dlp writes warnings to stderr; the real cause is the last line.
     const lines = String(err.message).split('\n').filter(l => l.trim() && !/^\s*(WARNING|It is strongly|Run "yt-dlp|To suppress|Pre-merged|To prioritize)/.test(l));
-    alert('Analysis failed: ' + (lines.pop() || err.message).trim());
+    toast('Analysis failed: ' + (lines.pop() || err.message).trim(), 'error');
   } finally {
     btn.innerText = orig; btn.disabled = false;
   }
@@ -2589,6 +3048,7 @@ function acReadForm() {
     description: (document.getElementById('ac-description') || {}).value || '',
     campaign: document.getElementById('ac-campaign').value,
     type: document.getElementById('ac-type').value,
+    format: acFormat(),
     source: (document.getElementById('ac-source') || {}).value || '',
     creatorLed: !!(document.getElementById('ac-creator-led') || {}).checked,
     repurposed: document.getElementById('ac-repurposed').value || 'No',
@@ -2601,6 +3061,7 @@ function acReadForm() {
 function acValidate(f) {
   if (!f.campaign) return 'Select a campaign.';
   if (!f.type) return 'Select a category.';
+  if (!f.format) return 'Choose what kind of post this is: reel or video, static image, or carousel.';
   if (f.type === 'Others Say' && !f.source) return 'Choose whether this is creator or community content.';
   const anyOn = AC_PLATS.some(p => f.plats[p.k].on);
   if (!anyOn) return 'Turn on at least one platform. A creative with no links cannot have stats.';
@@ -2609,7 +3070,7 @@ function acValidate(f) {
     const v = f.plats[p.k];
     if (!v.on) { acSetErr(p.k, ''); continue; }
     if (!v.link) { acSetErr(p.k, 'Add the link or turn this platform off.'); bad = true; continue; }
-    const r = window.CLLinks.validate(p.k, v.link, { source: f.source });
+    const r = window.CLLinks.validate(p.k, v.link, { source: f.source, format: f.format });
     // needsResolve is not an error: the server follows the redirect.
     if (!r.ok && !r.needsResolve) { acSetErr(p.k, r.error); bad = true; }
     else acSetErr(p.k, '');
@@ -2646,8 +3107,28 @@ function acCheckOne(k) {
   const box = document.getElementById(`ac-${k}-on`);
   const input = document.getElementById(`ac-${k}`);
   if (!box || !box.checked || !input || !input.value.trim()) return;
-  const r = window.CLLinks.validate(k, input.value, { source: acSource() });
+  const r = window.CLLinks.validate(k, input.value, { source: acSource(), format: acFormat() });
   acSetErr(k, (!r.ok && !r.needsResolve) ? r.error : '');
+}
+
+/** What the person said the post is: 'video', 'photo', 'carousel' or ''. */
+function acFormat() {
+  return (document.getElementById('ac-format') || {}).value || '';
+}
+
+/**
+ * The format decides which links fit, so the boxes say what to paste and
+ * any link already typed is checked again under the new rule.
+ */
+function acFormatChanged() {
+  const fmt = acFormat();
+  AC_PLATS.forEach(p => {
+    const input = document.getElementById(`ac-${p.k}`);
+    if (!input) return;
+    input.placeholder = (fmt && window.CLLinks.placeholder(fmt, p.k)) || `${p.label} link`;
+    acClearErr(p.k);
+    acCheckOne(p.k);
+  });
 }
 
 /**
@@ -2669,7 +3150,7 @@ function acRecheckFb() {
 // Server check: resolves short links, catches duplicates. Returns true when
 // every link passes, having written each field's error under it.
 async function acServerCheck(f) {
-  const body = { source: f.source || '' };
+  const body = { source: f.source || '', format: f.format || '' };
   AC_PLATS.forEach(p => { if (f.plats[p.k].on) body[p.k] = f.plats[p.k].link; });
   let data;
   try {
@@ -2680,7 +3161,7 @@ async function acServerCheck(f) {
     data = await r.json();
     if (!r.ok) throw new Error(data.error || 'HTTP ' + r.status);
   } catch (e) {
-    alert('Could not check the links: ' + e.message);
+    toast('Could not check the links: ' + e.message, 'error');
     return false;
   }
   for (const p of AC_PLATS) {
@@ -2700,7 +3181,7 @@ function acContentBlock() {
   const c = AC_CONTENT;
   if (!c) return '';
   if (c.verdict === 'different') {
-    return `<div class="rv-content-warn"><b>These links look like different videos.</b> ${escapeHtml(c.warning || '')}
+    return `<div class="rv-content-warn"><b>These links look like different posts.</b> ${escapeHtml(c.warning || '')}
       <div class="rv-content-sub">Only one of them is analysed, so the creative's description would not match the other's numbers.
       Go back and check the links, or add it anyway if they really are the same content.</div></div>`;
   }
@@ -2716,7 +3197,8 @@ function acRenderReview(f) {
     ${f.description ? line('Description', f.description) : ''}
     ${line('Campaign', f.campaign)}
     ${line('Category', f.type)}
-    ${f.type === 'Others Say' ? line('Posted by', f.source === 'community' ? 'Community page' : 'Creator') : ''}
+    ${line('Format', { video: 'Reel or video', photo: 'Static image', carousel: 'Carousel' }[f.format] || '')}
+    ${f.type === 'Others Say' ? line('Posted by', f.source === 'community' ? 'Community' : 'Creator') : ''}
     ${f.type === 'Brand Say' ? line('Led by a creator', f.creatorLed ? 'Yes' : 'No') : ''}
     ${f.type === 'Brand Say' ? line('Repurposed', f.repurposed) : ''}
     ${f.repurposed === 'Yes' && f.originalId ? line('Original creative', f.originalId) : ''}
@@ -2735,7 +3217,7 @@ function backToEdit() {
     el.style.display = '';
   });
   document.querySelectorAll('#addCreativeForm .plat-rows').forEach(el => el.style.display = '');
-  ['ac-campaign', 'ac-type', 'ac-repurposed', 'ac-original-id'].forEach(id => {
+  ['ac-campaign', 'ac-type', 'ac-format-row', 'ac-repurposed', 'ac-original-id'].forEach(id => {
     const el = document.getElementById(id);
     if (el && el.dataset.acHidden === '1') { el.style.display = el.dataset.acDisplay || ''; delete el.dataset.acHidden; }
   });
@@ -2762,7 +3244,7 @@ async function submitCreative(e) {
   // First press validates and shows the review. Nothing is sent yet.
   if (!AC_REVIEWED) {
     const err = acValidate(f);
-    if (err) { if (err !== 'Fix the highlighted links.') alert(err); return; }
+    if (err) { if (err !== 'Fix the highlighted links.') toast(err, 'error'); return; }
     const btn = document.getElementById('ac-confirm-btn');
     const label = btn.innerText;
     btn.disabled = true; btn.innerText = 'Checking links…';
@@ -2774,7 +3256,7 @@ async function submitCreative(e) {
     const rv = document.getElementById('ac-review');
     rv.innerHTML = acRenderReview(f) + acContentBlock();
     rv.style.display = 'block';
-    ['ac-campaign', 'ac-type', 'ac-repurposed', 'ac-original-id'].forEach(id => {
+    ['ac-campaign', 'ac-type', 'ac-format-row', 'ac-repurposed', 'ac-original-id'].forEach(id => {
       const el = document.getElementById(id);
       if (el && el.style.display !== 'none') { el.dataset.acDisplay = el.style.display; el.dataset.acHidden = '1'; el.style.display = 'none'; }
     });
@@ -2810,22 +3292,22 @@ async function submitCreative(e) {
 
   const setProgress = (pct, msg, color) => {
     progressBar.style.width = pct + '%';
-    progressBar.style.background = color || '#000050';
+    progressBar.style.background = color || '#0F6E8C';
     progressText.innerText = msg;
   };
 
-  setProgress(10, 'Submitting creative details...', '#000050');
+  setProgress(10, 'Submitting creative details...', '#0F6E8C');
 
   try {
-    const t1 = setTimeout(() => setProgress(30, 'Downloading video...', '#000050'), 800);
-    const t2 = setTimeout(() => setProgress(55, 'AI is analysing content...', '#000050'), 4000);
-    const t3 = setTimeout(() => setProgress(75, 'Generating hook & segment descriptions...', '#000050'), 15000);
-    const t4 = setTimeout(() => setProgress(90, 'Saving to database...', '#000050'), 35000);
+    const t1 = setTimeout(() => setProgress(30, 'Downloading video...', '#0F6E8C'), 800);
+    const t2 = setTimeout(() => setProgress(55, 'AI is analysing content...', '#0F6E8C'), 4000);
+    const t3 = setTimeout(() => setProgress(75, 'Generating hook & segment descriptions...', '#0F6E8C'), 15000);
+    const t4 = setTimeout(() => setProgress(90, 'Saving to database...', '#0F6E8C'), 35000);
 
     const res = await fetch('/api/add-creative', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ campaign, type, source, creator_led, ig, fb, tt, repurposed, originalId, description, brand: BRAND_NAME,
+      body: JSON.stringify({ campaign, type, format: f.format, source, creator_led, ig, fb, tt, repurposed, originalId, description, brand: BRAND_NAME,
         content_confirmed: !!(AC_CONTENT && AC_CONTENT.verdict === 'different') }),
       signal: AbortSignal.timeout(120000)
     });
@@ -2852,92 +3334,16 @@ async function submitCreative(e) {
       backToEdit();
       Object.entries(result.fieldErrors).forEach(([k, msg]) => acSetErr(k, msg));
     } else {
-      setProgress(100, 'Failed: ' + (result.error || 'Unknown error'), '#A32040');
-      progressBar.style.background = '#A32040';
+      setProgress(100, 'Failed: ' + (result.error || 'Unknown error'), '#C2414B');
+      progressBar.style.background = '#C2414B';
       resetSubmitUI(3000);
     }
   } catch (err) {
     console.error(err);
-    setProgress(100, 'Network error — could not reach server.', '#A32040');
-    progressBar.style.background = '#A32040';
+    setProgress(100, 'Network error — could not reach server.', '#C2414B');
+    progressBar.style.background = '#C2414B';
     resetSubmitUI(3000);
   }
-}
-
-function showQueuedConfirmation(result) {
-  const form = document.getElementById('addCreativeForm');
-  if (!form) return;
-
-  // The confirmation has to live OUTSIDE the form: hiding the form to show it
-  // would hide the confirmation too, leaving an empty modal.
-  let box = document.getElementById('ac-queued-box');
-  if (!box) {
-    box = document.createElement('div');
-    box.id = 'ac-queued-box';
-    form.parentNode.insertBefore(box, form.nextSibling);
-  }
-
-  const queued = result.queued !== false;
-  box.innerHTML = queued ? `
-    <div class="ac-queued">
-      <div class="ac-queued-head">
-        <span class="ac-queued-icon" aria-hidden="true">
-          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7"
-               stroke-linecap="round" stroke-linejoin="round">
-            <circle cx="12" cy="12" r="9"/><path d="M12 7v5l3 2"/>
-          </svg>
-        </span>
-        <div>
-          <div class="ac-queued-title">Added to the queue</div>
-          <p class="ac-queued-body">
-            The video is being downloaded and analysed. This usually takes a few minutes.
-          </p>
-        </div>
-      </div>
-
-      <ul class="ac-queued-steps">
-        <li>You will get an email with the creative ID once it is done</li>
-        <li>The creative appears in the Creative Hub at the same time</li>
-        <li>If it fails you will get an email explaining why, and nothing is added</li>
-      </ul>
-
-      <p class="ac-queued-note">You can close this and keep working.</p>
-
-      <div class="ac-queued-actions">
-        <button type="button" class="btn-outline" onclick="closeAddCreativeModal()">Close</button>
-        <button type="button" class="btn-outline primary" onclick="resetAddCreativeForm()">Add another</button>
-      </div>
-    </div>` : `
-    <div class="ac-queued">
-      <div class="ac-queued-title">Creative added</div>
-      <p class="ac-queued-body">${result.message || 'Added.'}</p>
-      <div class="ac-queued-actions">
-        <button type="button" class="btn-outline" onclick="closeAddCreativeModal()">Close</button>
-        <button type="button" class="btn-outline primary" onclick="resetAddCreativeForm()">Add another</button>
-      </div>
-    </div>`;
-  box.style.display = 'block';
-  box.innerHTML = `
-    <div class="brief-hook" style="margin-bottom:12px">
-      <span class="brief-hook-label">Creative ID</span>
-      <div class="brief-hook-text" style="font-family:var(--font-mono);font-size:13px">${result.creativeId}</div>
-      <div style="font:400 12px/16px var(--font-ui);color:var(--ink-500);margin-top:6px">
-        Add this after the pipe in the ad name when the asset is boosted.
-      </div>
-    </div>
-    ${a.duration ? `<div class="organic-stat-row"><span class="organic-stat-label">Duration</span><span class="organic-stat-val">${fmtDur(a.duration)}</span></div>` : ''}
-    ${failed ? `
-      <div class="warning-badge" style="display:block;margin-top:12px">
-        Analysis did not complete
-      </div>
-      <div style="font:400 13px/18px var(--font-ui);color:var(--ink-500);margin-top:8px">
-        The creative is saved. Descriptions can be generated again without re-entering anything.
-      </div>` : `
-      ${a.hook ? `<div class="brief-hook" style="margin-top:12px"><span class="brief-hook-label">Hook</span><div class="brief-hook-text">${a.hook}</div></div>` : ''}
-      ${segs.length ? `<div class="brief-segs" style="margin-top:12px">${
-        segs.map((s,i)=>`<div class="seg-row"><div class="seg-label">${labels[i]||''}</div><div class="seg-text">${s}</div></div>`).join('')
-      }</div>` : ''}`}
-  `;
 }
 
 function showQueuedConfirmation(result) {
@@ -2971,6 +3377,7 @@ function showQueuedConfirmation(result) {
   box.style.display = 'block';
   form.style.display = 'none';
   document.getElementById('addCreativeModal').style.pointerEvents = 'auto';
+  toast(queued ? 'Added to the queue. Analysis has started.' : 'Creative added.');
 }
 
 function resetAddCreativeForm() {
@@ -3000,9 +3407,10 @@ function resetAddCreativeForm() {
   });
   syncPlatFields();
   document.querySelectorAll('#addCreativeForm .plat-rows').forEach(el => el.style.display = '');
-  ['ac-campaign', 'ac-type'].forEach(id => {
+  ['ac-campaign', 'ac-type', 'ac-format-row'].forEach(id => {
     const el = document.getElementById(id); if (el) { el.style.display = ''; delete el.dataset.acHidden; }
   });
+  AC_PLATS.forEach(p => { const i = document.getElementById(`ac-${p.k}`); if (i) i.placeholder = `${p.label} link`; });
   const back = document.getElementById('ac-back-btn');
   if (back) back.style.display = 'none';
   const conf = document.getElementById('ac-confirm-btn');

@@ -1,52 +1,62 @@
 /* =====================================================================
    Share of voice — one category per view, the signed-in brand highlighted.
-   Built on the design system tokens in styles.css: navy for the brand in
-   view, a lighter navy for the other Unilever brands, grey for the rest.
-   Percentages only.
+   Built on the design system tokens in styles.css: the primary for the
+   brand in view, a lighter step of it for the other Unilever brands, a
+   pale step for the rest. Percentages only.
    ===================================================================== */
 
 .sov-page{display:flex;flex-direction:column;gap:20px}
 .sov-head{display:flex;align-items:flex-start;justify-content:space-between;gap:16px;flex-wrap:wrap}
-.sov-lede{font:400 15px/22px var(--font);color:var(--ink-600);max-width:680px}
-.sov-lede b{font-weight:500;color:var(--ink-900)}
+/* What this page is about, as a row of quiet chips. */
+.sov-context{display:flex;flex-wrap:wrap;gap:6px;align-items:center}
+.sov-chip{display:inline-flex;align-items:center;gap:7px;height:28px;padding:0 11px;border-radius:7px;
+  background:var(--canvas);font:400 13px var(--font);color:var(--ink-600)}
+.sov-chip b{font-weight:500;color:var(--ink-900)}
+.sov-chip-brand i{width:8px;height:8px;border-radius:50%;background:var(--navy)}
 
-.sov-cats{display:inline-flex;gap:6px;flex-wrap:wrap}
-.sov-cat{height:32px;padding:0 13px;border-radius:var(--r-pill);border:1px solid var(--line);background:var(--white);
-  font:400 13.5px var(--font);color:var(--ink-600);cursor:pointer}
-.sov-cat[aria-pressed="true"]{border-color:var(--navy);color:var(--ink-900);font-weight:500}
+/* Category switch: a segmented control with a sliding highlight. */
+.sov-cats{display:inline-flex;gap:2px;padding:3px;border-radius:9px;background:var(--canvas)}
+.sov-cat{height:30px;padding:0 12px;border-radius:7px;border:0;background:none;
+  font:400 13.5px var(--font);color:var(--ink-500);cursor:pointer;transition:color var(--t-base) var(--ease-out)}
+.sov-cat[aria-pressed="true"]{color:var(--ink-900);font-weight:500}
 
 /* Headline figures */
-.sov-kpis{display:grid;grid-template-columns:repeat(auto-fit,minmax(min(100%,190px),1fr));gap:16px}
-.sov-kpi{background:var(--white);border-radius:var(--r-card);box-shadow:var(--shadow-rest);padding:18px;min-width:0}
-.sov-kpi-label{font:400 12px/17px var(--font);color:var(--ink-500);margin-bottom:7px}
-.sov-kpi-val{font:400 32px/37px var(--font);letter-spacing:-.025em;color:var(--ink-900);font-variant-numeric:tabular-nums}
+/* One band of figures, ruled between. The 1px gap over a line-coloured
+   ground draws the rules, so they follow the tiles however they wrap. */
+.sov-kpis{display:grid;grid-template-columns:repeat(auto-fit,minmax(min(100%,190px),1fr));gap:1px;
+  background:var(--line);border:1px solid var(--line);border-radius:var(--r-card);overflow:hidden}
+.sov-kpi{background:var(--white);padding:16px 18px 18px;min-width:0}
+.sov-kpi-label{font:400 13px/18px var(--font);color:var(--ink-500);margin-bottom:6px}
+.sov-kpi-val{font:500 30px/36px var(--font);letter-spacing:-.03em;color:var(--ink-900);font-variant-numeric:tabular-nums}
 .sov-kpi-sub{font:400 12.5px/18px var(--font);color:var(--ink-400);margin-top:5px}
 
 /* Cards */
 .sov-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(min(100%,440px),1fr));gap:16px}
 .sov-grid-3{display:grid;grid-template-columns:repeat(auto-fit,minmax(min(100%,300px),1fr));gap:16px}
 .sov-card{background:var(--white);border-radius:var(--r-card);box-shadow:var(--shadow-rest);padding:20px;min-width:0;display:flex;flex-direction:column;gap:12px}
-.sov-card h3{font:500 15px/21px var(--font);color:var(--ink-900);margin:0}
+.sov-card h3{font:600 15px/21px var(--font);color:var(--ink-900);margin:0}
 .sov-note{font:400 12.5px/18px var(--font);color:var(--ink-400);margin:-6px 0 0}
 .sov-card-head{display:flex;justify-content:space-between;align-items:flex-start;gap:12px;flex-wrap:wrap}
 
 /* What we found */
-.sov-insights{margin:0;padding-left:18px;display:flex;flex-direction:column;gap:8px}
-.sov-insights li{font:400 14px/21px var(--font);color:var(--ink-700);max-width:900px}
+.sov-insights{margin:0;padding:0;list-style:none;display:flex;flex-direction:column;gap:10px}
+.sov-insights li{position:relative;padding-left:18px;font:400 14.5px/22px var(--font);color:var(--ink-700);max-width:900px}
+.sov-insights li::before{content:"";position:absolute;left:0;top:8px;width:7px;height:7px;border-radius:50%;background:var(--navy)}
+#sov-findings{background:var(--sel);box-shadow:none;border:1px solid var(--sel-line)}
 
 /* Segmented control (own class: .pt belongs to the Creative Hub) */
-.sov-seg{display:inline-flex;border:1px solid var(--line);border-radius:var(--r-btn);overflow:hidden}
-.sov-seg button{border:0;background:var(--white);height:30px;padding:0 11px;font:400 12.5px var(--font);color:var(--ink-500);cursor:pointer}
-.sov-seg button + button{border-left:1px solid var(--line)}
-.sov-seg button[aria-pressed="true"]{background:var(--canvas-2);color:var(--ink-900);font-weight:500}
+.sov-seg{display:inline-flex;gap:2px;padding:3px;border-radius:9px;background:var(--canvas)}
+.sov-seg button{border:0;background:none;height:28px;padding:0 10px;border-radius:7px;font:400 12.5px var(--font);color:var(--ink-500);cursor:pointer;
+  transition:color var(--t-base) var(--ease-out)}
+.sov-seg button[aria-pressed="true"]{color:var(--ink-900);font-weight:500}
 
 /* Horizontal bars */
-.sov-bars{display:flex;flex-direction:column;gap:7px}
+.sov-bars{display:flex;flex-direction:column;gap:9px}
 .sov-bar{display:grid;grid-template-columns:minmax(90px,190px) 1fr 54px;align-items:center;gap:10px}
 .sov-bar-name{font:400 13px/18px var(--font);color:var(--ink-600);text-align:right;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
 .sov-bar.is-active .sov-bar-name{color:var(--ink-900);font-weight:500}
-.sov-bar-track{height:14px;border-radius:var(--r-pill);background:var(--canvas-2);overflow:hidden}
-.sov-bar-fill{height:100%;border-radius:inherit;background:var(--s5);min-width:2px;transition:width .35s var(--ease)}
+.sov-bar-track{height:10px;border-radius:var(--r-pill);background:var(--canvas);overflow:hidden}
+.sov-bar-fill{height:100%;border-radius:inherit;background:var(--s5);min-width:2px}
 .sov-bar-fill.is-active{background:var(--navy)}
 .sov-bar-fill.is-unilever{background:var(--s3)}
 .sov-bar-val{font:400 13px/18px var(--font);color:var(--ink-700);font-variant-numeric:tabular-nums}
@@ -58,19 +68,21 @@
 
 /* Sentiment: one stacked bar per brand */
 .sov-sent{display:grid;grid-template-columns:minmax(90px,190px) 1fr 54px;align-items:center;gap:10px}
-.sov-sent-track{display:flex;height:14px;border-radius:var(--r-pill);overflow:hidden;background:var(--canvas-2)}
+.sov-sent-track{display:flex;gap:2px;height:10px;border-radius:var(--r-pill);overflow:hidden;background:var(--white)}
 .sov-sent-track i{display:block;height:100%}
 .sov-sent-none{font:400 12.5px/18px var(--font);color:var(--ink-300)}
 
 .sov-chart{position:relative;height:240px}
 
-.sov-empty{background:var(--white);border-radius:var(--r-card);box-shadow:var(--shadow-rest);padding:28px 24px;
+.sov-empty{background:var(--white);border-radius:var(--r-card);box-shadow:var(--shadow-rest);padding:40px 24px;text-align:center;
   font:400 15px/22px var(--font);color:var(--ink-600)}
 
 @media (max-width:640px){
   .sov-bar,.sov-sent{grid-template-columns:96px 1fr 48px;gap:8px}
   .sov-seg{display:flex;width:100%}
   .sov-seg button{flex:1;height:auto;min-height:34px;padding:4px 6px;line-height:16px}
-  .sov-kpi-val{font-size:28px;line-height:33px}
+  .sov-kpis{grid-template-columns:1fr 1fr}
+  .sov-kpi{padding:14px}
+  .sov-kpi-val{font-size:24px;line-height:30px}
 }
-@media (prefers-reduced-motion:reduce){.sov-bar-fill{transition:none}}
+

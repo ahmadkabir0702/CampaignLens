@@ -60,7 +60,10 @@ function extract(platform, body) {
     const m = body && body.data && body.data.xdt_shortcode_media;
     if (!m) return null;
     const edges = (m.edge_media_to_caption && m.edge_media_to_caption.edges) || [];
+    const kids = (m.edge_sidecar_to_children && m.edge_sidecar_to_children.edges) || [];
     return {
+      kind: kids.length ? 'still' : (m.is_video ? 'video' : 'still'),
+      slides: kids.length || (m.is_video ? null : 1),
       duration: num(m.video_duration),                        // seconds
       caption: (edges[0] && edges[0].node && edges[0].node.text) || '',
       postedAt: m.taken_at_timestamp ? m.taken_at_timestamp * 1000 : null,
@@ -73,8 +76,11 @@ function extract(platform, body) {
     // video.duration is milliseconds. Do NOT use music.duration: that is the
     // length of the sound, which is often longer or shorter than the video.
     const ms = num(d.video && d.video.duration);
+    const imgs = (d.image_post_info && Array.isArray(d.image_post_info.images)) ? d.image_post_info.images.length : 0;
     return {
-      duration: ms === null ? null : ms / 1000,
+      kind: imgs ? 'still' : 'video',
+      slides: imgs || null,
+      duration: imgs ? null : (ms === null ? null : ms / 1000),
       caption: d.desc || '',
       postedAt: d.create_time ? d.create_time * 1000 : null,
       handle: d.author && d.author.unique_id ? String(d.author.unique_id).toLowerCase() : null,
@@ -82,7 +88,10 @@ function extract(platform, body) {
   }
   if (platform === 'fb') {
     if (!body || (!body.post_id && !body.url)) return null;
+    const isVideo = !!(body.video && (body.video.hd_url || body.video.sd_url));
     return {
+      kind: isVideo ? 'video' : 'still',
+      slides: null,
       duration: num(body.video && body.video.length_in_second),  // seconds
       caption: body.description || '',
       postedAt: body.creation_time ? Date.parse(body.creation_time) : null,
@@ -138,6 +147,18 @@ const fmtS = s => (s >= 90 ? `${Math.round(s / 60 * 10) / 10} min` : `${Math.rou
 
 /** Compare one link against the analysed one. */
 function comparePair(ref, other) {
+  // A video on one platform and a photo or carousel on another cannot be
+  // the same post, whatever the captions say.
+  if (ref.meta.kind && other.meta.kind && ref.meta.kind !== other.meta.kind) {
+    const word = k => (k === 'video' ? 'a video' : 'a photo or carousel');
+    return { verdict: 'different', dur: null, cap: captionScore(ref.meta.caption, other.meta.caption),
+             msg: `${LABEL[ref.platform]} is ${word(ref.meta.kind)} but ${LABEL[other.platform]} is ${word(other.meta.kind)}.` };
+  }
+  // Two carousels with a different number of slides are different posts.
+  if (ref.meta.slides && other.meta.slides && ref.meta.slides !== other.meta.slides) {
+    return { verdict: 'different', dur: null, cap: captionScore(ref.meta.caption, other.meta.caption),
+             msg: `${LABEL[ref.platform]} has ${ref.meta.slides} slides but ${LABEL[other.platform]} has ${other.meta.slides}.` };
+  }
   const dur = durationsMatch(ref.meta.duration, other.meta.duration);
   const cap = captionScore(ref.meta.caption, other.meta.caption);
   const capMatch = cap !== null && cap >= CAPTION_MATCH;
@@ -161,6 +182,9 @@ function comparePair(ref, other) {
 }
 
 /**
+ * For photos and carousels there is no duration: the type of post and the
+ * slide count are compared first, then caption and posting time.
+ *
  * links: { ig, tt, fb } normalised URLs (only the ones in use).
  * Returns { verdict, analysed, links: {platform: {duration, handle} | {error}}, pairs, warning }
  * Never throws: a failure to check must never stop a creative being added.

@@ -79,10 +79,10 @@
   // ── Pieces ─────────────────────────────────────────────────────────────────
   function bars(rows, opts = {}) {
     const max = Math.max(...rows.map(r => r.value || 0), 0.0001);
-    return `<div class="sov-bars">${rows.map(r => `
+    return `<div class="sov-bars">${rows.map((r, i) => `
       <div class="sov-bar ${r.active ? 'is-active' : ''}">
         <div class="sov-bar-name" title="${esc(r.label)}">${esc(r.label)}</div>
-        <div class="sov-bar-track"><div class="sov-bar-fill ${r.cls || ''}" style="width:${((r.value || 0) / (opts.max || max) * 100).toFixed(2)}%;${r.color ? `background:${r.color}` : ''}"></div></div>
+        <div class="sov-bar-track"><div class="sov-bar-fill grow-x ${r.cls || ''}" data-k="${esc(r.label)}" style="--i:${i};width:${((r.value || 0) / (opts.max || max) * 100).toFixed(2)}%;${r.color ? `background:${r.color}` : ''}"></div></div>
         <div class="sov-bar-val">${pct(r.value)}</div>
       </div>`).join('')}</div>`;
   }
@@ -120,10 +120,10 @@
   function sentiment(cat) {
     const rows = [...cat.brands].sort((a, b) => (b.shareOfVoice || 0) - (a.shareOfVoice || 0));
     return `<div class="sov-legend"><span><i style="background:var(--pos)"></i>Positive</span><span><i style="background:var(--s5)"></i>Neutral</span><span><i style="background:var(--neg)"></i>Negative</span></div>
-      <div class="sov-bars">${rows.map(b => {
+      <div class="sov-bars">${rows.map((b, i) => {
         const s = b.sentiment;
         const track = s
-          ? `<div class="sov-sent-track" title="Positive ${pct(s.positive)}, neutral ${pct(s.neutral)}, negative ${pct(s.negative)}">
+          ? `<div class="sov-sent-track grow-x" style="--i:${i}" title="Positive ${pct(s.positive)}, neutral ${pct(s.neutral)}, negative ${pct(s.negative)}">
               <i style="width:${s.positive * 100}%;background:var(--pos)"></i><i style="width:${s.neutral * 100}%;background:var(--s5)"></i><i style="width:${s.negative * 100}%;background:var(--neg)"></i></div>`
           : '<div class="sov-sent-none">Too little conversation to measure</div>';
         return `<div class="sov-sent sov-bar ${b.isActive ? 'is-active' : ''}"><div class="sov-bar-name">${esc(b.name)}</div>${track}
@@ -147,7 +147,7 @@
   }
 
   // ── Weekly chart ───────────────────────────────────────────────────────────
-  function drawWeekly(cat) {
+  function drawWeekly(cat, reduced) {
     if (state.chart) { state.chart.destroy(); state.chart = null; }
     const canvas = document.getElementById('sov-weekly');
     if (!canvas || typeof Chart === 'undefined' || !cat.weekly.length) return;
@@ -158,23 +158,26 @@
     const css = getComputedStyle(document.documentElement);
     const c = name => css.getPropertyValue(name).trim();
     const datasets = [];
-    if (active) datasets.push({ label: active.name, data: val([active.name]), borderColor: c('--navy'), backgroundColor: c('--navy') });
+    if (active) datasets.push({ label: active.name, data: val([active.name]), borderColor: c('--navy'), backgroundColor: c('--navy'),
+      fill: { target: 'origin', above: 'rgba(15,110,140,.08)' } });
     datasets.push({ label: 'All Unilever brands', data: val(uniNames), borderColor: c('--s4'), backgroundColor: c('--s4'), borderDash: [5, 4] });
     const lead = [...cat.brands].filter(b => !b.isUnilever).sort((a, b) => (b.shareOfVoice || 0) - (a.shareOfVoice || 0))[0];
     if (lead) datasets.push({ label: lead.name, data: val([lead.name]), borderColor: c('--ink-300'), backgroundColor: c('--ink-300') });
     state.chart = new Chart(canvas, {
       type: 'line',
-      data: { labels: weeks.map(week), datasets: datasets.map(d => ({ ...d, borderWidth: 2, pointRadius: 2.5, tension: 0 })) },
+      data: { labels: weeks.map(week), datasets: datasets.map(d => ({ ...d, borderWidth: 2, pointRadius: 0, pointHoverRadius: 4, tension: 0.25 })) },
       options: {
-        responsive: true, maintainAspectRatio: false, animation: false,
+        responsive: true, maintainAspectRatio: false,
+        // The lines draw in once, quickly; not under reduced motion.
+        animation: reduced ? false : { duration: 420, easing: 'easeOutQuart' },
         interaction: { mode: 'index', intersect: false },
         plugins: {
-          legend: { position: 'bottom', labels: { boxWidth: 10, boxHeight: 10, font: { family: 'Rubik', size: 12 }, color: c('--ink-500') } },
+          legend: { position: 'bottom', labels: { boxWidth: 10, boxHeight: 10, font: { family: 'Onest', size: 12 }, color: c('--ink-500') } },
           tooltip: { callbacks: { label: ctx => `${ctx.dataset.label}: ${pct(ctx.parsed.y)}` } },
         },
         scales: {
-          y: { min: 0, ticks: { callback: v => Math.round(v * 100) + '%', font: { family: 'Rubik', size: 11 }, color: c('--ink-400') }, grid: { color: c('--line-soft') } },
-          x: { ticks: { maxTicksLimit: 7, font: { family: 'Rubik', size: 11 }, color: c('--ink-400') }, grid: { display: false } },
+          y: { min: 0, ticks: { callback: v => Math.round(v * 100) + '%', font: { family: 'Onest', size: 11 }, color: c('--ink-400') }, grid: { color: c('--line-soft') } },
+          x: { ticks: { maxTicksLimit: 7, font: { family: 'Onest', size: 11 }, color: c('--ink-400') }, grid: { display: false } },
         },
       },
     });
@@ -203,10 +206,15 @@
     }
     const brand = cat.brands.find(b => b.isActive);
 
+    const reduced = window.matchMedia && matchMedia('(prefers-reduced-motion: reduce)').matches;
     page.innerHTML = `<div class="sov-page">
       <div class="sov-head">
-        <p class="sov-lede"><b>${esc(cat.name)}</b> social share of voice, Sri Lanka, ${esc(cat.period.label)}.
-          ${brand ? `${esc(brand.name)} is highlighted.` : ''}</p>
+        <div class="sov-context">
+          <span class="sov-chip"><b>${esc(cat.name)}</b></span>
+          <span class="sov-chip">Sri Lanka</span>
+          <span class="sov-chip">${esc(cat.period.label)}</span>
+          ${brand ? `<span class="sov-chip sov-chip-brand"><i></i>${esc(brand.name)} highlighted</span>` : ''}
+        </div>
         ${switcher}
       </div>
 
@@ -254,7 +262,11 @@
           <p class="sov-note">Share of earned content by type of source.</p>${simpleBars(cat.authorTypes)}</div>` : ''}
       </div>
     </div>`;
-    drawWeekly(cat);
+    drawWeekly(cat, reduced);
+    if (typeof glide === 'function') {
+      glide('sov-measure', page.querySelector('#sov-brands .sov-seg'));
+      glide('sov-cat', page.querySelector('.sov-cats'));
+    }
   }
 
   // ── Hooks ──────────────────────────────────────────────────────────────────
@@ -280,9 +292,13 @@
     const cat = state.data.categories[state.cat];
     const el = document.getElementById('sov-brand-bars');
     if (el && cat) {
+      const key = f => f.dataset.k;
+      const before = typeof barWidths === 'function' ? barWidths([...el.querySelectorAll('.sov-bar-fill')], key) : null;
       el.innerHTML = brandBars(cat);
+      if (before) slideBars([...el.querySelectorAll('.sov-bar-fill')], before, key);
       document.querySelectorAll('#sov-brands .sov-seg button').forEach(b =>
         b.setAttribute('aria-pressed', String(b.getAttribute('onclick').includes(`'${k}'`))));
+      if (typeof glide === 'function') glide('sov-measure', document.querySelector('#sov-brands .sov-seg'));
       const note = document.querySelector('#sov-brands .sov-note');
       if (note) note.textContent = MEASURE_NOTE[k];
     }
