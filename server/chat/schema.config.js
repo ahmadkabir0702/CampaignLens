@@ -118,7 +118,7 @@ const schema = {
   // What each state means, in the words the assistant should use. It
   // reads these rather than inventing a gloss for a bare label.
   cqrStates: {
-    'Boosted':       'spend is behind this post, so its organic numbers include paid delivery and the paid rating is the one that applies',
+    'Boosted':       'spend went behind this post before there was enough organic data to rate it, so the paid rating is the one that applies',
     'Too Early':     'posted too recently to rate',
     'Counts Hidden': 'the platform is not returning the counts needed to rate it',
     'No Views':      'no views have come back yet',

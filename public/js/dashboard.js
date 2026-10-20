@@ -768,7 +768,7 @@ const isGrade = (v) => CQR_GRADES.has(v);
 
 // Said in the space a card has.
 const STATE_SHORT = {
-  'Boosted':       'Mixed with paid',
+  'Boosted':       'Boosted',
   'Too Early':     'Too early',
   'Counts Hidden': 'Counts hidden',
   'No Views':      'No views yet',
@@ -782,7 +782,7 @@ const STATE_SHORT = {
   'Invalid Data':  'Missing data',
 };
 const STATE_WHY = {
-  'Boosted':       'Spend is behind this post, so its organic numbers include paid delivery. The paid rating is the one that applies.',
+  'Boosted':       'Spend is behind this post and it has no organic rating. The paid rating is the one that applies.',
   'Too Early':     'Posted too recently to read anything from yet.',
   'Counts Hidden': 'The account has hidden its like counts.',
   'No Views':      'No views have come back for this post.',
@@ -1504,7 +1504,11 @@ function cardHTML(d) {
     const inWindow = sharedState === 'Too Early';
     const orgBlock = (!orgVals.length || inWindow) ? ''
       : sharedState ? sharedNote
-      : orgVals.map(o => row(o.label, o.v, o.o, false)).join('');
+      : orgVals.map(o => row(o.label, o.v, o.o, false)).join('')
+        // Organic numbers stop updating once a post is boosted, so a
+        // boosted post's organic grade is what it earned before the spend.
+        + (d.isBoosted && orgVals.some(o => isGrade(o.v))
+            ? '<div class="card-cqr-stats">Before boost</div>' : '');
 
     // The rating that does apply once there is spend behind it. Shown as
     // soon as there is spend, rated or not: "boosted but not yet rated" is
@@ -2255,15 +2259,12 @@ function buildValidationHTML(v) {
     const sg = p.signal || {};
     const st = p.state || null;
 
-    if (p.boosted) {
-      // The recommendation below already says to judge it on paid from
-      // here, so this stops at what the organic grade was and means.
-      return `<div class="orgval-line">${
-        sg.grade
-          ? `Rated <b>${esc(sg.grade)}</b> organically before the spend started. That is what it earned on its own.`
-          : 'Spend started before there was enough organic data to rate it.'
-      }</div>`;
-    }
+    // A boosted post is rated on its organic numbers from before the spend
+    // (they stop updating once it is boosted), so it gets the full read,
+    // with one line saying which period the rating covers.
+    const boostLine = p.boosted && sg.grade
+      ? '<div class="orgval-line orgval-muted">Rated on its organic numbers from before the boost started.</div>'
+      : '';
 
     if (!sg.grade) {
       return `<div class="orgval-note">${esc(
@@ -2298,7 +2299,7 @@ function buildValidationHTML(v) {
     const against = p.rated_against
       ? `<div class="orgval-line orgval-muted">${esc(p.rated_against)}</div>` : '';
 
-    return `${thin}${summary}${dimBars(dims)}${wn}${against}`;
+    return `${boostLine}${thin}${summary}${dimBars(dims)}${wn}${against}`;
   };
 
   // "Boost — " with nothing after the dash is what an empty recommendation
