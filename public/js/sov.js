@@ -7,6 +7,11 @@
  *
  * Percentages only, by design. The server sends shares (0 to 1) and nothing
  * else, so there are no post, comment or mention counts to show.
+ *
+ * Every chart has a "What's behind this" link, and every tracked brand's bar
+ * can be clicked: both open a side panel written during the monthly run (the
+ * read, what drove it, what it means for the brand in view and a next step,
+ * and what consumers said). Nothing is written on click.
  */
 (function () {
   'use strict';
@@ -24,7 +29,7 @@
     shareOfVoice: 'Share of all brand conversation in the category, owned and earned.',
     shareNoContest: 'Share of brand conversation, excluding contest and giveaway activity.',
     shareEngagement: 'Share of total engagement on brand-related content.',
-    shareEarned: 'Share of earned conversation, driven by consumers, creators and communities rather than the brands.',
+    shareEarned: 'Share of earned conversation: consumers, unpaid creators, sellers and media. Brand pages and brand-backed creator content are left out.',
   };
   const GROUP_COLOR = {
     'Unilever': 'var(--navy)',
@@ -32,9 +37,17 @@
     'Local herbal and home brand': 'var(--pos)',
     'Imported': 'var(--warn)',
     'Laundry soap used on skin': 'var(--neg)',
+    'Other brand': 'var(--s5)',
   };
 
-  const state = { data: null, page: null, cat: 0, measure: 'shareOfVoice', chart: null };
+  const ORIGIN_COLOR = { 'Brand pages': 'var(--navy)', 'Brand-backed creators': 'var(--s3)', 'Earned': 'var(--pos)' };
+  const SECTION_TITLE = {
+    share: 'Share of voice by brand', trend: 'Share of voice over time', sentiment: 'Sentiment',
+    public: 'Who leads earned conversation', origin: "Where each brand's voice comes from",
+    topics: 'Conversation themes', intent: 'Conversation intent', source: 'Voice by source',
+  };
+
+  const state = { data: null, page: null, cat: 0, measure: 'shareOfVoice', chart: null, trend: 'month', drawerFrom: null };
 
   function pageEl() { return document.getElementById('page-sov'); }
 
@@ -66,7 +79,9 @@
     if (!page) return;
     if (!state.data) page.innerHTML = '<div class="load-msg">Loading share of voice…</div>';
     try {
-      state.data = await api('/api/sov');
+      // Internal accounts also see a period saved for review, under a banner.
+      const preview = typeof CURRENT_IS_INTERNAL !== 'undefined' && CURRENT_IS_INTERNAL;
+      state.data = await api('/api/sov' + (preview ? '?preview=1' : ''));
       if (state.cat >= state.data.categories.length) state.cat = 0;
       render();
     } catch (e) {
@@ -76,10 +91,14 @@
   }
 
   // ── Pieces ─────────────────────────────────────────────────────────────────
+  // A row opens its brand's panel when there is one.
+  const opener = key => key && hasPanel(key)
+    ? ` role="button" tabindex="0" data-panel="${esc(key)}" title="See what's behind this"` : '';
+
   function bars(rows, opts = {}) {
     const max = Math.max(...rows.map(r => r.value || 0), 0.0001);
     return `<div class="sov-bars">${rows.map((r, i) => `
-      <div class="sov-bar ${r.active ? 'is-active' : ''}">
+      <div class="sov-bar ${r.active ? 'is-active' : ''} ${r.panel && hasPanel(r.panel) ? 'is-open' : ''}"${opener(r.panel)}>
         <div class="sov-bar-name" title="${esc(r.label)}">${esc(r.label)}</div>
         <div class="sov-bar-track"><div class="sov-bar-fill grow-x ${r.cls || ''}" data-k="${esc(r.label)}" style="--i:${i};width:${((r.value || 0) / (opts.max || max) * 100).toFixed(2)}%;${r.color ? `background:${r.color}` : ''}"></div></div>
         <div class="sov-bar-val">${pct(r.value)}</div>
@@ -91,7 +110,7 @@
     const rows = cat.brands
       .filter(b => b[m] != null)
       .sort((a, b) => (b[m] || 0) - (a[m] || 0))
-      .map(b => ({ label: b.name, value: b[m], active: b.isActive, cls: b.isActive ? 'is-active' : b.isUnilever ? 'is-unilever' : '' }));
+      .map(b => ({ label: b.name, value: b[m], active: b.isActive, cls: b.isActive ? 'is-active' : b.isUnilever ? 'is-unilever' : '', panel: 'brand:' + b.name }));
     return bars(rows);
   }
 
@@ -125,7 +144,7 @@
           ? `<div class="sov-sent-track grow-x" style="--i:${i}" title="Positive ${pct(s.positive)}, neutral ${pct(s.neutral)}, negative ${pct(s.negative)}">
               <i style="width:${s.positive * 100}%;background:var(--pos)"></i><i style="width:${s.neutral * 100}%;background:var(--s5)"></i><i style="width:${s.negative * 100}%;background:var(--neg)"></i></div>`
           : '<div class="sov-sent-none">Too little conversation to measure</div>';
-        return `<div class="sov-sent sov-bar ${b.isActive ? 'is-active' : ''}"><div class="sov-bar-name">${esc(b.name)}</div>${track}
+        return `<div class="sov-sent sov-bar ${b.isActive ? 'is-active' : ''} ${hasPanel('brand:' + b.name) ? 'is-open' : ''}"${opener('brand:' + b.name)}><div class="sov-bar-name">${esc(b.name)}</div>${track}
           <div class="sov-bar-val">${s ? pct(s.positive, 0) : ''}</div></div>`;
       }).join('')}</div>`;
   }
@@ -133,8 +152,9 @@
   function publicBrands(cat) {
     const active = cat.brands.find(b => b.isActive);
     const groups = [...new Set(cat.publicBrands.map(r => r.group).filter(Boolean))];
+    const tracked = new Set(cat.brands.map(b => b.name));
     const rows = cat.publicBrands.slice(0, 15).map(r => ({
-      label: r.label, value: r.value,
+      label: r.label, value: r.value, panel: tracked.has(r.label) ? 'brand:' + r.label : null,
       active: active && r.label === active.name,
       color: r.label === (active && active.name) ? 'var(--navy)' : (GROUP_COLOR[r.group] || 'var(--s5)'),
     }));
@@ -145,13 +165,37 @@
     return bars(list.map((r, i) => ({ label: r.label, value: r.value, color: i === 0 ? 'var(--s2)' : 'var(--s4)' })));
   }
 
-  // ── Weekly chart ───────────────────────────────────────────────────────────
+  // ── Where each brand's voice comes from ──────────────────────────────────
+  function origin(cat) {
+    const by = {};
+    for (const r of cat.origin || []) (by[r.brand] ||= {})[r.source] = r.value;
+    const rows = [...cat.brands].filter(b => by[b.name]).sort((a, b) => (b.shareOfVoice || 0) - (a.shareOfVoice || 0));
+    const parts = Object.keys(ORIGIN_COLOR);
+    return `<div class="sov-legend">${parts.map(k => `<span><i style="background:${ORIGIN_COLOR[k]}"></i>${esc(k)}</span>`).join('')}</div>
+      <div class="sov-bars">${rows.map((b, i) => {
+        const o = by[b.name];
+        return `<div class="sov-sent sov-bar ${b.isActive ? 'is-active' : ''} ${hasPanel('brand:' + b.name) ? 'is-open' : ''}"${opener('brand:' + b.name)}>
+          <div class="sov-bar-name">${esc(b.name)}</div>
+          <div class="sov-sent-track grow-x" style="--i:${i}" title="${parts.map(k => `${k} ${pct(o[k] || 0)}`).join(', ')}">
+            ${parts.map(k => `<i style="width:${((o[k] || 0) * 100).toFixed(2)}%;background:${ORIGIN_COLOR[k]}"></i>`).join('')}</div>
+          <div class="sov-bar-val">${pct(o['Earned'] || 0, 0)}</div></div>`;
+      }).join('')}</div>
+      <p class="sov-note sov-note-foot">The figure on the right is the earned part.</p>`;
+  }
+
+  // ── Trend chart: month by month, or week by week ─────────────────────────
+  function monthName(iso) {
+    const d = new Date(iso + 'T00:00:00Z');
+    return d.toLocaleDateString('en-GB', { month: 'short', year: 'numeric', timeZone: 'UTC' });
+  }
   function drawWeekly(cat, reduced) {
     if (state.chart) { state.chart.destroy(); state.chart = null; }
     const canvas = document.getElementById('sov-weekly');
-    if (!canvas || typeof Chart === 'undefined' || !cat.weekly.length) return;
-    const weeks = [...new Set(cat.weekly.map(r => r.week))].sort();
-    const val = (brands) => weeks.map(w => cat.weekly.filter(r => r.week === w && brands.includes(r.brand)).reduce((s, r) => s + r.value, 0));
+    const byMonth = state.trend === 'month' && (cat.monthly || []).length;
+    const rowsIn = byMonth ? cat.monthly.map(r => ({ week: r.month, brand: r.brand, value: r.value })) : cat.weekly;
+    if (!canvas || typeof Chart === 'undefined' || !rowsIn.length) return;
+    const weeks = [...new Set(rowsIn.map(r => r.week))].sort();
+    const val = (brands) => weeks.map(w => rowsIn.filter(r => r.week === w && brands.includes(r.brand)).reduce((s, r) => s + r.value, 0));
     const active = cat.brands.find(b => b.isActive);
     const uniNames = cat.brands.filter(b => b.isUnilever).map(b => b.name);
     const css = getComputedStyle(document.documentElement);
@@ -164,7 +208,7 @@
     if (lead) datasets.push({ label: lead.name, data: val([lead.name]), borderColor: c('--ink-300'), backgroundColor: c('--ink-300') });
     state.chart = new Chart(canvas, {
       type: 'line',
-      data: { labels: weeks.map(week), datasets: datasets.map(d => ({ ...d, borderWidth: 2, pointRadius: 0, pointHoverRadius: 4, tension: 0.25 })) },
+      data: { labels: weeks.map(byMonth ? monthName : week), datasets: datasets.map(d => ({ ...d, borderWidth: 2, pointRadius: 0, pointHoverRadius: 4, tension: 0.25 })) },
       options: {
         responsive: true, maintainAspectRatio: false,
         // The lines draw in once, quickly; not under reduced motion.
@@ -204,6 +248,9 @@
       return;
     }
     const brand = cat.brands.find(b => b.isActive);
+    state.panels = cat.panels || {};
+    const hasMonthly = (cat.monthly || []).length > 0;
+    const trendBy = hasMonthly ? state.trend : 'week';
 
     const reduced = window.matchMedia && matchMedia('(prefers-reduced-motion: reduce)').matches;
     page.innerHTML = `<div class="sov-page">
@@ -217,6 +264,8 @@
         ${switcher}
       </div>
 
+      ${cat.period.preview ? `<div class="sov-preview" role="status"><b>Preview.</b> This period is saved for review and is not on the page for brand teams yet.</div>` : ''}
+
       ${kpis(cat, brand)}
 
       ${cat.insights.length ? `<div class="sov-card" id="sov-findings"><h3>What we found</h3>
@@ -224,48 +273,136 @@
 
       <div class="sov-grid">
         <div class="sov-card" id="sov-brands">
-          <div class="sov-card-head"><h3>Share of voice by brand</h3>
+          <div class="sov-card-head"><h3>Share of voice by brand</h3>${behind('share')}
             <div class="sov-seg" role="group" aria-label="Measure">${MEASURES.map(([k, n]) =>
               `<button aria-pressed="${state.measure === k}" onclick="SOV.setMeasure('${k}')">${n}</button>`).join('')}</div></div>
-          <p class="sov-note">${esc(MEASURE_NOTE[state.measure])}</p>
+          <p class="sov-note">${esc(MEASURE_NOTE[state.measure])}${anyBrandPanel(cat) ? ' Click a brand for its detail.' : ''}</p>
           <div class="sov-legend"><span><i style="background:var(--navy)"></i>${esc(brand ? brand.name : 'Selected brand')}</span>
             <span><i style="background:var(--s3)"></i>Other Unilever brands</span><span><i style="background:var(--s5)"></i>Competitors</span></div>
           <div id="sov-brand-bars">${brandBars(cat)}</div>
         </div>
         <div class="sov-card" id="sov-trend">
-          <h3>Share of voice by week</h3>
-          <p class="sov-note">Weekly share of category conversation. Peaks follow campaign moments.</p>
+          <div class="sov-card-head"><h3>Share of voice ${trendBy === 'month' ? 'by month' : 'by week'}</h3>${behind('trend')}</div>
+          ${hasMonthly ? `<div class="sov-seg sov-seg-trend" role="group" aria-label="Trend by">
+            <button aria-pressed="${trendBy === 'month'}" onclick="SOV.setTrend('month')">By month</button>
+            <button aria-pressed="${trendBy === 'week'}" onclick="SOV.setTrend('week')">By week</button></div>` : ''}
+          <p class="sov-note">${trendBy === 'month' ? 'Monthly share of category conversation.' : 'Weekly share of category conversation. Peaks follow campaign moments.'}</p>
           <div class="sov-chart"><canvas id="sov-weekly" aria-label="Share of voice by week"></canvas></div>
         </div>
       </div>
 
       <div class="sov-grid">
         <div class="sov-card" id="sov-sentiment">
-          <h3>Sentiment</h3>
+          <div class="sov-card-head"><h3>Sentiment</h3>${behind('sentiment')}</div>
           <p class="sov-note">Tone of consumer conversation about each brand. Brand-published content is excluded.</p>
           ${sentiment(cat)}
         </div>
         ${cat.publicBrands.length ? `<div class="sov-card" id="sov-public">
-          <h3>Who leads earned conversation</h3>
+          <div class="sov-card-head"><h3>Who leads earned conversation</h3>${behind('public')}</div>
           <p class="sov-note">Share of earned voice by brand, including brands outside this tracker.</p>
           ${publicBrands(cat)}
         </div>` : ''}
       </div>
 
+      ${(cat.origin || []).length ? `<div class="sov-card" id="sov-origin">
+        <div class="sov-card-head"><h3>Where each brand's voice comes from</h3>${behind('origin')}</div>
+        <p class="sov-note">Each brand's voice split three ways: its own pages, creator content made with the brand, and earned conversation. Conversation on creator content made with a brand is earned.</p>
+        ${origin(cat)}
+      </div>` : ''}
+
       <div class="sov-grid-3">
-        ${cat.topics.length ? `<div class="sov-card" id="sov-topics"><h3>Conversation themes</h3>
+        ${cat.topics.length ? `<div class="sov-card" id="sov-topics"><div class="sov-card-head"><h3>Conversation themes</h3>${behind('topics')}</div>
           <p class="sov-note">Share of category conversation by theme.</p>${simpleBars(cat.topics)}</div>` : ''}
-        ${cat.commentTypes.length ? `<div class="sov-card" id="sov-comment-types"><h3>Conversation intent</h3>
+        ${cat.commentTypes.length ? `<div class="sov-card" id="sov-comment-types"><div class="sov-card-head"><h3>Conversation intent</h3>${behind('intent')}</div>
           <p class="sov-note">What consumers are doing in the conversation.</p>${simpleBars(cat.commentTypes)}</div>` : ''}
-        ${cat.authorTypes.length ? `<div class="sov-card" id="sov-authors"><h3>Voice by source</h3>
-          <p class="sov-note">Share of earned content by type of source.</p>${simpleBars(cat.authorTypes)}</div>` : ''}
+        ${cat.authorTypes.length ? `<div class="sov-card" id="sov-authors"><div class="sov-card-head"><h3>Voice by source</h3>${behind('source')}</div>
+          <p class="sov-note">Who makes the category content outside brand pages, including creator content made with a brand.</p>${simpleBars(cat.authorTypes)}</div>` : ''}
       </div>
     </div>`;
     drawWeekly(cat, reduced);
     if (typeof glide === 'function') {
       glide('sov-measure', page.querySelector('#sov-brands .sov-seg'));
       glide('sov-cat', page.querySelector('.sov-cats'));
+      glide('sov-trend', page.querySelector('.sov-seg-trend'));
     }
+    wirePanels(page);
+  }
+
+  // ── "What's behind this" ───────────────────────────────────────────────────
+  function hasPanel(key) { return !!(state.panels && state.panels[key] && state.panels[key].read); }
+  function anyBrandPanel(cat) { return cat.brands.some(b => hasPanel('brand:' + b.name)); }
+  function behind(name) {
+    return hasPanel('section:' + name)
+      ? `<button class="sov-behind" data-panel="section:${name}">What's behind this</button>` : '';
+  }
+
+  function wirePanels(page) {
+    if (page.dataset.panelsWired) return;
+    page.dataset.panelsWired = '1';
+    page.addEventListener('click', e => {
+      const el = e.target.closest('[data-panel]');
+      if (el && page.contains(el)) openPanel(el.dataset.panel, el);
+    });
+    page.addEventListener('keydown', e => {
+      if (e.key !== 'Enter' && e.key !== ' ') return;
+      const el = e.target.closest('[data-panel][role="button"]');
+      if (el) { e.preventDefault(); openPanel(el.dataset.panel, el); }
+    });
+  }
+
+  function openPanel(key, from) {
+    const p = state.panels && state.panels[key];
+    if (!p) return;
+    const cat = state.data.categories[state.cat];
+    const brand = cat.brands.find(b => b.isActive);
+    const [kind, name] = [key.slice(0, key.indexOf(':')), key.slice(key.indexOf(':') + 1)];
+    const title = kind === 'brand' ? name : (SECTION_TITLE[name] || 'What is behind this');
+    closePanel(true);
+    state.drawerFrom = from || null;
+    const wrap = document.createElement('div');
+    wrap.className = 'sov-drawer-wrap';
+    wrap.innerHTML = `<div class="sov-scrim" data-close></div>
+      <aside class="sov-drawer" role="dialog" aria-modal="true" aria-labelledby="sov-drawer-title">
+        <div class="sov-drawer-head">
+          <div><div class="sov-drawer-kicker">${esc(cat.name)} · ${esc(cat.period.label)}</div>
+            <h2 id="sov-drawer-title">${esc(title)}</h2></div>
+          <button class="sov-drawer-x" data-close aria-label="Close">×</button>
+        </div>
+        <div class="sov-drawer-body">
+          <section><h4>What this shows</h4><p>${esc(p.read)}</p></section>
+          ${p.drivers.length ? `<section><h4>What drove it</h4><ul>${p.drivers.map(d => `<li>${esc(d)}</li>`).join('')}</ul></section>` : ''}
+          ${p.implication ? `<section class="sov-for"><h4>For ${esc(brand ? brand.name : 'your brand')}</h4><p>${esc(p.implication)}</p>
+            ${p.nextStep ? `<p class="sov-next"><b>Next step</b> ${esc(p.nextStep)}</p>` : ''}</section>` : ''}
+          ${p.quotes.length ? `<section><h4>What people are saying</h4>${p.quotes.map(q =>
+            `<blockquote class="sov-quote">“${esc(q.text)}”${q.translated ? '<span>Translated</span>' : ''}</blockquote>`).join('')}</section>` : ''}
+        </div>
+      </aside>`;
+    document.body.appendChild(wrap);
+    document.body.classList.add('sov-drawer-open');
+    requestAnimationFrame(() => wrap.classList.add('is-in'));
+    wrap.addEventListener('click', e => { if (e.target.closest('[data-close]')) closePanel(); });
+    wrap.addEventListener('keydown', e => {
+      if (e.key === 'Escape') { e.preventDefault(); closePanel(); }
+      if (e.key === 'Tab') {
+        // Keep focus inside the panel while it is open.
+        const f = [...wrap.querySelectorAll('button')];
+        if (!f.length) return;
+        if (e.shiftKey && document.activeElement === f[0]) { e.preventDefault(); f[f.length - 1].focus(); }
+        else if (!e.shiftKey && document.activeElement === f[f.length - 1]) { e.preventDefault(); f[0].focus(); }
+      }
+    });
+    wrap.querySelector('.sov-drawer-x').focus();
+  }
+
+  function closePanel(instant) {
+    const wrap = document.querySelector('.sov-drawer-wrap');
+    if (!wrap) return;
+    const from = state.drawerFrom;
+    state.drawerFrom = null;
+    document.body.classList.remove('sov-drawer-open');
+    if (instant) wrap.remove();
+    else { wrap.classList.remove('is-in'); setTimeout(() => wrap.remove(), 200); }
+    if (from && document.contains(from)) from.focus();
   }
 
   // ── Hooks ──────────────────────────────────────────────────────────────────
@@ -274,8 +411,9 @@
     if (page === 'sov') {
       if (state.data) render();
       refresh();
-    } else if (state.chart) {
-      state.chart.destroy(); state.chart = null;
+    } else {
+      closePanel(true);
+      if (state.chart) { state.chart.destroy(); state.chart = null; }
     }
   }
 
@@ -304,6 +442,7 @@
   }
 
   function setCategory(i) { state.cat = i; render(); }
+  function setTrend(k) { state.trend = k; render(); }
 
   // switchBrand() lives in dashboard.js and knows nothing about this page.
   // Wrap it so a brand change reloads share of voice too. Every caller,
@@ -317,5 +456,5 @@
     };
   }
 
-  window.SOV = { onPage, onBrandChange, refresh, setMeasure, setCategory };
+  window.SOV = { onPage, onBrandChange, refresh, setMeasure, setCategory, setTrend, openPanel, closePanel };
 })();

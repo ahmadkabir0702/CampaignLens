@@ -1,0 +1,662 @@
+{
+  "name": "Campaign Lens: share of voice runs (daily check)",
+  "nodes": [
+    {
+      "parameters": {
+        "rule": {
+          "interval": [
+            {
+              "field": "cronExpression",
+              "expression": "30 3 * * *"
+            }
+          ]
+        }
+      },
+      "id": "bca7e68f-2f6b-42aa-8297-23a5b0030a6f",
+      "name": "Every day 03:30",
+      "type": "n8n-nodes-base.scheduleTrigger",
+      "typeVersion": 1.2,
+      "position": [
+        0,
+        300
+      ],
+      "notes": "Runs daily. Campaign Lens says which categories are due: a monthly category from its run_day (the 3rd by default) until a run succeeds that month. Timezone Asia/Colombo (workflow settings)."
+    },
+    {
+      "parameters": {
+        "assignments": {
+          "assignments": [
+            {
+              "id": "a5a20c83-096a-4fa0-9c77-08d78410cfff",
+              "name": "baseUrl",
+              "value": "https://YOUR-CAMPAIGN-LENS.onrender.com",
+              "type": "string"
+            },
+            {
+              "id": "1ee27389-de03-4726-bad4-7f783e622000",
+              "name": "creditHeadroom",
+              "value": 700,
+              "type": "number"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "id": "44aef2cd-2b4e-47f1-823a-7cc721a54ca2",
+      "name": "Config",
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 3.4,
+      "position": [
+        220,
+        300
+      ]
+    },
+    {
+      "parameters": {
+        "method": "GET",
+        "url": "={{ $('Config').first().json.baseUrl }}/api/sov/automation",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "options": {}
+      },
+      "id": "e6518a04-21b0-4b10-a55f-7b5e5d8d7521",
+      "name": "Get categories",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        440,
+        300
+      ],
+      "credentials": {
+        "httpHeaderAuth": {
+          "id": "",
+          "name": "Campaign Lens SOV token"
+        }
+      },
+      "retryOnFail": true,
+      "maxTries": 3,
+      "waitBetweenTries": 5000
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "loose"
+          },
+          "conditions": [
+            {
+              "id": "64fd6b30-0a3c-43af-8f25-f08b66ace45b",
+              "leftValue": "={{ ($json.categories || []).some(c => c.due) ? ($json.credits ?? 0) : 999999999 }}",
+              "rightValue": "={{ $json.minCredits + $('Config').first().json.creditHeadroom }}",
+              "operator": {
+                "type": "number",
+                "operation": "gte"
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "2a7d335b-bf06-4247-aca8-45388254fe28",
+      "name": "Enough credits?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2,
+      "position": [
+        660,
+        300
+      ],
+      "notes": "Only checked when at least one category is due today, so a quiet day never raises a low-credit error."
+    },
+    {
+      "parameters": {
+        "errorMessage": "={{ 'ScrapeCreators credits are low (' + ($json.credits ?? 'unknown') + ' left). Top up, then run this workflow again.' }}"
+      },
+      "id": "26359011-f932-4c45-83c3-1320f8b230a8",
+      "name": "Credits too low",
+      "type": "n8n-nodes-base.stopAndError",
+      "typeVersion": 1,
+      "position": [
+        880,
+        480
+      ]
+    },
+    {
+      "parameters": {
+        "fieldToSplitOut": "categories",
+        "options": {}
+      },
+      "id": "ececf088-8fd6-4ddb-a988-ad09c9a056c7",
+      "name": "One item per category",
+      "type": "n8n-nodes-base.splitOut",
+      "typeVersion": 1,
+      "position": [
+        880,
+        280
+      ]
+    },
+    {
+      "parameters": {
+        "options": {}
+      },
+      "id": "9ac2242a-885c-4331-9ec6-a08b531e6880",
+      "name": "Loop over categories",
+      "type": "n8n-nodes-base.splitInBatches",
+      "typeVersion": 3,
+      "position": [
+        1100,
+        280
+      ]
+    },
+    {
+      "parameters": {},
+      "id": "2b32bf4b-80f1-4620-9d59-417e81a06ec1",
+      "name": "All done",
+      "type": "n8n-nodes-base.noOp",
+      "typeVersion": 1,
+      "position": [
+        1320,
+        100
+      ]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "={{ $('Config').first().json.baseUrl }}/api/sov/runs",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "options": {
+          "response": {
+            "response": {
+              "fullResponse": true,
+              "neverError": true
+            }
+          }
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify({ category_id: $('Loop over categories').first().json.category_id }) }}"
+      },
+      "id": "ecfbaca0-a32c-4f8e-a8a8-4aaf41393376",
+      "name": "Start run",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        1320,
+        300
+      ],
+      "credentials": {
+        "httpHeaderAuth": {
+          "id": "",
+          "name": "Campaign Lens SOV token"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "loose"
+          },
+          "conditions": [
+            {
+              "id": "7f3276c3-b9f4-47c7-bd21-39fad532e7a1",
+              "leftValue": "={{ $json.statusCode }}",
+              "rightValue": 202,
+              "operator": {
+                "type": "number",
+                "operation": "equals"
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "5796cfeb-78b4-4c16-bf7a-c4da9e0ab76e",
+      "name": "Started?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2,
+      "position": [
+        1540,
+        300
+      ]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "loose"
+          },
+          "conditions": [
+            {
+              "id": "bb93c0cc-7124-4d84-a0db-f5b0065ffd2d",
+              "leftValue": "={{ $json.statusCode }}",
+              "rightValue": 409,
+              "operator": {
+                "type": "number",
+                "operation": "equals"
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "dc4c2c0f-e14e-4097-bae1-21df038dff31",
+      "name": "Another run going?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2,
+      "position": [
+        1760,
+        480
+      ]
+    },
+    {
+      "parameters": {
+        "amount": 10,
+        "unit": "minutes"
+      },
+      "id": "3922999d-7d7b-49fa-830d-c9a0df3bebd0",
+      "name": "Wait 10 min, then retry",
+      "type": "n8n-nodes-base.wait",
+      "typeVersion": 1.1,
+      "position": [
+        1980,
+        460
+      ],
+      "webhookId": "f6425d28-4541-41bd-a3a2-4143861fc531"
+    },
+    {
+      "parameters": {
+        "errorMessage": "={{ 'Share of voice run did not start for ' + $('Loop over categories').first().json.category_id + ': ' + (($json.body || {}).error || $json.statusCode) }}"
+      },
+      "id": "60971a0b-658e-45a0-9c7c-1134affaacef",
+      "name": "Could not start",
+      "type": "n8n-nodes-base.stopAndError",
+      "typeVersion": 1,
+      "position": [
+        1980,
+        640
+      ]
+    },
+    {
+      "parameters": {
+        "amount": 5,
+        "unit": "minutes"
+      },
+      "id": "723655ec-ed9f-4d59-a682-707ca606d694",
+      "name": "Wait 5 min",
+      "type": "n8n-nodes-base.wait",
+      "typeVersion": 1.1,
+      "position": [
+        1760,
+        280
+      ],
+      "webhookId": "ded11e6b-d093-4528-804f-42dad16ba406"
+    },
+    {
+      "parameters": {
+        "method": "GET",
+        "url": "={{ $('Config').first().json.baseUrl }}/api/sov/runs/{{ $('Start run').first().json.body.runId }}",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "options": {}
+      },
+      "id": "483c6bf3-2c7b-4ab4-862f-f336376674c8",
+      "name": "Get run status",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        1980,
+        280
+      ],
+      "credentials": {
+        "httpHeaderAuth": {
+          "id": "",
+          "name": "Campaign Lens SOV token"
+        }
+      },
+      "retryOnFail": true,
+      "maxTries": 3,
+      "waitBetweenTries": 5000
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "loose"
+          },
+          "conditions": [
+            {
+              "id": "6de9e410-79ab-4e72-9b1a-a0c26207b6f3",
+              "leftValue": "={{ $json.status }}",
+              "rightValue": "running",
+              "operator": {
+                "type": "string",
+                "operation": "equals"
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "11ea6ff6-acd5-4178-8ab3-836aba94c226",
+      "name": "Still running?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2,
+      "position": [
+        2200,
+        280
+      ]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "loose"
+          },
+          "conditions": [
+            {
+              "id": "2bd9d9e6-f533-4f4c-91b6-a7eb7b671e4e",
+              "leftValue": "={{ (Date.now() - new Date($json.startedAt).getTime()) / 3600000 }}",
+              "rightValue": 8,
+              "operator": {
+                "type": "number",
+                "operation": "lt"
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "48ea92fc-96c3-4013-90c7-076b04fa8d47",
+      "name": "Under 8 hours?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2,
+      "position": [
+        2420,
+        180
+      ]
+    },
+    {
+      "parameters": {
+        "errorMessage": "={{ 'Share of voice run ' + $json.runId + ' (' + $json.category + ') has been running for over 8 hours, phase: ' + $json.phase }}"
+      },
+      "id": "db046ace-852f-4243-b48b-50f01c097696",
+      "name": "Run looks stuck",
+      "type": "n8n-nodes-base.stopAndError",
+      "typeVersion": 1,
+      "position": [
+        2640,
+        60
+      ]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "loose",
+            "version": 2
+          },
+          "conditions": [
+            {
+              "id": "8addd6a8-67ec-4ff9-b6dd-43f2f67bd298",
+              "leftValue": "={{ $json.due }}",
+              "rightValue": "",
+              "operator": {
+                "type": "boolean",
+                "operation": "true",
+                "singleValue": true
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.filter",
+      "typeVersion": 2.2,
+      "position": [
+        1100,
+        420
+      ],
+      "id": "6f517949-9ec0-43ad-bb5c-becb8d8bbe7c",
+      "name": "Only categories due today",
+      "notes": "due is worked out by Campaign Lens (GET /api/sov/automation)."
+    }
+  ],
+  "connections": {
+    "Config": {
+      "main": [
+        [
+          {
+            "node": "Get categories",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Get categories": {
+      "main": [
+        [
+          {
+            "node": "Enough credits?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Enough credits?": {
+      "main": [
+        [
+          {
+            "node": "One item per category",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Credits too low",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "One item per category": {
+      "main": [
+        [
+          {
+            "node": "Only categories due today",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Loop over categories": {
+      "main": [
+        [
+          {
+            "node": "All done",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Start run",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Start run": {
+      "main": [
+        [
+          {
+            "node": "Started?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Started?": {
+      "main": [
+        [
+          {
+            "node": "Wait 5 min",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Another run going?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Another run going?": {
+      "main": [
+        [
+          {
+            "node": "Wait 10 min, then retry",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Could not start",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Wait 10 min, then retry": {
+      "main": [
+        [
+          {
+            "node": "Start run",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Wait 5 min": {
+      "main": [
+        [
+          {
+            "node": "Get run status",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Get run status": {
+      "main": [
+        [
+          {
+            "node": "Still running?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Still running?": {
+      "main": [
+        [
+          {
+            "node": "Under 8 hours?",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Loop over categories",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Every day 03:30": {
+      "main": [
+        [
+          {
+            "node": "Config",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Only categories due today": {
+      "main": [
+        [
+          {
+            "node": "Loop over categories",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Under 8 hours?": {
+      "main": [
+        [
+          {
+            "node": "Wait 5 min",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Run looks stuck",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "active": false,
+  "settings": {
+    "executionOrder": "v1",
+    "timezone": "Asia/Colombo",
+    "saveManualExecutions": true
+  },
+  "pinData": {},
+  "meta": {
+    "templateCredsSetupCompleted": false
+  }
+}

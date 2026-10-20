@@ -118,4 +118,9 @@ async function dispatch(subject, html, slackText) {
   return sent;
 }
 
-module.exports = { notifySuccess, notifyFailure };
+/** A plain admin message from any background job (share of voice runs use it). */
+function notifyAdmin(subject, html, slackText) {
+  return dispatch(subject, html, slackText || subject);
+}
+
+module.exports = { notifySuccess, notifyFailure, notifyAdmin, esc };
