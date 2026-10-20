@@ -82,11 +82,11 @@ const STATE_LABEL = {
 /**
  * The value for the rating column of a static: a grade, or the state that
  * explains why there is none, in the same words videos use.
- * storedCqr is what the database view said; 'Boosted' is kept, because a
- * boosted post's numbers are organic and paid mixed whatever its format.
+ * storedCqr is what the database view said. A boosted static is rated like
+ * any other: its organic numbers stop updating once it is boosted, so they
+ * are from before the spend (migration 034).
  */
 function rateStatic({ o, type, followers, plat, brandId, bands, storedCqr, postedAt, contentType }) {
-  if (String(storedCqr || '').toLowerCase() === 'boosted') return { cqr: 'Boosted', grade: null, signal: null, band: null };
   const posted = postedAt || (o && o.time_posted);
   if (posted && (Date.now() - new Date(posted).getTime()) / 3600000 < MIN_HOURS) {
     const s = staticSignal(o, type, followers);

@@ -124,7 +124,7 @@ const signalName = (type, isStatic) => (isStatic ? 'Engagement' : isOthersSay(ty
  * producing lines like "Rated No Watch Time on engagement".
  */
 const CQR_STATES = {
-  'boosted':        'Spend went behind this post, so its numbers are organic and paid together.',
+  'boosted':        'Spend went behind this post before there was enough organic data to rate it.',
   'too early':      `Posted less than ${MIN_HOURS} hours ago, so it is still being distributed.`,
   'counts hidden':  'The account has hidden its like counts, so there is nothing to rate.',
   'no views':       'No views have come back for this post.',
@@ -194,9 +194,10 @@ function grade(rate, th) {
 // ---------------------------------------------------------------------
 const S_RANK = { Good: 0, Average: 1, Poor: 2 };
 
-// v_organic_scored returns 'Boosted' in the cqr column for a post that had
-// spend behind it. That is a state, not a grade: the numbers are organic
-// and paid mixed together, so there is no organic verdict to give.
+// v_organic_scored used to return 'Boosted' in the cqr column for a creator
+// post with spend behind it. Since migration 034 it rates the post on its
+// organic numbers, which stop updating once it is boosted, so they are from
+// before the spend. Whether a post is boosted comes from v_boost_status.
 
 // How the rating reads, in words. One signal, not two halves.
 /**
@@ -226,7 +227,7 @@ const SIGNAL_WORDS = {
   },
 };
 
-function reasonFor({ rated, state, signal, band, signalName, type }) {
+function reasonFor({ rated, state, signal, band, signalName, type, boosted }) {
   // Boosted is not a verdict with a footnote, it is a different question.
   //
   // This used to read "Rated Average: some people respond to it, but not
@@ -234,9 +235,10 @@ function reasonFor({ rated, state, signal, band, signalName, type }) {
   // paid together." A confident grade, then a sentence explaining that
   // the numbers behind the grade are contaminated. Once there is spend
   // the organic rating is history, so it is worded as history.
-  if (String(state || '').toLowerCase() === 'boosted') {
+  if ((boosted && rated) || String(state || '').toLowerCase() === 'boosted') {
+    const words = rated ? ((SIGNAL_WORDS[signalName] || {})[rated] || '') : '';
     return rated
-      ? `Spend went behind this post. It was rated ${rated} organically before that, which is what it earned on its own. From here it is a paid read.`
+      ? `Rated ${rated} on its organic numbers from before the boost${words ? `: ${words}` : ''}. From here it is a paid read.`
       : 'Spend went behind this post before there was enough organic data to rate it. From here it is a paid read.';
   }
 
@@ -459,17 +461,17 @@ function placeAmong(value, peers) {
 // ---------------------------------------------------------------------
 //  3. Recommendation, per platform
 // ---------------------------------------------------------------------
-function recommendFor({ platLabel, rated, state, standing, delivered, tooNew, missing }) {
+function recommendFor({ platLabel, rated, state, standing, delivered, tooNew, missing, boosted }) {
   if (missing) {
     return { action: 'no_data', confidence: 'none',
       text: `No ${platLabel} numbers have come back for this post, so there is nothing to judge yet. That is not the same as a weak post.` };
   }
   // Already running. The rating still shows, but the decision is made.
-  if (String(state || '').toLowerCase() === 'boosted') {
+  if (boosted || String(state || '').toLowerCase() === 'boosted') {
     return { action: 'already_boosted', confidence: rated ? 'medium' : 'none',
       text: rated
         ? `Already running on ${platLabel}. The organic rating of ${rated} is what it earned before the spend; judge it from here on its paid performance.`
-        : `Already running on ${platLabel}, and there was not enough organic data to rate it before the spend started.` };
+        : `Already running on ${platLabel}. Judge it on its paid performance.` };
   }
   if (tooNew) {
     return { action: 'wait', confidence: 'none',
@@ -668,7 +670,7 @@ async function buildValidation(brandId, creativeId) {
 
   const creativeIsStatic = SR.isStatic(typeR.rows[0].content_type);
 
-  const [creativeR, organicR, thresholdR, osBenchR, peerR, staticBands, paidR] = await Promise.all([
+  const [creativeR, organicR, thresholdR, osBenchR, peerR, staticBands, paidR, boostR] = await Promise.all([
     queryTolerant(
       `select c.creative_id, c.brand_id, c.type, c.content_type, c.campaign, c.date, c.duration_s,
               c.ig_link, c.fb_link, c.tt_link,
@@ -745,10 +747,16 @@ async function buildValidation(brandId, creativeId) {
          join creatives c on c.creative_id = v.creative_id
         where v.brand_id = $1 and v.creative_id is not null and v.impressions >= 10000`,
       [brandId]),
+
+    // Whether spend is behind this post. Its organic numbers stop updating
+    // once it is, so the organic rating stands for the period before.
+    queryTolerant(
+      `select is_boosted from v_boost_status where creative_id = $1`, [creativeId]),
   ]);
 
   if (!creativeR.rows.length) return null;
   const c = creativeR.rows[0];
+  const isBoosted = !!(boostR.rows[0] && boostR.rows[0].is_boosted) || organicR.rows.some((r) => isBoostedState(r.cqr));
   const velocity = await velocityFor(creativeId);
 
   const posted = organicR.rows.map((r) => r.time_posted).filter(Boolean).sort()[0] || c.date;
@@ -851,7 +859,7 @@ async function buildValidation(brandId, creativeId) {
         : band && band.source === 'os'
           ? `Compared with creator posts across all brands on ${meta.label}, until this brand has five of its own there.`
           : null,
-      boosted: isBoostedState(o.cqr),
+      boosted: isBoosted,
       views: num(o.views),
       reach: num(o.reach),
       likes: num(o.likes),
@@ -890,12 +898,12 @@ async function buildValidation(brandId, creativeId) {
       working: pair.working,
       not_working: pair.notWorking,
       peer_count: peers.length,
-      reason: reasonFor({ rated, state, signal, band, signalName: signalName(c.type, !!st), type: c.type }),
+      reason: reasonFor({ rated, state, signal, band, signalName: signalName(c.type, !!st), type: c.type, boosted: isBoosted }),
       standing,
       velocity: velocity[plat] || null,
       delivered, too_new: tooNew,
       recommendation: recommendFor({
-        platLabel: meta.label, rated, state, standing, delivered, tooNew, missing: false,
+        platLabel: meta.label, rated, state, standing, delivered, tooNew, missing: false, boosted: isBoosted,
       }),
     };
   });
