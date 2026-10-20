@@ -65,8 +65,9 @@ Creator content made with a brand counts as that brand's voice, not earned:
 
 - an Instagram collab (it also shows on the brand's page);
 - a post the platform marks as a paid partnership or branded content;
-- a disclosure in the caption (#ad, #sponsored, #collab, "in partnership with" and similar) naming a tracked brand;
-- a creator post your team tracks in Campaign Lens as an Others Say creative.
+- a disclosure in the caption (#ad, #sponsored, #collab, "in partnership with" and similar) naming a tracked brand.
+
+Creator content without any of these counts as earned, even if it was part of a campaign.
 
 The audience conversation on that content is earned. Earned voice is everything else: consumers, unpaid creators, sellers and media. The page shows each brand's voice split three ways in "Where each brand's voice comes from".
 
@@ -138,4 +139,4 @@ Configuration only, no code:
 
 Set `is_automated = false` to pause a category without losing anything.
 
-The skin cleansing period from the first manual study (20 Jul to 18 Oct 2026) stays in the database. Brand teams keep seeing it until the first monthly period is published.
+The skin cleansing period from the first manual study (20 Jul to 18 Oct 2026) stays in the database. `server/031_sov_study_collabs_panels.sql` updates it with the collab rule and its panels. Brand teams keep seeing it until the first monthly period is published.

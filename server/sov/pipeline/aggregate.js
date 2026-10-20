@@ -89,7 +89,7 @@ async function load(ctx, from) {
  *   origin  'brand'   the brand's own content, and the conversation on its
  *                     own pages
  *           'backed'  creator content made with a brand (collab, paid
- *                     partnership, disclosure, tracked in Campaign Lens)
+ *                     partnership label, disclosure tag)
  *           'earned'  everything else, including the conversation on
  *                     brand-backed content
  */
@@ -396,33 +396,6 @@ async function publish(ctx, R, insights, panels) {
   }
 }
 
-/**
- * Creator posts the team tracks in Campaign Lens (Others Say, briefed
- * creators) are brand-backed, whatever their caption says. Matched on the
- * post id in the link.
- */
-async function markTracked(ctx) {
-  const { q, cat, log } = ctx;
-  try {
-    const r = await q(
-      `update sov_raw_posts p
-          set backed_brand = cb.brand_name, backed_reason = 'tracked in Campaign Lens'
-         from creatives c
-         join sov_category_brands cb on cb.brand_id = c.brand_id and cb.category_id = $1
-        where p.category_id = $1 and p.backed_brand is null and p.source <> 'owned'
-          and c.type = 'Others Say' and coalesce(c.source, 'creator') = 'creator'
-          and (   (p.platform = 'instagram' and p.post_id = substring(c.ig_link from 'instagram\\.com/(?:[^/]+/)?(?:p|reels?|tv)/([A-Za-z0-9_-]+)'))
-               or (p.platform = 'tiktok'    and p.post_id = substring(c.tt_link from '/(?:video|photo)/([0-9]+)'))
-               or (p.platform = 'facebook'  and p.post_id = substring(c.fb_link from '/(?:videos|reel|reels)/([0-9]+)')))`,
-      [cat.category_id]);
-    if (r.rowCount) log(`creator content tracked in Campaign Lens marked brand-backed: ${r.rowCount}`);
-    ctx.stats.trackedBacked = r.rowCount || 0;
-  } catch (e) {
-    if (e.code === '42P01' || e.code === '42703') return;   // no creatives table here
-    throw e;
-  }
-}
-
 function periodFor(ctx) {
   const { cfg } = ctx;
   if (cfg.cadence === 'monthly') return ctx.periodEnd ? monthOf(ctx.periodEnd) : lastFullMonth();
@@ -452,7 +425,6 @@ async function previousShares(ctx, R) {
 async function run(ctx) {
   const { cfg, log } = ctx;
   const period = periodFor(ctx);
-  await markTracked(ctx);
   // Enough history for the period and the 12-week chart that ends with it.
   const chartStart = addDays(sundayOnOrBefore(period.end), -7 * 12 - 1);
   const from = new Date(Date.parse((period.start < chartStart ? period.start : chartStart) + 'T00:00:00Z'));
