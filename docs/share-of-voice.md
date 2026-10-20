@@ -54,7 +54,7 @@ Each category has a `run_day` (default the 3rd). n8n checks every morning at 03:
    - Emoji, empty and tag-only replies are labelled by rule.
 5. **Conversation.** Replies on brand posts up to 35 days old, and on the most discussed public posts.
 6. **Shares.** The last full calendar month is the headline, compared with the month before. The trend shows month by month, with 12 weeks of weekly detail.
-7. **Summary and panels.** Claude writes the summary sentences and a "What's behind this" panel for each chart and each brand: what it shows, what drove it, what it means for the brand with a next step, and short translated consumer quotes with no names. Everything is written from computed figures, and a checker rejects any number that is not one of the figures, any platform name, posts, comments or mentions, and dashes.
+7. **Summary and panels.** Claude writes the summary sentences and a "What's behind this" panel for each chart and each brand: what it shows, what drove it, what it means for the brand with a next step, and what people are saying, split into positive and negative, each with a short read and up to six translated consumer lines with no names. Everything is written from computed figures, and a checker rejects any number that is not one of the figures, any platform name, posts, comments or mentions, and dashes.
 8. **Publish** in one transaction, then email or Slack the result.
 
 Content older than about 4 months is deleted. Commenters' names are never stored.

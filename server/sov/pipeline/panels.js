@@ -7,7 +7,8 @@
  *                 theme that grew, brand-backed creators, a competitor push
  *   implications  for each Unilever brand in view: what it means, and one
  *                 next step
- *   quotes        two or three things consumers said, translated where
+ *   voices        what people are saying, positive and negative: a short
+ *                 read of each side and up to six lines, translated where
  *                 needed, with no names, handles or numbers to reach them
  *
  * Written once per run from facts worked out here, never on click, so every
@@ -70,6 +71,31 @@ function quoteCandidates(conv, filter, n = 14) {
     if (out.length >= n) break;
   }
   return out.map((x, i) => ({ qid: 'q' + (i + 1), kind: x.c.type, sentiment: x.c.sent, brands: x.c.B, text: x.text }));
+}
+
+// Lines for "what people are saying", by side. Opinions first (praise,
+// complaints, comparisons, questions with a view), then plain reactions
+// with something to say, so a side with few opinions still has voices.
+const SKIP_VOICE = new Set(['off-topic/spam', 'tag/mention friend', 'contest entry']);
+function voiceCandidates(conv, filter, sentiment, prefix, n = 14) {
+  const seen = new Set();
+  const out = [];
+  const list = conv
+    .filter(c => c.kind === 'text' && c.sent === sentiment && !SKIP_VOICE.has(c.type) && filter(c))
+    .map(c => ({ c, text: scrub(c.body) }))
+    .filter(x => x.text.length >= 12 && x.text.length <= 240)
+    .sort((a, b) => (a.c.type === 'reaction') - (b.c.type === 'reaction') || b.c.likes - a.c.likes);
+  for (const x of list) {
+    const k = x.text.toLowerCase();
+    if (seen.has(k)) continue;
+    seen.add(k);
+    out.push(x);
+    if (out.length >= n) break;
+  }
+  return out.map((x, i) => ({ qid: prefix + (i + 1), kind: x.c.type, brands: x.c.B, text: x.text }));
+}
+function voicesFor(conv, filter) {
+  return { positive: voiceCandidates(conv, filter, 'positive', 'p'), negative: voiceCandidates(conv, filter, 'negative', 'n') };
 }
 
 /** The facts behind every panel, from the same rows the shares came from. */
@@ -195,15 +221,22 @@ function gather(ctx, R, prev) {
     intent: quoteCandidates(conv, c => ['question', 'purchase intent', 'recommendation request', 'comparison'].includes(c.type)),
     source: quoteCandidates(conv, () => true),
   };
+  const voiceFilter = {
+    share: aboutUni, trend: aboutUni, origin: aboutUni,
+    sentiment: c => (c.B || []).length > 0,
+    public: c => !c.owned, topics: c => !c.owned, intent: c => !c.owned, source: c => !c.owned,
+  };
   const panels = [];
   for (const [name, facts] of Object.entries(sections)) {
-    panels.push({ key: `section:${name}`, facts, quotes: quotes[name] || [], forBrands: uni });
+    panels.push({ key: `section:${name}`, facts, quotes: quotes[name] || [], forBrands: uni,
+      voices: voicesFor(conv, voiceFilter[name] || (() => true)) });
   }
   for (const b of R.brands) {
     const f = { chart: `${b.name}: the brand in detail`, ...common, brand_in_focus: brandFacts[b.name],
       category_leader: lead ? lead.name : null };
     panels.push({ key: `brand:${b.name}`, facts: f,
       quotes: quoteCandidates(conv, c => (c.B || []).includes(b.name)),
+      voices: voicesFor(conv, c => (c.B || []).includes(b.name)),
       forBrands: b.isUnilever ? [b.name] : uni });
   }
   return panels;
@@ -213,14 +246,18 @@ const PANEL_TOOL = {
   name: 'panel',
   description: 'The panel behind one chart.',
   input_schema: {
-    type: 'object', required: ['read', 'drivers', 'implications', 'quotes'],
+    type: 'object', required: ['read', 'drivers', 'implications', 'voices'],
     properties: {
       read: { type: 'string', description: 'Two or three sentences: what this shows for this period.' },
       drivers: { type: 'array', items: { type: 'string' }, minItems: 1, maxItems: 4, description: 'What drove it, one finding per item.' },
       implications: { type: 'array', items: { type: 'object', required: ['brand', 'implication', 'next_step'], properties: {
         brand: { type: 'string' }, implication: { type: 'string' }, next_step: { type: 'string' } } } },
-      quotes: { type: 'array', maxItems: 3, items: { type: 'object', required: ['qid', 'text'], properties: {
-        qid: { type: 'string' }, text: { type: 'string', description: 'The line in natural English. Translate Sinhala, Tamil or Singlish faithfully; keep English lines as written, tidied only for spelling.' } } } },
+      voices: { type: 'object', required: ['positive', 'negative'], properties: Object.fromEntries(['positive', 'negative'].map(side => [side, {
+        type: 'object', required: ['insight', 'quotes'], properties: {
+          insight: { type: 'string', description: `One or two sentences on what the ${side} conversation is about.` },
+          quotes: { type: 'array', maxItems: 6, items: { type: 'object', required: ['qid', 'text'], properties: {
+            qid: { type: 'string' }, text: { type: 'string', description: 'The line in natural English. Translate Sinhala, Tamil or Singlish faithfully; keep English lines as written, tidied only for spelling.' } } } },
+        } }])) },
     },
   },
 };
@@ -231,15 +268,17 @@ You get the facts behind the chart, worked out from the data, and a list of thin
 - read: two or three plain sentences on what the chart shows for this period, most important first.
 - drivers: one to four short findings on why it looks this way, taken from the facts: where a brand's voice comes from (its own pages, brand-backed creators, earned), promotions and giveaways, the themes consumers raise, sentiment drivers, the content that carried a brand, the strongest week, competitors or local sellers leading earned conversation. Only claim a reason the facts show. If the facts do not explain something, do not invent a reason.
 - implications: one entry for each brand listed under "write implications for", in that order. implication: what this means for that brand, one or two sentences. next_step: one concrete, practical action for the brand team, one sentence.
-- quotes: pick up to three consumer lines from the list that best show the point, by qid. Prefer variety. Give each in natural English: translate Sinhala, Tamil or Singlish faithfully without adding meaning; keep English as written. Leave quotes empty if none fit.
+- voices: what people are saying, split into positive and negative.
+  - For each side, insight: one or two sentences on what that side of the conversation is about (the themes, the brands, what pleases or annoys people). If a side has no lines, say there is little such conversation this period.
+  - For each side, quotes: pick five or six lines from that side's list by qid when the list has at least seven; otherwise as many as are genuinely about the subject. Prefer variety and lines that say something specific. Skip lines from people outside Sri Lanka or lines in other languages you cannot render faithfully. Give each in natural English: translate Sinhala, Tamil or Singlish faithfully without adding meaning; keep English as written.
 
-Rules for read, drivers, implication and next_step:
+Rules for read, drivers, implication, next_step and the two voice insights:
 - Use only percentages and point changes exactly as they appear in the facts. No other numbers, counts, dates or week dates.
 - Say "share of voice", "earned conversation", "brand content", "brand-backed creators", "consumer conversation", "social". Never say posts, comments, mentions, or the name of any social platform.
 - Do not explain how the figures are made. Do not name individual people, creators or private accounts; brands and businesses are fine.
 - No dashes used as punctuation. Plain British English, short sentences.`;
 
-function checkPanel(out, facts, quoteList, forBrands) {
+function checkPanel(out, facts, quoteList, forBrands, voiceLists) {
   if (!out || typeof out.read !== 'string') return 'no panel';
   const texts = [out.read, ...(out.drivers || [])];
   const imp = Array.isArray(out.implications) ? out.implications : [];
@@ -249,25 +288,52 @@ function checkPanel(out, facts, quoteList, forBrands) {
     texts.push(i.implication, i.next_step);
   }
   if (!Array.isArray(out.drivers) || !out.drivers.length) return 'no drivers';
+  const V = out.voices || {};
+  for (const side of ['positive', 'negative']) {
+    const v = V[side] || {};
+    const pool = (voiceLists && voiceLists[side]) || [];
+    if (v.insight) texts.push(v.insight);
+    else if (pool.length) return `no ${side} insight`;
+    const qs = Array.isArray(v.quotes) ? v.quotes : [];
+    const need = pool.length >= 7 ? 5 : Math.max(0, pool.length - 2);
+    if (qs.length < need) return `only ${qs.length} ${side} lines chosen; pick at least ${need}`;
+    for (const q of qs) if (!pool.find(x => x.qid === q.qid)) return `${q.qid} is not one of the ${side} lines`;
+  }
   const problem = A.check(texts.map(t => String(t || '')), facts);
   if (problem) return problem;
   if (String(out.read).length > 700) return 'the read is too long';
   for (const q of out.quotes || []) {
-    if (!quoteList.find(x => x.qid === q.qid)) return `${q.qid} is not one of the given lines`;
+    if (!(quoteList || []).find(x => x.qid === q.qid)) return `${q.qid} is not one of the given lines`;
   }
   return null;
 }
 
+// A chosen line, in English, with whether it was translated.
+function renderLine(src, rendered) {
+  let text = scrub(rendered);
+  // A rendering far longer than the line has had something added.
+  if (!text || text.length > src.text.length * 1.8 + 40) text = src.text;
+  // Translated: the line was in Sinhala or Tamil script, or the English
+  // shares under half its words with it (Singlish rendered in English).
+  const words = t => new Set(t.toLowerCase().match(/[\p{L}\p{N}]+/gu) || []);
+  const a = words(src.text), z = words(text);
+  const overlap = z.size ? [...z].filter(w => a.has(w)).length / z.size : 1;
+  const translated = T.SINHALA.test(src.text) || T.TAMIL.test(src.text) || overlap < 0.5;
+  return { text: clip(text, 220), translated, kind: src.kind };
+}
+const uniqueLines = list => list.filter((q, i, all) => all.findIndex(x => x.text.toLowerCase() === q.text.toLowerCase()) === i);
+
 async function writeOne(ctx, p) {
-  const ids = new Map(p.quotes.map(q => [q.qid, q]));
-  const content = `Facts:\n${JSON.stringify(p.facts, null, 1)}\n\nWrite implications for: ${JSON.stringify(p.forBrands)}\n\nThings consumers said:\n${
-    p.quotes.length ? p.quotes.map(q => JSON.stringify(q)).join('\n') : '(none)'}`;
+  const V = p.voices || { positive: [], negative: [] };
+  const lines = list => (list.length ? list.map(q => JSON.stringify({ qid: q.qid, kind: q.kind, text: q.text })).join('\n') : '(none)');
+  const content = `Facts:\n${JSON.stringify(p.facts, null, 1)}\n\nWrite implications for: ${JSON.stringify(p.forBrands)}\n\n` +
+    `Positive lines:\n${lines(V.positive)}\n\nNegative lines:\n${lines(V.negative)}`;
   let feedback = '';
   for (let attempt = 0; attempt < 2; attempt++) {
     let out;
     try {
       const res = await L.getClient().messages.create({
-        ...L.extrasForModel(), model: L.MODEL, max_tokens: 1400,
+        ...L.extrasForModel(), model: L.MODEL, max_tokens: 2400,
         system: [{ type: 'text', text: PANEL_PROMPT, cache_control: { type: 'ephemeral' } }],
         tools: [PANEL_TOOL], tool_choice: { type: 'tool', name: 'panel' },
         messages: [{ role: 'user', content: content + feedback }],
@@ -278,27 +344,23 @@ async function writeOne(ctx, p) {
       ctx.log(`panel ${p.key} call failed: ${e.message}`);
       continue;
     }
-    const problem = checkPanel(out, p.facts, p.quotes, p.forBrands);
+    const problem = checkPanel(out, p.facts, [], p.forBrands, V);
     if (!problem) {
       const implications = {};
       for (const b of p.forBrands) {
         const i = out.implications.find(x => String(x.brand).toLowerCase() === b.toLowerCase());
         implications[b] = { implication: String(i.implication).trim(), next_step: String(i.next_step).trim() };
       }
-      const quotes = (out.quotes || []).slice(0, 3).map(q => {
-        const src = ids.get(q.qid);
-        let text = scrub(q.text);
-        // A rendering far longer than the line has had something added.
-        if (!text || text.length > src.text.length * 1.8 + 40) text = src.text;
-        // Translated: the line was in Sinhala or Tamil script, or the English
-        // shares under half its words with it (Singlish rendered in English).
-        const words = t => new Set(t.toLowerCase().match(/[\p{L}\p{N}]+/gu) || []);
-        const a = words(src.text), z = words(text);
-        const overlap = z.size ? [...z].filter(w => a.has(w)).length / z.size : 1;
-        const translated = T.SINHALA.test(src.text) || T.TAMIL.test(src.text) || overlap < 0.5;
-        return { text: clip(text, 220), translated, kind: src.kind };
-      }).filter((q, i, all) => all.findIndex(x => x.text.toLowerCase() === q.text.toLowerCase()) === i);
-      return { read: out.read.trim(), drivers: out.drivers.map(d => String(d).trim()).filter(Boolean), implications, quotes };
+      const voices = {};
+      for (const side of ['positive', 'negative']) {
+        const v = (out.voices || {})[side] || {};
+        const byId = new Map((V[side] || []).map(q => [q.qid, q]));
+        voices[side] = {
+          insight: String(v.insight || '').trim(),
+          quotes: uniqueLines((v.quotes || []).slice(0, 6).map(q => renderLine(byId.get(q.qid), q.text))),
+        };
+      }
+      return { read: out.read.trim(), drivers: out.drivers.map(d => String(d).trim()).filter(Boolean), implications, voices, quotes: [] };
     }
     feedback = `\n\nYour previous answer was rejected: ${problem}. Write it again following every rule.`;
     ctx.log(`panel ${p.key} rejected: ${problem}`);
@@ -319,4 +381,4 @@ async function build(ctx, R, prev) {
   return out;
 }
 
-module.exports = { build, gather, checkPanel, scrub };
+module.exports = { build, gather, checkPanel, scrub, voiceCandidates };

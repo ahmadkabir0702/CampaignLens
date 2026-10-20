@@ -17,7 +17,8 @@
 --     shows, what drove it, what it means for each Unilever brand with a
 --     next step, and translated consumer quotes with no names.
 --
---  Run after 030. Safe to re-run: it replaces this period.
+--  Run after 030. Safe to re-run: it replaces this period. Run 032 after it,
+--  which adds the positive and negative voices to the panels.
 -- =====================================================================
 
 begin;

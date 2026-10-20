@@ -350,6 +350,28 @@
     });
   }
 
+  // What people are saying: positive and negative, each with a short read
+  // of what that side is about and the lines that show it.
+  function quoteHTML(q) {
+    return `<blockquote class="sov-quote">“${esc(q.text)}”${q.translated ? '<span>Translated</span>' : ''}</blockquote>`;
+  }
+  function voicesHTML(p) {
+    const v = p.voices;
+    if (!v) {
+      return p.quotes.length ? `<section><h4>What people are saying</h4>${p.quotes.map(quoteHTML).join('')}</section>` : '';
+    }
+    const side = (key, label, cls) => {
+      const s = v[key] || {};
+      const qs = s.quotes || [];
+      if (!s.insight && !qs.length) return '';
+      return `<div class="sov-voice ${cls}"><h5>${label}</h5>
+        ${s.insight ? `<p class="sov-voice-read">${esc(s.insight)}</p>` : ''}
+        ${qs.length ? qs.map(quoteHTML).join('') : ''}</div>`;
+    };
+    const body = side('positive', 'Positive', 'is-pos') + side('negative', 'Negative', 'is-neg');
+    return body ? `<section><h4>What people are saying</h4>${body}</section>` : '';
+  }
+
   function openPanel(key, from) {
     const p = state.panels && state.panels[key];
     if (!p) return;
@@ -373,8 +395,7 @@
           ${p.drivers.length ? `<section><h4>What drove it</h4><ul>${p.drivers.map(d => `<li>${esc(d)}</li>`).join('')}</ul></section>` : ''}
           ${p.implication ? `<section class="sov-for"><h4>For ${esc(brand ? brand.name : 'your brand')}</h4><p>${esc(p.implication)}</p>
             ${p.nextStep ? `<p class="sov-next"><b>Next step</b> ${esc(p.nextStep)}</p>` : ''}</section>` : ''}
-          ${p.quotes.length ? `<section><h4>What people are saying</h4>${p.quotes.map(q =>
-            `<blockquote class="sov-quote">“${esc(q.text)}”${q.translated ? '<span>Translated</span>' : ''}</blockquote>`).join('')}</section>` : ''}
+          ${voicesHTML(p)}
         </div>
       </aside>`;
     document.body.appendChild(wrap);

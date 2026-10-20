@@ -82,6 +82,9 @@ async function categoryPayload(category, brandId, preview) {
     const c = r.content || {};
     const mine = active && c.implications ? c.implications[active.brand_name] : null;
     panels[r.panel_key] = { read: c.read || '', drivers: c.drivers || [], quotes: c.quotes || [],
+      // Positive and negative voices, each with a short read. Older panels
+      // only have quotes, and the page falls back to those.
+      voices: c.voices || null,
       implication: mine ? mine.implication : null, nextStep: mine ? mine.next_step : null };
   }
   // Only months that came one after another, up to the last 12.
