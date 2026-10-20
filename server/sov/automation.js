@@ -1,14 +1,16 @@
 /**
- * Endpoints n8n calls to run the weekly share of voice update. They sit
- * outside the login (server.js lets /api/sov/automation and /api/sov/runs
- * through) and are protected by a shared token instead:
+ * Endpoints n8n calls to run the share of voice updates. They sit outside
+ * the login (server.js lets /api/sov/automation, /api/sov/runs and
+ * /api/sov/periods through) and are protected by a shared token instead:
  *
  *   header  x-sov-token: <SOV_RUN_TOKEN>
  *
- *   GET  /api/sov/automation     credits left and the categories to run
+ *   GET  /api/sov/automation     credits left and the categories, each with
+ *                                `due`: whether n8n should run it today
  *   POST /api/sov/runs           { "category_id": "skin_cleansing" } → { runId }
  *                                409 while another run is going
  *   GET  /api/sov/runs/:id       status: running | succeeded | failed
+ *   POST /api/sov/periods/:id/publish   put a period saved for review live
  *
  * Nothing here returns collected content: only run status and counts of
  * work done, for the operator.
@@ -30,7 +32,7 @@ function guard(req, res, next) {
 }
 
 function fail(res, e) {
-  if (e.code === '42P01' || e.code === '42703') return res.status(503).json({ error: 'Run migrations 019 and 020 first' });
+  if (e.code === '42P01' || e.code === '42703') return res.status(503).json({ error: 'Run migrations 019, 020 and 030 first' });
   res.status(e.status || 500).json({ error: e.message, runId: e.runId });
 }
 
@@ -71,9 +73,18 @@ module.exports = function mountSovAutomation(app) {
       res.json({
         runId: Number(r.run_id), category: r.category_id, status: r.status, phase: r.phase,
         startedAt: r.started_at, finishedAt: r.finished_at, creditsStart: r.credits_start, creditsEnd: r.credits_end,
-        error: r.error, published: s.published ?? null, period: s.period || null, creditsUsed: s.creditsUsed ?? null,
+        error: r.error, published: s.published ?? null, awaitingReview: !!s.awaitingReview, periodId: s.periodId ?? null,
+        period: s.period || null, creditsUsed: s.creditsUsed ?? null,
         log: (s.log || []).slice(-15),
       });
+    } catch (e) { fail(res, e); }
+  });
+
+  app.post('/api/sov/periods/:id/publish', guard, async (req, res) => {
+    try {
+      if (!/^\d+$/.test(req.params.id)) return res.status(400).json({ error: 'Bad period id' });
+      const p = await R.publishPeriod(req.params.id);
+      res.json({ published: true, periodId: Number(p.period_id), category: p.category_id, label: p.label });
     } catch (e) { fail(res, e); }
   });
 };

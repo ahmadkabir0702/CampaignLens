@@ -1,5 +1,5 @@
 {
-  "name": "Campaign Lens: weekly share of voice",
+  "name": "Campaign Lens: share of voice runs (daily check)",
   "nodes": [
     {
       "parameters": {
@@ -7,19 +7,20 @@
           "interval": [
             {
               "field": "cronExpression",
-              "expression": "30 3 * * 1"
+              "expression": "30 3 * * *"
             }
           ]
         }
       },
       "id": "bca7e68f-2f6b-42aa-8297-23a5b0030a6f",
-      "name": "Every Monday 03:30",
+      "name": "Every day 03:30",
       "type": "n8n-nodes-base.scheduleTrigger",
       "typeVersion": 1.2,
       "position": [
         0,
         300
-      ]
+      ],
+      "notes": "Runs daily. Campaign Lens says which categories are due: a monthly category from its run_day (the 3rd by default) until a run succeeds that month. Timezone Asia/Colombo (workflow settings)."
     },
     {
       "parameters": {
@@ -87,7 +88,7 @@
           "conditions": [
             {
               "id": "64fd6b30-0a3c-43af-8f25-f08b66ace45b",
-              "leftValue": "={{ $json.credits ?? 0 }}",
+              "leftValue": "={{ ($json.categories || []).some(c => c.due) ? ($json.credits ?? 0) : 999999999 }}",
               "rightValue": "={{ $json.minCredits + $('Config').first().json.creditHeadroom }}",
               "operator": {
                 "type": "number",
@@ -106,7 +107,8 @@
       "position": [
         660,
         300
-      ]
+      ],
+      "notes": "Only checked when at least one category is due today, so a quiet day never raises a low-credit error."
     },
     {
       "parameters": {
@@ -369,7 +371,7 @@
             {
               "id": "2bd9d9e6-f533-4f4c-91b6-a7eb7b671e4e",
               "leftValue": "={{ (Date.now() - new Date($json.startedAt).getTime()) / 3600000 }}",
-              "rightValue": 6,
+              "rightValue": 8,
               "operator": {
                 "type": "number",
                 "operation": "lt"
@@ -381,7 +383,7 @@
         "options": {}
       },
       "id": "48ea92fc-96c3-4013-90c7-076b04fa8d47",
-      "name": "Under 6 hours?",
+      "name": "Under 8 hours?",
       "type": "n8n-nodes-base.if",
       "typeVersion": 2,
       "position": [
@@ -391,7 +393,7 @@
     },
     {
       "parameters": {
-        "errorMessage": "={{ 'Share of voice run ' + $json.runId + ' (' + $json.category + ') has been running for over 6 hours, phase: ' + $json.phase }}"
+        "errorMessage": "={{ 'Share of voice run ' + $json.runId + ' (' + $json.category + ') has been running for over 8 hours, phase: ' + $json.phase }}"
       },
       "id": "db046ace-852f-4243-b48b-50f01c097696",
       "name": "Run looks stuck",
@@ -401,20 +403,44 @@
         2640,
         60
       ]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "loose",
+            "version": 2
+          },
+          "conditions": [
+            {
+              "id": "8addd6a8-67ec-4ff9-b6dd-43f2f67bd298",
+              "leftValue": "={{ $json.due }}",
+              "rightValue": "",
+              "operator": {
+                "type": "boolean",
+                "operation": "true",
+                "singleValue": true
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.filter",
+      "typeVersion": 2.2,
+      "position": [
+        1100,
+        420
+      ],
+      "id": "6f517949-9ec0-43ad-bb5c-becb8d8bbe7c",
+      "name": "Only categories due today",
+      "notes": "due is worked out by Campaign Lens (GET /api/sov/automation)."
     }
   ],
   "connections": {
-    "Every Monday 03:30": {
-      "main": [
-        [
-          {
-            "node": "Config",
-            "type": "main",
-            "index": 0
-          }
-        ]
-      ]
-    },
     "Config": {
       "main": [
         [
@@ -459,7 +485,7 @@
       "main": [
         [
           {
-            "node": "Loop over categories",
+            "node": "Only categories due today",
             "type": "main",
             "index": 0
           }
@@ -568,7 +594,7 @@
       "main": [
         [
           {
-            "node": "Under 6 hours?",
+            "node": "Under 8 hours?",
             "type": "main",
             "index": 0
           }
@@ -582,7 +608,29 @@
         ]
       ]
     },
-    "Under 6 hours?": {
+    "Every day 03:30": {
+      "main": [
+        [
+          {
+            "node": "Config",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Only categories due today": {
+      "main": [
+        [
+          {
+            "node": "Loop over categories",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Under 8 hours?": {
       "main": [
         [
           {

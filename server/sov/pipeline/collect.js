@@ -4,8 +4,14 @@
  *
  * Incremental: `since` is where this run starts looking. Posts already
  * stored are updated (their numbers move), never duplicated. Conversation
- * is fetched once for new posts and refreshed for posts under two weeks old,
- * which is when nearly all of it arrives.
+ * is fetched once for new posts and refreshed while posts are young: two
+ * weeks for a weekly category, five for a monthly one, so a monthly run
+ * still catches the late conversation on the previous month's content.
+ *
+ * Creator posts made with a tracked brand (a collab, a paid partnership
+ * label, a disclosure) are marked backed_brand: they count as that brand's
+ * content, not as earned conversation. The conversation on them is still
+ * earned.
  */
 const { pool } = require('./sc');
 const T = require('./text');
@@ -15,8 +21,8 @@ const DAY = 86400000;
 async function upsertPost(q, catId, p) {
   await q(
     `insert into sov_raw_posts (category_id, platform, post_id, source, owner_brand, url, author, published_at, body,
-        likes, comments, shares, views, is_sri_lanka, sl_reason, search_brands, found_via)
-     values ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17)
+        likes, comments, shares, views, is_sri_lanka, sl_reason, search_brands, found_via, backed_brand, backed_reason)
+     values ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19)
      on conflict (category_id, platform, post_id) do update set
         likes = greatest(excluded.likes, sov_raw_posts.likes),
         comments = greatest(excluded.comments, sov_raw_posts.comments),
@@ -31,10 +37,13 @@ async function upsertPost(q, catId, p) {
         sl_reason = coalesce(sov_raw_posts.sl_reason, excluded.sl_reason),
         search_brands = array(select distinct unnest(sov_raw_posts.search_brands || excluded.search_brands)),
         found_via = array(select distinct unnest(sov_raw_posts.found_via || excluded.found_via)),
+        backed_brand = coalesce(sov_raw_posts.backed_brand, excluded.backed_brand),
+        backed_reason = coalesce(sov_raw_posts.backed_reason, excluded.backed_reason),
         last_seen_at = now()`,
     [catId, p.platform, String(p.post_id), p.source, p.owner_brand || null, p.url || null, p.author || null,
      p.published_at || null, p.body || '', p.likes || 0, p.comments || 0, p.shares || 0, p.views || 0,
-     p.is_sri_lanka, p.sl_reason || null, p.search_brands || [], p.found_via || []]);
+     p.is_sri_lanka, p.sl_reason || null, p.search_brands || [], p.found_via || [],
+     p.backed_brand || null, p.backed_reason || null]);
 }
 
 // ── Brand pages ─────────────────────────────────────────────────────────────
@@ -79,9 +88,14 @@ async function ownedPosts(ctx) {
           if (!t) continue;
           if (t < since) { pageOld++; continue; }
           const cap = typeof p.caption === 'object' && p.caption ? p.caption.text : p.caption;
+          // A collab shows on the brand's page too. It is still the brand's
+          // content, but made with a creator: the conversation on it is earned.
+          const by = String((p.user || {}).username || '').toLowerCase();
+          const collab = (by && by !== b.instagram_handle.toLowerCase()) || igPartners(p).some(h => h !== b.instagram_handle.toLowerCase());
           await keep({ platform: 'instagram', post_id: p.code, source: 'owned', owner_brand: b.brand_name, url: p.url,
             author: (p.user || {}).username, published_at: t, body: cap, likes: Number(p.like_count || 0),
-            comments: Number(p.comment_count || 0), views: Number(p.play_count || 0), is_sri_lanka: true, sl_reason: 'brand page', found_via: ['owned'] });
+            comments: Number(p.comment_count || 0), views: Number(p.play_count || 0), is_sri_lanka: true, sl_reason: 'brand page', found_via: ['owned'],
+            backed_brand: collab ? b.brand_name : null, backed_reason: collab ? 'collab' : null });
         }
         cursor = r.next_max_id;
         if (!r.more_available || !cursor || (items.length && pageOld === items.length)) break;
@@ -116,6 +130,28 @@ async function ownedPosts(ctx) {
 }
 
 // ── Searches ────────────────────────────────────────────────────────────────
+// Who an Instagram item says it was made with: collab co-authors and paid
+// partnership sponsors. Field names differ between endpoints, so all known
+// ones are read and anything missing is simply empty.
+function igPartners(a) {
+  const users = [];
+  for (const u of [].concat(a.coauthor_producers || [], a.invited_coauthor_producers || [])) users.push(u && (u.username || (u.user || {}).username));
+  for (const s of [].concat(a.sponsor_tags || [])) users.push(s && ((s.sponsor || {}).username || s.username));
+  return users.filter(Boolean).map(x => String(x).toLowerCase());
+}
+function igFlags(a) {
+  const co = [].concat(a.coauthor_producers || [], a.invited_coauthor_producers || []).length > 0;
+  return { partners: igPartners(a), coauthor: co,
+    paid: a.is_paid_partnership === true || (a.sponsor_tags || []).length > 0 || !!a.branded_content_tag_info };
+}
+// TikTok marks branded content and ads in a few places.
+function ttFlags(a) {
+  const ci = a.commerce_info || {};
+  const partners = [].concat(a.branded_content_accounts || []).map(u => u && (u.unique_id || u.uniqueId)).filter(Boolean);
+  return { partners: partners.map(x => String(x).toLowerCase()), coauthor: false,
+    paid: !!(a.is_ads || a.is_ad || a.is_paid_content || (ci.branded_content_type && Number(ci.branded_content_type) > 0) || ci.bc_label_test_text) };
+}
+
 function normalise(platform, a, via, P, now) {
   if (platform === 'tiktok') {
     const au = a.author || {};
@@ -128,7 +164,7 @@ function normalise(platform, a, via, P, now) {
     else if (a.region) { sl = false; why = `video country ${a.region}`; }
     return { platform, post_id: String(a.aweme_id || ''), url: a.url || `https://www.tiktok.com/@${handle}/video/${a.aweme_id}`,
       author: handle, published_at: T.toDate(a.create_time), body: text, likes: s.digg_count, comments: s.comment_count,
-      shares: s.share_count, views: s.play_count, is_sri_lanka: sl, sl_reason: why };
+      shares: s.share_count, views: s.play_count, is_sri_lanka: sl, sl_reason: why, flags: ttFlags(a) };
   }
   if (platform === 'instagram') {
     const cap = typeof a.caption === 'object' && a.caption ? a.caption.text : (a.caption || '');
@@ -142,7 +178,7 @@ function normalise(platform, a, via, P, now) {
     const id = a.shortcode || a.code || String(a.id || '');
     return { platform, post_id: id, url: a.url || `https://www.instagram.com/p/${id}/`, author: handle,
       published_at: T.toDate(a.taken_at) || T.igPkTime(a.pk || a.id), body: cap, likes: a.like_count, comments: a.comment_count,
-      views: a.video_view_count || a.view_count, is_sri_lanka: sl, sl_reason: why };
+      views: a.video_view_count || a.view_count, is_sri_lanka: sl, sl_reason: why, flags: igFlags(a) };
   }
   const text = [a.title, a.description].filter(Boolean).join(' ');
   const au = a.author || {};
@@ -157,8 +193,11 @@ function normalise(platform, a, via, P, now) {
 async function searches(ctx) {
   const { sc, q, cat, cfg, P, since, first, now, log } = ctx;
   let kept = 0, seen = 0;
-  const pages = first ? 3 : 1;
-  const ttWindow = first ? 'last-3-months' : 'this-month';
+  // A monthly run looks back about six weeks, so it reads a little deeper
+  // and asks for the last three months, then keeps only what is new.
+  const monthly = ctx.cfg.cadence === 'monthly';
+  const pages = first ? 3 : monthly ? 2 : 1;
+  const ttWindow = first || monthly ? 'last-3-months' : 'this-month';
   const igWindow = 'last-year';   // the value the manual run used; older results are dropped by date below
 
   async function take(platform, items, via, brand) {
@@ -173,11 +212,14 @@ async function searches(ctx) {
       if (!own && via !== 'tagged' && !named.length && !other.length && !isCat) continue;
       if (!own && T.GULF.test(p.body || '')) continue;
       const ownerBrand = own ? (P.study.find(b => b.handles.includes(String(p.author).toLowerCase())) || {}).brand_name : null;
+      const backed = own ? (p.flags && p.flags.coauthor ? { brand: ownerBrand, reason: 'collab' } : null) : T.backedBy(p, P);
       await upsertPost(q, cat.category_id, {
         ...p, source: own ? 'owned' : brand ? 'earned' : 'category', owner_brand: ownerBrand,
         is_sri_lanka: own ? true : p.is_sri_lanka, sl_reason: own ? 'brand account' : p.sl_reason,
         search_brands: brand ? [brand] : [], found_via: [via],
+        backed_brand: backed ? backed.brand : null, backed_reason: backed ? backed.reason : null,
       });
+      if (backed && !own) ctx.stats.brandBacked = (ctx.stats.brandBacked || 0) + 1;
       kept++;
     }
   }
@@ -216,7 +258,7 @@ async function searches(ctx) {
     const uid = (ctx.igUserIds || {})[b.brand_name];
     if (uid) jobs.push(async () => {
       let cursor = null;
-      for (let i = 0; i < (first ? 3 : 1); i++) {
+      for (let i = 0; i < pages; i++) {
         const r = await sc.get('/v1/instagram/user/tagged-posts', { user_id: uid, cursor });
         await take('instagram', r.posts, 'tagged', b.brand_name);
         cursor = r.cursor;
@@ -280,7 +322,7 @@ function commentFields(platform, c) {
 
 async function conversation(ctx) {
   const { sc, q, cat, P, log } = ctx;
-  const fresh = new Date(Date.now() - 14 * DAY);
+  const fresh = new Date(Date.now() - (ctx.cfg.cadence === 'monthly' ? 35 : 14) * DAY);
   // Brand posts in scope, and the Sri Lankan public content most worth reading.
   const { rows: targets } = await q(
     `(select platform, post_id, url, source, owner_brand, comments, comments_fetched_at

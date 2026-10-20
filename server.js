@@ -93,9 +93,10 @@ app.use(session({
 function requireAuth(req, res, next) {
   if (req.path === '/login' || req.path === '/logout' || req.path === '/api/test-gemini') return next();
   if (req.path.startsWith('/img/')) return next();
-  // Weekly share of voice runs, started by n8n. Protected by x-sov-token
+  // Share of voice runs, started by n8n. Protected by x-sov-token
   // (server/sov/automation.js), not by a login session.
-  if (req.path === '/api/sov/automation' || req.path.startsWith('/api/sov/runs')) return next();
+  if (req.path === '/api/sov/automation' || req.path.startsWith('/api/sov/runs')
+      || /^\/api\/sov\/periods\/\d+\/publish$/.test(req.path)) return next();
   if (req.session && req.session.user) return next();
   // API calls get 401, not redirect
   if (req.path.startsWith('/api/')) {

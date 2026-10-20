@@ -1,5 +1,5 @@
 /**
- * One weekly share of voice run for one category:
+ * One share of voice run for one category, monthly or weekly:
  *
  *   brand posts → searches → creator countries → label posts →
  *   conversation → label conversation → work out shares and publish → tidy up
@@ -10,8 +10,14 @@
  * the ScrapeCreators budget.
  *
  * If collection is stopped by the credit cap or the balance floor, nothing
- * is published: the page keeps last week's figures and the next run starts
+ * is published: the page keeps the previous figures and the next run starts
  * from the last successful one, so nothing is lost.
+ *
+ * A category with auto_publish off saves its period without showing it, for
+ * review. publishPeriod() puts it live.
+ *
+ * n8n asks every day which categories are due (automatedCategories) and
+ * starts those, one at a time.
  */
 const { pool: db, query: q } = require('../../../db');
 const { notifyAdmin, esc } = require('../../../notify');
@@ -40,15 +46,47 @@ async function loadCategory(categoryId) {
   return { cat, cfg, brands };
 }
 
+/**
+ * Every automated category and whether it is due today (Sri Lanka time).
+ *   monthly  due from run_day onwards, until a run succeeds this month
+ *   weekly   due when nothing has succeeded in the last six days
+ * A category tried once today, successfully or not, waits for tomorrow, so
+ * a run that fails for lack of credits is not retried all day.
+ */
 async function automatedCategories() {
   const { rows } = await q(
     `select c.category_id, c.name, cfg.window_days, cfg.credit_cap,
+            coalesce(cfg.cadence, 'weekly') as cadence, coalesce(cfg.run_day, 1) as run_day,
+            coalesce(cfg.auto_publish, true) as auto_publish,
             (select to_char(max(r.finished_at), 'YYYY-MM-DD"T"HH24:MI:SS"Z"') from sov_runs r
-              where r.category_id = c.category_id and r.status = 'succeeded') as last_success
+              where r.category_id = c.category_id and r.status = 'succeeded') as last_success,
+            exists (select 1 from sov_runs r where r.category_id = c.category_id and r.status = 'succeeded'
+                       and date_trunc('month', r.started_at at time zone 'Asia/Colombo')
+                         = date_trunc('month', now() at time zone 'Asia/Colombo')) as done_this_month,
+            exists (select 1 from sov_runs r where r.category_id = c.category_id and r.status = 'succeeded'
+                       and r.started_at > now() - interval '6 days') as done_this_week,
+            exists (select 1 from sov_runs r where r.category_id = c.category_id
+                       and (r.started_at at time zone 'Asia/Colombo')::date = (now() at time zone 'Asia/Colombo')::date) as tried_today,
+            extract(day from now() at time zone 'Asia/Colombo')::int as today
        from sov_categories c join sov_category_config cfg using (category_id)
       where cfg.is_automated
-      order by c.sort_order, c.category_id`);
-  return rows;
+      order by cfg.run_day nulls first, c.sort_order, c.category_id`);
+  return rows.map(r => {
+    const due = !r.tried_today && (r.cadence === 'monthly'
+      ? r.today >= Number(r.run_day) && !r.done_this_month
+      : !r.done_this_week);
+    return { category_id: r.category_id, name: r.name, cadence: r.cadence, run_day: Number(r.run_day),
+      auto_publish: r.auto_publish, window_days: r.window_days, credit_cap: r.credit_cap, last_success: r.last_success, due };
+  });
+}
+
+/** Put a period that was saved for review on the page. */
+async function publishPeriod(periodId) {
+  const { rows: [p] } = await q(
+    `update sov_periods set is_published = true where period_id = $1
+     returning period_id, category_id, label`, [periodId]);
+  if (!p) { const e = new Error('No such period'); e.status = 404; throw e; }
+  return p;
 }
 
 /** Runs left 'running' by a restart can never finish: close them. */
@@ -71,6 +109,8 @@ async function startRun(categoryId, opts = {}) {
   const loaded = await loadCategory(categoryId);
   const { rows: [r] } = await q(`insert into sov_runs (category_id, phase) values ($1, 'starting') returning run_id`, [categoryId]);
   const runId = Number(r.run_id);
+  loaded.cfg.cadence = loaded.cfg.cadence || 'weekly';
+  if (loaded.cfg.auto_publish == null) loaded.cfg.auto_publish = true;
   active = { runId, categoryId };
   execute(runId, loaded, opts)
     .catch(e => console.error('[sov] run crashed:', e))
@@ -85,7 +125,14 @@ async function execute(runId, { cat, cfg, brands }, opts) {
     stats.log.push(line); if (stats.log.length > 120) stats.log.shift();
     console.log(`[sov ${cat.category_id}] ${msg}`);
   };
-  const phase = async p => { log(`phase: ${p}`); await q(`update sov_runs set phase = $2, stats = $3 where run_id = $1`, [runId, p, JSON.stringify(stats)]); };
+  let current = 'starting', noted = 0;
+  const phase = async p => { current = p; log(`phase: ${p}`); await q(`update sov_runs set phase = $2, stats = $3 where run_id = $1`, [runId, p, JSON.stringify(stats)]); };
+  // A note on the current phase, for long waits (batch labelling). At most once a minute.
+  const phaseNote = async note => {
+    if (Date.now() - noted < 60000) return;
+    noted = Date.now();
+    await q(`update sov_runs set phase = $2 where run_id = $1`, [runId, `${current}: ${note}`]).catch(() => {});
+  };
 
   const { rows: [last] } = await q(
     `select started_at from sov_runs where category_id = $1 and status = 'succeeded' order by started_at desc limit 1`, [cat.category_id]);
@@ -98,7 +145,7 @@ async function execute(runId, { cat, cfg, brands }, opts) {
   Object.assign(stats, { first, since: since.toISOString().slice(0, 10), cap });
 
   const P = T.prepare(cfg, brands);
-  const ctx = { db, q, cat, cfg, P, since, first, now, log, stats, historyDays: HISTORY_DAYS + 7, periodEnd: opts.periodEnd || null };
+  const ctx = { db, q, cat, cfg, P, since, first, now, log, stats, runId, phaseNote, historyDays: HISTORY_DAYS + 7, periodEnd: opts.periodEnd || null };
   let sc, stopped = null, failed = null, result = null;
 
   try {
@@ -149,6 +196,8 @@ async function report({ cat, runId, status, error, stats, end, result }) {
   const ok = status === 'succeeded';
   const lines = [];
   if (ok && stats.published) lines.push(`Published: ${stats.period.label}.`);
+  else if (ok && stats.awaitingReview) lines.push(`Saved for review, not yet on the page: ${stats.period.label} (period ${stats.periodId}). `
+    + `Check it, then publish it with POST /api/sov/periods/${stats.periodId}/publish, or in SQL: update sov_periods set is_published = true where period_id = ${stats.periodId};`);
   else if (ok) lines.push(`Not published: ${stats.notPublishedReason || 'see the run log'}. The page keeps the previous figures.`);
   else lines.push(error);
   lines.push(`Credits used: ${stats.creditsUsed}${end != null ? `, ${end} left on the account` : ''}.`);
@@ -159,11 +208,11 @@ async function report({ cat, runId, status, error, stats, end, result }) {
   }
   if (!ok && /cap/.test(error || '')) lines.push('Raise credit_cap in sov_category_config if this keeps happening.');
   if (!ok && /balance|run out/.test(error || '')) lines.push('Top up ScrapeCreators credits, then start the run again.');
-  const subject = `${ok ? 'Share of voice updated' : 'Share of voice run did not finish'}: ${cat.name}`;
+  const subject = `${!ok ? 'Share of voice run did not finish' : stats.awaitingReview ? 'Share of voice ready for review' : 'Share of voice updated'}: ${cat.name}`;
   const html = `<div style="font-family:Arial,sans-serif;font-size:14px;line-height:1.5">
     <p><b>${esc(subject)}</b> (run ${runId})</p>${lines.map(l => `<p>${esc(l)}</p>`).join('')}
     <pre style="font-size:12px;color:#555">${esc(stats.log.slice(-25).join('\n'))}</pre></div>`;
   await notifyAdmin(subject, html, `${ok ? ':white_check_mark:' : ':warning:'} ${subject}\n${lines.join('\n')}`);
 }
 
-module.exports = { startRun, getRun, automatedCategories, closeOrphans, isRunning: () => (active ? { ...active } : null) };
+module.exports = { startRun, getRun, automatedCategories, publishPeriod, closeOrphans, isRunning: () => (active ? { ...active } : null) };

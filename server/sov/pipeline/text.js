@@ -92,6 +92,51 @@ function commentKind(text) {
 
 const sha = s => crypto.createHash('sha1').update(s).digest('hex').slice(0, 24);
 
+/**
+ * The same short reply, written the same way, gets the same label, so it is
+ * only sent to the labeller once: "price?", "nice", "done", "where to buy".
+ * Only short texts that name no brand qualify; anything longer, or naming a
+ * brand, depends on what it says and where, and is labelled on its own.
+ * Returns null when the text does not qualify.
+ */
+function normKey(text, P) {
+  const t = String(text || '').toLowerCase()
+    .replace(/@[\w.]+/g, ' ')
+    .replace(/https?:\/\/\S+/g, ' ')
+    .replace(/[^\p{L}\p{N}?! ]+/gu, ' ')
+    .replace(/\s+/g, ' ').trim();
+  if (!t || t.length > 40) return null;
+  if (P && (brandMentions(t, P).length || otherMentions(t, P).length || P.study.some(b => any(t, b.termRegs)))) return null;
+  return t;
+}
+
+// A creator saying the content was made with a brand.
+const DISCLOSURE = /#(ad|ads|sponsored|sponsor|paidpartnership|paid_partnership|partner|partnership|brandpartner|collab|collaboration|gifted|pr)\b|paid\s+partnership|in\s+(collab|collaboration|partnership)\s+with|sponsored\s+by|\bad\s*:/i;
+
+/**
+ * Was this public post made with one of the tracked brands? Looks at what
+ * the platform says (collab co-authors, paid partnership labels, branded
+ * content flags) and at disclosures in the text. Returns
+ * { brand, reason } or null. A disclosure or an unnamed partnership label
+ * only counts when exactly one tracked brand is named or tagged, so a
+ * creator's #ad for something else is never pinned on a tracked brand.
+ */
+function backedBy(post, P) {
+  const f = post.flags || {};
+  const byHandle = h => P.study.find(b => b.handles.includes(String(h || '').toLowerCase().replace(/^@/, '')));
+  for (const h of f.partners || []) {
+    const b = byHandle(h);
+    if (b) return { brand: b.brand_name, reason: f.coauthor ? 'collab' : 'paid partnership label' };
+  }
+  const text = post.body || '';
+  const tagged = [...new Set((text.match(/@[\w.]+/g) || []).map(byHandle).filter(Boolean).map(b => b.brand_name))];
+  const named = [...new Set([...brandMentions(text, P), ...tagged])];
+  if (named.length !== 1) return null;
+  if (f.paid) return { brand: named[0], reason: 'paid partnership label' };
+  if (DISCLOSURE.test(text)) return { brand: named[0], reason: 'disclosure' };
+  return null;
+}
+
 function toDate(v) {
   if (v == null || v === '') return null;
   if (typeof v === 'number' || /^\d+$/.test(String(v))) {
@@ -137,5 +182,5 @@ function fbRelTime(s, now = new Date()) {
 
 module.exports = {
   SINHALA, TAMIL, GULF, SL_SIGNS, compile, any, prepare, brandMentions, otherMentions, canonBrand,
-  productTag, commentKind, sha, toDate, igPkTime, fbRelTime,
+  productTag, commentKind, sha, toDate, igPkTime, fbRelTime, normKey, backedBy, DISCLOSURE,
 };
