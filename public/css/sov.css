@@ -115,6 +115,14 @@
 .sov-quote{margin:0 0 10px;padding:10px 14px;border-left:3px solid var(--s3);background:var(--canvas);border-radius:0 8px 8px 0;
   font:400 14px/21px var(--font);color:var(--ink-700)}
 .sov-quote span{display:block;margin-top:4px;font:400 11.5px/16px var(--font);color:var(--ink-400)}
+.sov-voice{margin:0 0 18px}
+.sov-voice h5{display:flex;align-items:center;gap:8px;margin:0 0 6px;font:600 13px/18px var(--font);color:var(--ink-900)}
+.sov-voice h5::before{content:"";width:8px;height:8px;border-radius:50%;background:var(--pos)}
+.sov-voice.is-neg h5::before{background:var(--neg)}
+.sov-voice-read{margin:0 0 10px !important;font:400 14px/21px var(--font);color:var(--ink-700)}
+.sov-voice .sov-quote{border-left-color:var(--pos)}
+.sov-voice.is-neg .sov-quote{border-left-color:var(--neg)}
+.sov-voice-none{margin:0;font:400 13px/19px var(--font);color:var(--ink-400)}
 body.sov-drawer-open{overflow:hidden}
 @media (max-width:640px){
   .sov-drawer{width:100%}
