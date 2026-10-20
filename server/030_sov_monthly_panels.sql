@@ -27,9 +27,11 @@ do $$ begin
   alter table sov_category_config add constraint sov_cfg_run_day check (run_day between 1 and 28);
 exception when duplicate_object then null; end $$;
 
--- Skin cleansing was reviewed by hand in the first study, so it publishes
--- on its own from the start. Every new category starts on review.
-update sov_category_config set auto_publish = true, cadence = 'monthly' where category_id = 'skin_cleansing';
+-- Skin cleansing moves to monthly. Its first automated run is the first
+-- time this code reads the live services, so it is saved for review like
+-- every new category. Publish it once it reads right, then set
+-- auto_publish = true so later months go live on their own.
+update sov_category_config set auto_publish = false, cadence = 'monthly' where category_id = 'skin_cleansing';
 
 -- A monthly run reads about six weeks of brand pages, searches and
 -- conversation in one go, so it needs a bigger cap than a weekly one.

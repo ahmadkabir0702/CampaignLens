@@ -14,12 +14,13 @@ Everything shown is a percentage. The database holds shares only (0 to 1), with 
 | `public/js/sov.js` | The page. Hooks into `setNav` and wraps `switchBrand`. |
 | `public/css/sov.css` | Styles, on the design system tokens. |
 | `server.js` | Mounts the routes; lets the two run endpoints past the login (they use a token). |
-| `server/019_sov_pipeline.sql` | Weekly run tables: brand handles and terms, category config, collected content, runs. |
+| `server/019_sov_pipeline.sql` | Run tables: brand handles and terms, category config, collected content, runs. |
+| `server/030_sov_monthly_panels.sql` | Monthly cadence, review before publishing, brand-backed creator content, batch labelling, insight panels. |
 | `server/020_sov_config_skin_cleansing.sql` | Skin cleansing handles, keywords, searches and themes. Safe to re-run. |
 | `server/sov/automation.js` | `GET /api/sov/automation`, `POST /api/sov/runs`, `GET /api/sov/runs/:id`, for n8n. |
-| `server/sov/pipeline/*.js` | The weekly run: collect, label, work out shares, publish. |
+| `server/sov/pipeline/*.js` | The run: collect, label, work out shares, write the panels, publish. `panels.js` writes the "What's behind this" panels. |
 | `server/sov/new_category_template.sql` | Fill in to add a category. |
-| `n8n/sov-weekly.json` | The n8n workflow: starts the run every Monday and watches it. |
+| `n8n/sov-runs.json` | The n8n workflow: checks every day which categories are due, starts each one and watches it. |
 | `public/index.html` | Nav item, page container, stylesheet, script, and the `setNav` wrapper. |
 
 ## Setup
@@ -40,27 +41,52 @@ Everything shown is a percentage. The database holds shares only (0 to 1), with 
 
 Insert the category and its brands, then a `sov_periods` row and its metrics and breakdowns, as 018 does. A new period for an existing category only needs the period, metrics and breakdowns. Set `is_published = false` to stage a period before it goes live.
 
-## Weekly update
+## Monthly update
 
-Every Monday n8n asks Campaign Lens to update each automated category. Campaign Lens does the work itself, in the background:
+Each category has a `run_day` (default the 3rd). n8n checks every morning at 03:30 Sri Lanka time and starts any category that is due; Campaign Lens does the work itself, in the background:
 
-1. **Brand posts.** New posts on each brand's pages since the last run (10 days of overlap for late numbers).
-2. **Searches.** Brand searches, hashtags, the brand's tagged posts and the category searches in `sov_category_config`.
+1. **Brand posts.** New posts on each brand's pages since the last run, with 10 days of overlap for late numbers. A first run collects 12 weeks.
+2. **Searches.** Brand searches, hashtags, the brand's tagged posts and the category searches in `sov_category_config`, covering the last 3 months and kept only inside the collection window.
 3. **Creator countries.** TikTok creators are checked once and remembered in `sov_creators`.
-4. **Labelling.** Claude Sonnet labels anything new: relevant or not, who wrote it, brands, themes, sentiment. Labels are kept, so nothing is labelled twice. Emoji, empty and tag-only replies are labelled by rule.
-5. **Conversation.** Replies on brand posts from the last two weeks, and on the most discussed public posts.
-6. **Shares.** The last 4 full weeks (Monday to Sunday) become the headline; 12 weeks feed the weekly chart. Claude writes the summary sentences from the figures; a checker rejects any sentence with a number that is not one of the figures, or that names a platform or says posts or comments, and a plain template is used if it fails twice.
-7. **Publish** in one transaction, then email or Slack the result (same `RESEND_*` / `SLACK_WEBHOOK_URL` settings as the creative notifications).
+4. **Labelling.** Claude Sonnet labels anything new: relevant or not, who made it, brands, themes, sentiment. Labels are kept, so nothing is labelled twice.
+   - Requests go through the Message Batches API: half the price, same model and answers. Each batch is recorded in `sov_label_batches`, so if Render restarts mid-run the next run collects the finished labels instead of paying again.
+   - Identical short replies ("price?", "nice") are labelled once and the label reused.
+   - Emoji, empty and tag-only replies are labelled by rule.
+5. **Conversation.** Replies on brand posts up to 35 days old, and on the most discussed public posts.
+6. **Shares.** The last full calendar month is the headline, compared with the month before. The trend shows month by month, with 12 weeks of weekly detail.
+7. **Summary and panels.** Claude writes the summary sentences and a "What's behind this" panel for each chart and each brand: what it shows, what drove it, what it means for the brand with a next step, and short translated consumer quotes with no names. Everything is written from computed figures, and a checker rejects any number that is not one of the figures, any platform name, posts, comments or mentions, and dashes.
+8. **Publish** in one transaction, then email or Slack the result.
 
 Content older than about 4 months is deleted. Commenters' names are never stored.
 
-**When nothing is published.** If the credit cap or the balance floor stops collection, the page keeps last week's figures and the run is marked failed with the reason. The next run starts from the last successful one, so nothing is lost. A window with too little conversation (under `SOV_MIN_MENTIONS`) is also not published.
+### Brand-backed creator content
 
-**Cost.** About 550 to 650 ScrapeCreators credits per category per week (roughly $5 a month at $47 per 25,000 credits). The first run for a category collects 12 weeks and uses about 2,000. Claude labelling is about $2 to $3 a week per category, more on the first run.
+Creator content made with a brand counts as that brand's voice, not earned:
+
+- an Instagram collab (it also shows on the brand's page);
+- a post the platform marks as a paid partnership or branded content;
+- a disclosure in the caption (#ad, #sponsored, #collab, "in partnership with" and similar) naming a tracked brand;
+- a creator post your team tracks in Campaign Lens as an Others Say creative.
+
+The audience conversation on that content is earned. Earned voice is everything else: consumers, unpaid creators, sellers and media. The page shows each brand's voice split three ways in "Where each brand's voice comes from".
+
+### Review before publishing
+
+A category with `auto_publish = false` saves each period without putting it on the page. Internal accounts see it in Campaign Lens under a "Preview" banner; brand teams keep seeing the last published period. To put it live:
+
+```
+curl -X POST https://<campaign-lens>/api/sov/periods/<period_id>/publish -H "x-sov-token: <SOV_RUN_TOKEN>"
+```
+
+or in SQL, `update sov_periods set is_published = true where period_id = ...`. Then set `auto_publish = true` on the category so later months go live on their own. Every new category, and skin cleansing's first automated run, start on review.
+
+**When nothing is published.** If the credit cap or the balance floor stops collection, the page keeps the last published month and the run is marked failed with the reason. The next run starts from the last successful one, so nothing is lost. A month with too little conversation (under `SOV_MIN_MENTIONS`) is also not published.
+
+**Cost**, estimated from test runs: about 1,200 to 1,600 ScrapeCreators credits per category per month, and about 2,500 for a category's first 12-week run. Claude (Sonnet with batch processing) is about $3 to $4 a month per category, about $5 on the first run.
 
 ### Setup, once
 
-1. Run `019_sov_pipeline.sql`, then `020_sov_config_skin_cleansing.sql`, in the Supabase SQL editor.
+1. Run `019_sov_pipeline.sql`, `020_sov_config_skin_cleansing.sql`, then `030_sov_monthly_panels.sql`, in the Supabase SQL editor.
 2. On Render, add environment variables:
 
 | Variable | Value |
@@ -69,15 +95,18 @@ Content older than about 4 months is deleted. Commenters' names are never stored
 | `SOV_RUN_TOKEN` | A long random string (at least 16 characters). n8n sends it. |
 | `SOV_MIN_CREDITS` | Optional. Stop a run when the balance falls to this. Default 300. |
 | `SOV_FIRST_RUN_CAP` | Optional. Credit cap for a category's first run. Default 3000. |
-| `SOV_LABEL_MODEL` | Optional. Default `claude-sonnet-5`, the same Sonnet Ask Lens uses. |
+| `SOV_LABEL_MODEL` | Optional. Default `claude-sonnet-5`. |
+| `SOV_LABEL_MODE` | Optional. `batch` (default, half price) or `direct`. |
+| `SOV_BATCH_WAIT_MIN` | Optional. How long a run waits for a batch before leaving it for the next run. Default 240. |
+| `SOV_PANELS` | Optional. `off` to skip the panels. |
 | `SOV_MIN_MENTIONS` | Optional. Below this the period is not published. Default 200. |
 
 `ANTHROPIC_API_KEY` is already set for Ask Lens.
 
-3. In n8n: Workflows, Import from file, `n8n/sov-weekly.json`. Then:
-   - Create a credential of type **Header Auth** named `Campaign Lens SOV token`: name `x-sov-token`, value the `SOV_RUN_TOKEN`. Select it on the three HTTP nodes.
+3. In n8n: Workflows, Import from file, `n8n/sov-runs.json`. Then:
+   - Create a credential of type **Header Auth** named `Campaign Lens SOV token`: name `x-sov-token`, value the `SOV_RUN_TOKEN`. Select it on the HTTP nodes.
    - In the **Config** node set `baseUrl` to the Campaign Lens address.
-   - The schedule is Monday 03:30 Sri Lanka time. Move it if it lands on the paid and organic sync.
+   - It checks every day at 03:30 Sri Lanka time and only starts categories that are due. Move the time if it lands on the paid and organic sync.
    - Activate it. Set an error workflow on it if you want n8n to alert on failures too.
 
 ### Run one now
@@ -101,10 +130,12 @@ Configuration only, no code:
    - **Category words and searches**: 60 to 100 industry searches across languages and needs, a shorter list for Facebook and Instagram, and a few Sri Lankan hashtags.
    - **Other brands** to watch in earned conversation, with a group for colour.
    - **Themes**: 8 to 14 codes with the names to show.
+   - **Run day**: spread categories over the 3rd to the 6th.
 2. Check the Campaign Lens brands are linked: `select * from sov_category_brands where category_id = '...'`.
-3. Start a first run by hand and read the email. It collects 12 weeks (about 2,000 credits), so check the balance first.
-4. Open Campaign Lens on one of the linked brands and read the page. If something irrelevant is counted, tighten the terms, set the brand to ambiguous or `multi`, or narrow the scope note, then run again with `"backfill": true`.
+3. Start a first run by hand and read the email. It collects 12 weeks (about 2,500 credits), so check the balance first.
+4. Open Campaign Lens on one of the linked brands as an internal account and read the preview. If something irrelevant is counted, tighten the terms, set the brand to ambiguous or `multi`, or narrow the scope note, then run again with `"backfill": true`.
+5. Publish the period and set `auto_publish = true`.
 
-From then on the Monday run includes it. Set `is_automated = false` to pause a category without losing anything.
+Set `is_automated = false` to pause a category without losing anything.
 
-The skin cleansing period from the first manual run (20 Jul to 18 Oct 2026) stays in the database. The page shows whichever published period ends last, so the weekly rolling period takes over from the first Monday run.
+The skin cleansing period from the first manual study (20 Jul to 18 Oct 2026) stays in the database. Brand teams keep seeing it until the first monthly period is published.

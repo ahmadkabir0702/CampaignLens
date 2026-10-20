@@ -1,10 +1,16 @@
 -- =====================================================================
---  Template: add a share of voice category to the weekly run
+--  Template: add a share of voice category to the monthly run
 --
 --  Copy this file, replace every <...>, run it in the Supabase SQL editor.
---  Nothing else changes: no code, no n8n edit. The next Monday run picks
---  the category up because is_automated = true. To try it at once, start
---  a run by hand (docs/share-of-voice.md, "Run one now").
+--  Nothing else changes: no code, no n8n edit. n8n checks every day and
+--  starts the category from its run_day, because is_automated = true. To
+--  try it at once, start a run by hand (docs/share-of-voice.md, "Run one
+--  now").
+--
+--  A new category starts with auto_publish = false: its first run is saved
+--  for review, not shown. Internal accounts see it in Campaign Lens under a
+--  "Preview" banner. Publish it when it reads right, then set
+--  auto_publish = true so later months go live on their own.
 --
 --  Patterns are JavaScript regular expressions, case-insensitive. Write
 --  '\s?' for an optional space, '\b' for a word edge. In SQL strings a
@@ -56,7 +62,8 @@ on conflict (category_id, brand_name) do update set
 -- 3. What the category is and what to search.
 insert into sov_category_config
   (category_id, is_automated, scope_note, category_terms, other_products,
-   searches, facebook_searches, instagram_searches, hashtags, other_brands, topics, window_days, credit_cap)
+   searches, facebook_searches, instagram_searches, hashtags, other_brands, topics, window_days, credit_cap,
+   cadence, run_day, auto_publish)
 values ('<hair_care>', true,
   -- One or two sentences for the labeller: what is in, what is out.
   '<Shampoo, conditioner, hair oil and hair masks. Not hair dye, styling gels, combs or salon services.>',
@@ -80,13 +87,18 @@ values ('<hair_care>', true,
   -- topics: themes to tag, code -> name shown in Campaign Lens. 8 to 14 works well.
   '{"<hair fall>": "<Hair fall>", "<dandruff>": "<Dandruff>", "<price/value>": "<Price and value>",
     "<fragrance>": "<Fragrance>", "<shine/smooth>": "<Shine and smoothness>", "<herbal/natural>": "<Herbal and natural>"}'::jsonb,
-  28,     -- window_days: the headline covers the last 4 weeks
-  1500)   -- credit_cap: most credits one weekly run may use. The first run may use up to SOV_FIRST_RUN_CAP.
+  28,     -- window_days: only used by a weekly category
+  2500,   -- credit_cap: most credits one monthly run may use. The first run may use up to SOV_FIRST_RUN_CAP.
+  'monthly', -- cadence: 'monthly' (the last full calendar month) or 'weekly'
+  4,      -- run_day: the day of the month the run becomes due. Spread categories over the 3rd to the 6th.
+  false)  -- auto_publish: false until the first run has been reviewed
 on conflict (category_id) do update set
   is_automated = excluded.is_automated, scope_note = excluded.scope_note, category_terms = excluded.category_terms,
   other_products = excluded.other_products, searches = excluded.searches, facebook_searches = excluded.facebook_searches,
   instagram_searches = excluded.instagram_searches, hashtags = excluded.hashtags, other_brands = excluded.other_brands,
-  topics = excluded.topics, window_days = excluded.window_days, credit_cap = excluded.credit_cap, updated_at = now();
+  topics = excluded.topics, window_days = excluded.window_days, credit_cap = excluded.credit_cap,
+  cadence = excluded.cadence, run_day = excluded.run_day, updated_at = now();
+  -- auto_publish is left as it is on re-run, so a reviewed category stays live.
 
 commit;
 

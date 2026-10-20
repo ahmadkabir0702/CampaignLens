@@ -316,7 +316,7 @@
         ${cat.commentTypes.length ? `<div class="sov-card" id="sov-comment-types"><div class="sov-card-head"><h3>Conversation intent</h3>${behind('intent')}</div>
           <p class="sov-note">What consumers are doing in the conversation.</p>${simpleBars(cat.commentTypes)}</div>` : ''}
         ${cat.authorTypes.length ? `<div class="sov-card" id="sov-authors"><div class="sov-card-head"><h3>Voice by source</h3>${behind('source')}</div>
-          <p class="sov-note">Share of earned content by type of source.</p>${simpleBars(cat.authorTypes)}</div>` : ''}
+          <p class="sov-note">Who makes the category content outside brand pages, including creator content made with a brand.</p>${simpleBars(cat.authorTypes)}</div>` : ''}
       </div>
     </div>`;
     drawWeekly(cat, reduced);
