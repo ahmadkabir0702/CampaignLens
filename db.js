@@ -45,6 +45,14 @@ async function brandsForUser(username) {
       where username = $1 and is_active = true`,
     [username]
   );
+  // The media head approves campaign sign-offs for every brand, so he sees
+  // every active brand, including ones added after his account was made.
+  const u = await query(
+    `select role from app_users where username = $1 and is_active = true`, [username]);
+  if (u.rows[0] && u.rows[0].role === 'media_head') {
+    const b = await query(`select brand_id from brands where is_active = true order by name`);
+    return { brands: b.rows.map(r => r.brand_id), isInternal: rows[0] ? rows[0].is_internal : false };
+  }
   if (!rows.length) return null;
   return { brands: rows[0].brands || [], isInternal: rows[0].is_internal };
 }
