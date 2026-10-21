@@ -31,17 +31,22 @@
   // Logo lookup tries several conventions before giving up, so files can sit
   // in /img or /img/brands and be named "Lifebuoy.svg" or "lifebuoy.svg".
   // First one that loads wins; if none do, the monogram shows.
-  // Exact brand-name -> file. Add an entry whenever the database name does
-  // not match the filename: every miss below costs a 404 round trip before
-  // the logo appears, so anything listed here loads on the first request.
+  // Known logos load on the first request; add a line here for each new
+  // logo file. Keys are lower case with spaces and punctuation removed, so "CIF",
+  // "Cif" and "Close Up" all find their file whatever case the database uses.
   const BRAND_LOGOS = {
-    'Surf Excel': '/img/Surf.svg',
-    // "Database name": "/img/File.svg",
+    cif: '/img/Cif.svg', closeup: '/img/Closeup.svg', dove: '/img/Dove.svg', knorr: '/img/Knorr.svg',
+    lifebuoy: '/img/Lifebuoy.svg', lux: '/img/Lux.svg', pears: '/img/Pears.svg', ponds: '/img/Ponds.svg',
+    rexona: '/img/Rexona.svg', signal: '/img/Signal.svg', sunlight: '/img/Sunlight.svg', sunsilk: '/img/Sunsilk.svg',
+    surf: '/img/Surf.svg', surfexcel: '/img/Surf.svg', vaseline: '/img/Vaseline.svg', viva: '/img/Viva.svg',
   };
+  const logoKey = (s) => String(s || '').toLowerCase().replace(/[^a-z0-9]/g, '');
 
   function logoCandidates(name) {
     const raw = String(name || '').trim();
-    if (BRAND_LOGOS[raw]) return [BRAND_LOGOS[raw]];
+    const firstWord = raw.split(/[\s\-–—/&]+/)[0] || '';
+    const known = BRAND_LOGOS[logoKey(raw)] || BRAND_LOGOS[logoKey(firstWord)];
+    if (known) return [known];
 
     // Otherwise guess, loosest last: exact, hyphenated, punctuation stripped,
     // first word. Extension is the OUTER loop so every name form is tried as
