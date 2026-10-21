@@ -603,12 +603,29 @@ function setSort(s, el) {
   currentSort = s;
   document.querySelectorAll('.sort-btn').forEach(b=>b.classList.remove('active'));
   el.classList.add('active');
+  sortDirLabel();
   render();
+}
+
+// The order in the words of the sort it applies to, not "Asc" and "Desc".
+const SORT_DIR_WORDS = {
+  date:  ['Newest first', 'Oldest first'],
+  added: ['Newest first', 'Oldest first'],
+  cqr:   ['Best rated first', 'Lowest rated first'],
+  reach: ['Highest first', 'Lowest first'],
+  spend: ['Highest first', 'Lowest first'],
+};
+function sortDirLabel() {
+  const words = SORT_DIR_WORDS[currentSort] || ['Descending', 'Ascending'];
+  const label = document.getElementById('sort-dir-label');
+  const btn = document.getElementById('sort-dir-btn');
+  if (label) label.textContent = words[sortAscending ? 1 : 0];
+  if (btn) btn.classList.toggle('is-up', sortAscending);
 }
 
 function toggleSortDir() {
   sortAscending = !sortAscending;
-  document.getElementById('sort-dir-btn').innerHTML = sortAscending ? 'Asc' : 'Desc';
+  sortDirLabel();
   render();
 }
 
