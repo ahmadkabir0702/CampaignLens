@@ -73,11 +73,32 @@
     return d.toLocaleDateString('en-GB', { day: 'numeric', month: 'short', timeZone: 'UTC' });
   }
 
+  // Placeholders in the shape of the page: context chips, the figures band,
+  // the findings, and the two chart cards. Same .sk sweep as the Creative Hub.
+  function skeleton() {
+    const bars = n => Array.from({ length: n }, (_, i) => `<div class="sov-bar">
+        <div class="sk" style="width:${[70, 54, 62, 48, 58, 44][i % 6]}%;height:11px;margin-left:auto"></div>
+        <div class="sk" style="width:${[92, 46, 42, 36, 30, 18][i % 6]}%;height:10px;border-radius:99px"></div>
+        <div class="sk" style="width:38px;height:11px"></div></div>`).join('');
+    const card = body => `<div class="sov-card"><div class="sk" style="width:44%;height:15px"></div>
+        <div class="sk" style="width:70%;height:11px"></div>${body}</div>`;
+    return `<div class="sov-page" aria-busy="true">
+      <div class="sov-context">${[110, 80, 140, 130].map(w => `<div class="sk" style="width:${w}px;height:28px;border-radius:7px"></div>`).join('')}</div>
+      <div class="sov-kpis">${Array.from({ length: 5 }, (_, i) => `<div class="sov-kpi">
+        <div class="sk" style="width:${[78, 70, 74, 66, 72][i]}%;height:11px;margin-bottom:12px"></div>
+        <div class="sk" style="width:${[48, 52, 40, 54, 36][i]}%;height:28px;margin-bottom:10px"></div>
+        <div class="sk" style="width:${[60, 76, 70, 64, 72][i]}%;height:10px"></div></div>`).join('')}</div>
+      <div class="sov-card" style="gap:12px"><div class="sk" style="width:120px;height:15px;margin-bottom:4px"></div>
+        ${[88, 76, 82, 70].map(w => `<div class="sk" style="width:${w}%;height:12px"></div>`).join('')}</div>
+      <div class="sov-grid">${card(`<div class="sov-bars">${bars(8)}</div>`)}${card('<div class="sk" style="height:250px;border-radius:var(--r-btn)"></div>')}</div>
+    </div>`;
+  }
+
   // ── Load ───────────────────────────────────────────────────────────────────
   async function refresh() {
     const page = pageEl();
     if (!page) return;
-    if (!state.data) page.innerHTML = '<div class="load-msg">Loading share of voice…</div>';
+    if (!state.data) { page.innerHTML = skeleton(); state.fromSkeleton = true; }
     try {
       // Internal accounts also see a period saved for review, under a banner.
       const preview = typeof CURRENT_IS_INTERNAL !== 'undefined' && CURRENT_IS_INTERNAL;
@@ -253,7 +274,9 @@
     const trendBy = hasMonthly ? state.trend : 'week';
 
     const reduced = window.matchMedia && matchMedia('(prefers-reduced-motion: reduce)').matches;
-    page.innerHTML = `<div class="sov-page">
+    const arrive = state.fromSkeleton ? ' page-in' : '';
+    state.fromSkeleton = false;
+    page.innerHTML = `<div class="sov-page${arrive}">
       <div class="sov-head">
         <div class="sov-context">
           <span class="sov-chip"><b>${esc(cat.name)}</b></span>

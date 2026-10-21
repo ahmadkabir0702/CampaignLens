@@ -184,7 +184,7 @@
 
       <section class="bs-sec bs-media" data-job="${esc(opts.jobId || '')}" data-video="${opts.kind === 'pretest' ? '1' : ''}">
         <h4 class="bs-h">Where attention goes</h4>
-        <div class="bs-media-body"><div class="bs-quiet">Loading heatmaps…</div></div>
+        <div class="bs-media-body"><div class="bs-media-sk" aria-busy="true"><div class="sk"></div><div class="sk"></div><div class="sk"></div></div></div>
       </section>
 
       <details class="bs-all"><summary>All ${(s.kpis || []).length} checks and their pass marks</summary>
@@ -318,11 +318,40 @@
   // ── Pre-tests page ─────────────────────────────────────────────────────────
   function pageEl() { return document.getElementById('page-pretests'); }
 
+  // Placeholders in the shape of the page: the fact chips, the button, the
+  // table. Same .sk sweep as the Creative Hub.
+  function skeleton() {
+    const row = (a, b) => `<div class="bs-sk-row">
+        <div><div class="sk" style="width:${a}%;height:13px;margin-bottom:7px"></div><div class="sk" style="width:${a - 18}%;height:10px"></div></div>
+        <div class="sk" style="width:70%;height:12px"></div><div class="sk" style="width:60%;height:12px"></div>
+        <div><div class="sk" style="width:${b}%;height:12px;margin-bottom:7px"></div><div class="sk" style="width:46%;height:10px"></div></div>
+        <div class="sk" style="width:58%;height:12px"></div><div class="sk" style="width:30px;height:24px;margin-left:auto;border-radius:7px"></div>
+      </div>`;
+    return `<div class="content bs-page" aria-busy="true">
+      <div class="bs-page-head"><div class="sk-row">${[96, 250, 210, 170].map(w => `<div class="sk" style="width:${w}px;height:28px;border-radius:7px"></div>`).join('')}</div>
+        <div class="sk" style="width:118px;height:36px;border-radius:8px"></div></div>
+      <div class="bs-card bs-sk-table">
+        <div class="bs-sk-row bs-sk-head">${[40, 50, 34, 46, 40, 30].map(w => `<div class="sk" style="width:${w}px;height:10px"></div>`).join('')}</div>
+        ${[[62, 70], [54, 80], [70, 64], [48, 72], [58, 66]].map(([a, b]) => row(a, b)).join('')}
+      </div></div>`;
+  }
+
+  // The report modal and the creative panel's score, while they load.
+  const reportSkeleton = () => `<div class="cm-body" aria-busy="true">
+      <div class="sk" style="height:22px;width:45%;margin-bottom:10px"></div>
+      <div class="sk" style="height:13px;width:32%;margin-bottom:22px"></div>
+      <div class="sk" style="height:96px;margin-bottom:14px;border-radius:var(--r-card)"></div>
+      <div class="sk" style="height:180px;margin-bottom:14px;border-radius:var(--r-card)"></div>
+      <div class="sk" style="height:140px;border-radius:var(--r-card)"></div></div>`;
+  const lineSkeleton = (n = 3) => `<div aria-busy="true" style="padding:4px 0">${Array.from({ length: n }, (_, i) =>
+      `<div class="sk" style="height:12px;width:${[82, 64, 74, 56][i % 4]}%;margin-bottom:9px"></div>`).join('')}</div>`;
+
   async function refresh({ quiet = false } = {}) {
     const page = pageEl();
     if (!page) return;
     if (!quiet && !state.data) {
-      page.innerHTML = '<div class="content"><div class="load-msg">Loading pre-tests…</div></div>';
+      page.innerHTML = skeleton();
+      state.fromSkeleton = true;
     }
     state.loading = true;
     try {
@@ -392,7 +421,9 @@
         <span class="bs-fact">Up to <b>${esc(s.dailyCap)}</b> a day across Campaign Lens</span>
         <span class="bs-fact">Never shown in Creative Hub</span>
       </div>`;
-    page.innerHTML = `<div class="content bs-page">
+    const arrive = state.fromSkeleton ? ' page-in' : '';
+    state.fromSkeleton = false;
+    page.innerHTML = `<div class="content bs-page${arrive}">
       <div class="bs-page-head">${facts}${list.length ? newBtn : ''}</div>
       ${warn}
       ${list.length ? `<div class="bs-card"><table class="bs-list">
@@ -412,7 +443,7 @@
     state.reportId = id;
     const modal = document.getElementById('bsReportModal');
     const box = document.getElementById('bs-report-content');
-    box.innerHTML = '<div class="cm-body"><div class="load-msg">Loading report…</div></div>';
+    box.innerHTML = reportSkeleton();
     modal.style.display = 'flex';
     try {
       const p = await api(`/api/pretests/${encodeURIComponent(id)}`);
@@ -714,7 +745,7 @@
       : RUNNING.has(d.bsStatus) ? 'Scoring now' : STATUS[d.bsStatus] || '';
     return `<details class="org-details bs-detail" style="margin-top:12px;" ontoggle="PreTest.loadCreative(this, '${esc(d.id)}')">
       <summary class="org-summary">Pre-test Score <span style="color:var(--c-muted);font-size:10px;">${esc(head)} ▼</span></summary>
-      <div class="org-content"><div class="organic-empty">Loading…</div></div>
+      <div class="org-content">${lineSkeleton(3)}</div>
     </details>`;
   }
 

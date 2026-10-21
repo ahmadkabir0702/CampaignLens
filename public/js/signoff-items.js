@@ -48,7 +48,7 @@
   // Each item: what it is, whether it is needed to submit, and when it is
   // done. `problem` says what is missing, in the words shown to the user.
   const ITEMS = [
-    { key: 'details', section: 'details', label: 'Campaign details', required: true,
+    { key: 'details', section: 'details', label: 'Name, dates and product', required: true,
       problem: (r) => {
         const x = m(r), miss = [];
         if (!has(x.campaignName)) miss.push('campaign name');

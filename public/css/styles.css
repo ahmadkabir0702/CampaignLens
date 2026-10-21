@@ -1109,7 +1109,11 @@ select:focus,.search-input:focus,.modal-input:focus{outline:none;border-color:va
 /* ---------- Loading skeleton ---------------------------------------
    Placeholders in the shape of the real content. The sweep runs on a
    pseudo-element so it never repaints the block itself.               */
-.sk-card{background:var(--white);border-radius:var(--r-card);padding:18px 20px}
+.sk-card{background:var(--white);border-radius:var(--r-card);padding:18px 20px;box-shadow:var(--shadow-rest)}
+.sk-row{display:flex;gap:6px;flex-wrap:wrap;align-items:center}
+/* Content that replaces a skeleton arrives the way a page does on a
+   section change: a short fade and rise, on the same curve. */
+.page-in{animation:vt-in var(--t-slow) var(--ease-out) both}
 .sk{background:#E4E9EF;border-radius:4px;position:relative;overflow:hidden}
 .sk::after{
   content:'';position:absolute;inset:0;transform:translateX(-100%);
@@ -1460,10 +1464,10 @@ select:focus,.search-input:focus,.modal-input:focus{outline:none;border-color:va
 .so-pill-pos{background:var(--pos-bg);color:var(--pos)}
 
 .so-card{
-  background:var(--white);border:1px solid var(--line);border-radius:var(--r-card);
+  background:var(--white);border:0;border-radius:var(--r-card);box-shadow:var(--shadow-rest);
   padding:18px 20px;margin-bottom:14px;
 }
-.so-sec-title{font:500 14px var(--font);color:var(--ink-900);margin-bottom:14px}
+.so-sec-title{font:600 15px/21px var(--font);color:var(--ink-900);margin-bottom:14px}
 .so-item{margin-bottom:16px}
 .so-item:last-child{margin-bottom:0}
 .so-item-label{font:500 13px var(--font);color:var(--ink-700);margin-bottom:7px}
