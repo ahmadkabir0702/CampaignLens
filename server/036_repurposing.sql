@@ -64,7 +64,15 @@ end $$;
 update app_users set can_repurpose = false where role = 'influencer_coordinator';
 
 -- 2. Agency logins to agencies, by name: agency.litmus -> Litmus,
---    agency.isobar.lk -> Isobar.
+--    agency.creative.octo -> Creative Octo. The whole name after
+--    "agency." is compared first, then just its first part
+--    (agency.isobar.lk -> Isobar).
+update app_users u
+   set agency_key = a.agency_id::text
+  from agencies a
+ where u.org = 'agency' and u.agency_key is null
+   and regexp_replace(lower(substr(u.username, 8)), '[^a-z0-9]', '', 'g')
+       = regexp_replace(lower(a.name), '[^a-z0-9]', '', 'g');
 update app_users u
    set agency_key = a.agency_id::text
   from agencies a
