@@ -57,6 +57,48 @@
     if (nodes.messages) nodes.messages.scrollTop = nodes.messages.scrollHeight;
   }
 
+  // ---- The Ask Lens mark ----------------------------------------
+  //
+  // A lens with an aperture inside and a spark at its centre. Six blades,
+  // clipped to the glass: scaling them opens and closes
+  // the iris, turning them turns it, so "thinking" is the lens focusing.
+  //
+  //   lensMark(size)            at rest: a light sweeps the rim now and then
+  //   lensMark(size, 'think')   while an answer is being worked out
+  //   lensMark(size, 'hero')    the empty state: the iris breathes slowly
+  //
+  // Each copy gets its own ids, so several can sit on one page. Motion is
+  // all CSS (chat-panel.css) and stops under prefers-reduced-motion.
+  var markSeq = 0;
+  function lensMark(size, mode) {
+    var id = 'alm' + (++markSeq);
+    var blades = '';
+    for (var i = 0; i < 6; i++) {
+      // One edge of the opening, carried on past one corner to the rim:
+      // six of them make the pinwheel of a camera iris.
+      blades += '<line x1="-3" y1="-5.2" x2="20" y2="-5.2" transform="rotate(' + (i * 60) + ')"/>';
+    }
+    return '<svg class="al-mark' + (mode ? ' al-mark-' + mode : '') + '" viewBox="0 0 32 32" width="' + size +
+      '" height="' + size + '" aria-hidden="true" focusable="false">' +
+      '<defs>' +
+        '<linearGradient id="' + id + 'r" x1="0" y1="0" x2="1" y2="1">' +
+          '<stop offset="0" stop-color="#3B8BA5"/><stop offset="1" stop-color="#0A4F66"/></linearGradient>' +
+        '<radialGradient id="' + id + 'g" cx=".34" cy=".3" r=".85">' +
+          '<stop offset="0" stop-color="#FFFFFF"/><stop offset="1" stop-color="#D9EAF0"/></radialGradient>' +
+        '<clipPath id="' + id + 'c"><circle cx="16" cy="16" r="12"/></clipPath>' +
+      '</defs>' +
+      '<circle cx="16" cy="16" r="13" fill="url(#' + id + 'g)"/>' +
+      '<g clip-path="url(#' + id + 'c)"><g transform="translate(16 16)">' +
+        '<g class="al-mark-turn"><g class="al-mark-iris" stroke="#0F6E8C" stroke-width="1.6" stroke-linecap="round" fill="none">' +
+          blades + '</g></g></g></g>' +
+      '<circle cx="16" cy="16" r="13" fill="none" stroke="url(#' + id + 'r)" stroke-width="2.2"/>' +
+      '<circle class="al-mark-glint" cx="16" cy="16" r="13" fill="none" stroke="#FFFFFF" stroke-width="1.1"' +
+        ' stroke-linecap="round" pathLength="100" stroke-dasharray="9 91" transform="rotate(200 16 16)"/>' +
+      '<g transform="translate(16 16)"><path class="al-mark-spark" fill="#0F6E8C"' +
+        ' d="M0-4.2C.4-1.2 1.2-.4 4.2 0 1.2.4.4 1.2 0 4.2-.4 1.2-1.2.4-4.2 0-1.2-.4-.4-1.2 0-4.2Z"/></g>' +
+      '</svg>';
+  }
+
   // ---- Panel shell ---------------------------------------------
 
   function buildPanel() {
@@ -65,7 +107,8 @@
     panel.hidden = true;
 
     var head = el('header', 'al-head');
-    var title = el('div', 'al-head-title', 'Ask Lens');
+    var title = el('div', 'al-head-title');
+    title.innerHTML = lensMark(22) + '<span>Ask Lens</span>';
     var context = el('div', 'al-head-context', '');
     var titleWrap = el('div');
     titleWrap.appendChild(title);
@@ -168,7 +211,8 @@
   }
 
   function buildToggle(mount) {
-    var btn = el('button', 'al-btn-outline al-toggle', 'Ask Lens');
+    var btn = el('button', 'al-btn-outline al-toggle');
+    btn.innerHTML = lensMark(18) + '<span>Ask Lens</span>';
     btn.type = 'button';
     btn.addEventListener('click', function () { state.open ? close() : open(); });
     (mount || document.body).appendChild(btn);
@@ -274,6 +318,9 @@
 
   function renderEmptyState() {
     var empty = el('div', 'al-empty');
+    var hero = el('div', 'al-empty-mark');
+    hero.innerHTML = lensMark(56, 'hero');
+    empty.appendChild(hero);
     empty.appendChild(el('p', 'al-empty-lead',
       'Ask about creative and campaign performance for the brand you have selected.'));
     nodes.messages.appendChild(empty);
@@ -347,7 +394,7 @@
 
   function showThinking(shell) {
     var dots = el('span', 'al-thinking');
-    dots.innerHTML = '<i></i><i></i><i></i>';
+    dots.innerHTML = lensMark(20, 'think') + '<span class="al-thinking-text">Working it out</span>';
     shell.para.appendChild(dots);
     return dots;
   }
@@ -741,6 +788,7 @@
   }
 
   global.AskLens = {
+    mark: lensMark,
     init: init,
     open: open,
     close: close,
