@@ -6,7 +6,55 @@
 :root { --al-width: 440px; }
 
 /* ---- Toggle ---- */
-.al-toggle { white-space: nowrap; }
+.al-toggle { white-space: nowrap; display: inline-flex; align-items: center; gap: 7px; padding-left: 9px; }
+
+/* ---- The Ask Lens mark (lensMark() in chat-panel.js) ----
+   At rest a light sweeps the rim every few seconds and the spark glints.
+   On hover the iris turns a step and narrows, like a lens focusing.
+   While thinking the iris turns and breathes and the spark pulses. */
+.al-mark { display: block; flex: none; overflow: visible; }
+.al-mark .al-mark-turn, .al-mark .al-mark-iris, .al-mark .al-mark-spark {
+  transform-box: fill-box; transform-origin: center;
+}
+.al-mark .al-mark-turn { transition: transform .5s var(--ease-move); }
+.al-mark .al-mark-iris { transition: transform .5s var(--ease-move); }
+.al-mark .al-mark-glint { opacity: 0; animation: al-glint 9s var(--ease-move) 1.2s infinite; }
+.al-mark .al-mark-spark { animation: al-spark 9s ease-in-out 1.6s infinite; }
+
+.al-toggle:hover .al-mark .al-mark-turn,
+.al-head-title:hover .al-mark .al-mark-turn { transform: rotate(60deg); }
+.al-toggle:hover .al-mark .al-mark-iris,
+.al-head-title:hover .al-mark .al-mark-iris { transform: scale(.8); }
+
+.al-mark-hero .al-mark-iris { animation: al-breathe 5s ease-in-out infinite; }
+.al-mark-hero .al-mark-turn { animation: al-turn 30s linear infinite; }
+
+.al-mark-think .al-mark-turn { animation: al-turn 2.4s linear infinite; }
+.al-mark-think .al-mark-iris { animation: al-breathe 1.6s ease-in-out infinite; }
+.al-mark-think .al-mark-spark { animation: al-pulse-spark 1.6s ease-in-out infinite; }
+.al-mark-think .al-mark-glint { animation: al-glint-spin 1.2s linear infinite; }
+
+@keyframes al-turn { to { transform: rotate(360deg); } }
+@keyframes al-breathe { 0%, 100% { transform: scale(1); } 50% { transform: scale(.72); } }
+@keyframes al-glint {
+  0% { opacity: 0; stroke-dashoffset: 0; }
+  4% { opacity: .9; }
+  22% { opacity: .9; stroke-dashoffset: -100; }
+  26%, 100% { opacity: 0; stroke-dashoffset: -100; }
+}
+@keyframes al-glint-spin { 0% { opacity: .85; stroke-dashoffset: 0; } 100% { opacity: .85; stroke-dashoffset: -100; } }
+@keyframes al-spark {
+  0%, 18%, 34%, 100% { transform: scale(1) rotate(0deg); }
+  24% { transform: scale(1.35) rotate(45deg); }
+}
+@keyframes al-pulse-spark {
+  0%, 100% { transform: scale(.75) rotate(0deg); opacity: .7; }
+  50% { transform: scale(1.2) rotate(45deg); opacity: 1; }
+}
+@media (prefers-reduced-motion: reduce) {
+  .al-mark *, .al-mark .al-mark-glint { animation: none !important; transition: none !important; }
+  .al-mark .al-mark-glint { opacity: 0; }
+}
 
 /* ---- Panel shell ---- */
 .al-panel {
@@ -44,7 +92,7 @@ body.al-open { padding-right: var(--al-width); }
   display: flex; align-items: center; justify-content: space-between; gap: 12px;
   padding: 14px 18px; background: var(--white); border-bottom: 1px solid var(--line);
 }
-.al-head-title { font-size: 15px; font-weight: 500; color: var(--navy); }
+.al-head-title { font-size: 15px; font-weight: 500; color: var(--navy); display: flex; align-items: center; gap: 8px; }
 .al-head-context { font-size: 12px; color: var(--ink-400); margin-top: 2px; }
 .al-head-actions { display: flex; align-items: center; gap: 6px; flex-shrink: 0; }
 
@@ -111,9 +159,11 @@ body.al-open { padding-right: var(--al-width); }
   background: var(--ink-300); margin-right: 7px; vertical-align: middle;
 }
 .al-empty-lead { margin: 0; color: var(--ink-400); font-size: 13.5px; }
+.al-empty-mark { margin: 4px 0 14px; }
 
 /* ---- Typing dots ---- */
-.al-thinking { display: inline-flex; gap: 4px; align-items: center; }
+.al-thinking { display: inline-flex; gap: 8px; align-items: center; }
+.al-thinking-text { font-size: 12.5px; color: var(--ink-400); }
 .al-thinking i { width: 5px; height: 5px; border-radius: 50%; background: var(--ink-300); animation: al-pulse 1.2s infinite ease-in-out; }
 .al-thinking i:nth-child(2) { animation-delay: .15s; }
 .al-thinking i:nth-child(3) { animation-delay: .3s; }
