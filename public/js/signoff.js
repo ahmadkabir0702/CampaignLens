@@ -624,15 +624,16 @@
       <div class="so-item-label">${label}</div>${flag(k)}${inner}</div>`;
     const firstDraft = !d.id || (d.status === 'draft' && d.version === 1);
 
+    const back = d.id ? `Signoff.open(${d.id})` : 'Signoff.render()';
     host().innerHTML = `<div class="sg-wrap sg-form page-in">
-      <button class="sg-back" onclick="${d.id ? `Signoff.open(${d.id})` : 'Signoff.render()'}">← ${d.id ? 'Back to the checklist' : 'All checklists'}</button>
-      <div class="sg-form-head">
+      <button class="sg-back" onclick="${back}">← ${d.id ? 'Back to the checklist' : 'All checklists'}</button>
+      <div class="sg-detail-head">
         <div><h2>${d.id ? 'Edit checklist' : 'New checklist'}</h2>
           <div class="sg-detail-sub">Save as you go. Send it to the media head when every required item is filled in.</div></div>
-        <div class="sg-form-prog" id="sg-form-prog"></div>
       </div>
-
-      <div class="so-card">
+      <div class="sg-detail-grid">
+      <div class="sg-form-main">
+      <div class="so-card" id="sg-sec-details">
         <div class="so-sec-title">Campaign details</div>
         ${flag('details')}
         <div class="so-meta-form">
@@ -652,7 +653,7 @@
         </div>
       </div>
 
-      <div class="so-card">
+      <div class="so-card" id="sg-sec-funnel">
         <div class="so-sec-title">Funnel plan</div>
         ${itemWrap('funnel_types', 'Campaign types across the funnel', `
           <div class="so-funnel-row"><span class="so-ftag so-ftag-t">TOFU</span><input data-f="funnel.tofu" value="${esc(f.funnel.tofu)}" placeholder="e.g. Reach and frequency, video views"></div>
@@ -668,23 +669,26 @@
           <div class="so-bid-row"><span class="so-bid-name">${stage}</span>${seg('bid', stage, f.funnel.bid[stage], opts, 'bid')}</div>`).join(''))}
       </div>
 
-      <div class="so-card">
+      <div class="so-card" id="sg-sec-delivery">
         <div class="so-sec-title">Estimated delivery</div>
         ${itemWrap('delivery', 'Fill in the estimates that apply', `<div class="so-egrid">${I.DELIVERY_FIELDS.map(([k, l]) =>
           `<label>${l}<input data-f="delivery.${k}" value="${esc(f.delivery[k] || '')}" placeholder="—"></label>`).join('')}</div>`)}
       </div>
 
-      <div class="so-card">
+      <div class="so-card" id="sg-sec-setup">
         <div class="so-sec-title">Setup and targeting</div>
+        <div class="sg-fgrid">
         ${itemWrap('audience', 'Audience specification done?', seg('setup', 'audienceDone', f.setup.audienceDone, I.YES_NO, 'pick'))}
         ${itemWrap('dates', 'Start and end dates', `<div class="so-dates"><input data-f="setup.startDate" type="date" value="${esc(f.setup.startDate)}" aria-label="Start date"><input data-f="setup.endDate" type="date" value="${esc(f.setup.endDate)}" aria-label="End date"></div>`)}
         ${itemWrap('tg_size', 'TG size', `<input data-f="setup.tgSize" value="${esc(f.setup.tgSize)}" placeholder="e.g. 2.4M">`)}
+        </div>
         ${itemWrap('creative_types', 'Creative types', chips('setup', 'creativeTypes', f.setup.creativeTypes, I.CREATIVE_TYPES))}
         ${itemWrap('landing_links', 'Landing page links', `<textarea data-f="setup.landingLinks" placeholder="Paste landing page or destination links, or write N/A">${esc(f.setup.landingLinks)}</textarea>`)}
       </div>
 
-      <div class="so-card">
+      <div class="so-card" id="sg-sec-costs">
         <div class="so-sec-title">Costs and allocations</div>
+        <div class="sg-fgrid">
         ${itemWrap('cost_platform', 'Platform costs', `<input data-f="costs.platform" value="${esc(f.costs.platform)}" placeholder="e.g. LKR 450,000">`)}
         ${itemWrap('cost_data', 'Data costs', `<input data-f="costs.data" value="${esc(f.costs.data)}" placeholder="Amount, or N/A">`)}
         ${itemWrap('cost_adserving', 'Ad serving costs', `<input data-f="costs.adServing" value="${esc(f.costs.adServing)}" placeholder="Amount, or N/A">`)}
@@ -692,15 +696,28 @@
         ${itemWrap('cost_1pd', '1PD data allocation done?', seg('costs', 'pd1', f.costs.pd1, I.YES_NO, 'pick'))}
         ${itemWrap('cost_retainer', 'Retainer payment allocated?', seg('costs', 'retainer', f.costs.retainer, I.YES_NO, 'pick'))}
         ${itemWrap('cost_ustore', 'uStore allocation done?', seg('costs', 'ustore', f.costs.ustore, I.YES_NO, 'pick'))}
+        </div>
         ${itemWrap('cost_google', 'Google allocation', chips('costs', 'google', f.costs.google, I.GOOGLE_ALLOC))}
         ${itemWrap('cost_other', 'Other costs <span class="sg-opt">optional</span>', `<textarea data-f="costs.other" placeholder="Any other costs">${esc(f.costs.other)}</textarea>`)}
       </div>
 
-      <div class="sg-problems" id="sg-problems" hidden></div>
-      <div class="sg-form-bar">
-        <button class="btn-outline" data-press onclick="${d.id ? `Signoff.open(${d.id})` : 'Signoff.render()'}">Cancel</button>
-        <button class="btn-outline" data-press onclick="Signoff.save()">Save draft</button>
-        <button class="btn-primary" data-press onclick="Signoff.submitForm()">Send to media head</button>
+      </div>
+
+      <aside class="sg-side sg-form-side">
+        <div class="sg-panel">
+          <h3>Progress</h3>
+          <div id="sg-form-prog"></div>
+          <ol class="sg-jump" id="sg-jump"></ol>
+        </div>
+        <div class="sg-panel">
+          <div class="sg-form-acts">
+            <button class="btn-primary" data-press onclick="Signoff.submitForm()">Send to media head</button>
+            <div><button class="btn-outline" data-press onclick="Signoff.save()">Save draft</button>
+            <button class="btn-outline" data-press onclick="${back}">Cancel</button></div>
+          </div>
+          <div class="sg-problems" id="sg-problems" hidden></div>
+        </div>
+      </aside>
       </div>
     </div>`;
 
@@ -727,11 +744,30 @@
     if (b && !b.disabled) DRAFT.brand_id = b.value;
   }
 
+  const FORM_SECTIONS = [['details', 'Campaign details'], ['funnel', 'Funnel plan'], ['delivery', 'Estimated delivery'],
+    ['setup', 'Setup and targeting'], ['costs', 'Costs and allocations']];
+
+  function jumpTo(key) {
+    const el = document.getElementById(`sg-sec-${key}`);
+    if (el) el.scrollIntoView({ behavior: 'smooth', block: 'start' });
+  }
+
   function updateFormProgress() {
     const rec = { brand_id: DRAFT.brand_id, meta: DRAFT.meta, fields: DRAFT.fields };
     const p = I.progress(rec);
     const box = document.getElementById('sg-form-prog');
     if (box) box.innerHTML = progressBar(p);
+    const jump = document.getElementById('sg-jump');
+    if (jump) {
+      jump.innerHTML = FORM_SECTIONS.map(([key, name]) => {
+        const items = I.ITEMS.filter((i) => i.section === key && i.required);
+        const done = items.filter((i) => !i.problem(rec)).length;
+        const all = done === items.length;
+        return `<li><button type="button" class="${all ? 'is-done' : ''}" onclick="Signoff.jumpTo('${key}')">
+          <span class="sg-jump-dot" aria-hidden="true"></span><span class="sg-jump-name">${name}</span>
+          <span class="sg-jump-n">${all ? 'Done' : `${done} of ${items.length}`}</span></button></li>`;
+      }).join('');
+    }
     const b = DRAFT.fields.funnel.budget;
     const sum = (Number(b.tofu) || 0) + (Number(b.mofu) || 0) + (Number(b.bofu) || 0);
     const hint = document.getElementById('sg-budget-sum');
@@ -792,7 +828,7 @@
     if (problems.length) {
       box.hidden = false;
       box.innerHTML = `<b>${plural(problems.length, 'item')} to finish before this can be sent:</b><ul>${problems.map((p) => `<li>${esc(p)}</li>`).join('')}</ul>`;
-      box.scrollIntoView({ block: 'center', behavior: 'smooth' });
+      box.scrollIntoView({ block: 'nearest', behavior: 'smooth' });
       try { if (DRAFT.meta.campaignName.trim() && DRAFT.brand_id) await persist(); } catch (e) { /* kept on screen anyway */ }
       return;
     }
@@ -853,6 +889,6 @@
 
   window.Signoff = {
     render, open, filter, create, edit, save, submitForm, submitFromDetail, remove, duplicate, amend,
-    mark, saveReview, returnBox, sendBack, approve, noteBox, pdf, bid, pick, chip, refreshBadge,
+    mark, saveReview, returnBox, sendBack, approve, noteBox, pdf, bid, pick, chip, jumpTo, refreshBadge,
   };
 })();
