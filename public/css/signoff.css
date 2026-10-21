@@ -2,7 +2,7 @@
    Built on the tokens in styles.css; the form controls reuse the .so-*
    classes there. */
 
-.sg-wrap{max-width:1180px;margin:0 auto;padding:4px 0 60px}
+.sg-wrap{padding:0 0 60px}
 .sg-loading,.sg-empty{padding:48px 20px;text-align:center;color:var(--ink-400);font:400 14px var(--font)}
 .sg-empty{background:var(--white);border:1px dashed var(--line);border-radius:var(--r-card)}
 .sg-back{font:400 13px var(--font);color:var(--ink-500);background:none;border:0;cursor:pointer;padding:0;margin-bottom:14px}
