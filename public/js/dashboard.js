@@ -253,7 +253,8 @@ function applyFeatures() {
   // started rather than started and then taken apart.
   if (FEATURES.askLens && typeof AskLens !== 'undefined' && !applyFeatures.askLensUp) {
     applyFeatures.askLensUp = true;
-    AskLens.init({ mountButton: document.querySelector('.topbar-right') });
+    AskLens.init({ mountButton: document.querySelector('.topbar-right'),
+                   mountHero: document.getElementById('page-creatives') });
   }
 }
 
