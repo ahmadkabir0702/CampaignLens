@@ -10,6 +10,7 @@
   <link rel="stylesheet" href="/css/chat-panel.css">
   <link rel="stylesheet" href="/css/pretest.css">
   <link rel="stylesheet" href="/css/sov.css">
+  <link rel="stylesheet" href="/css/signoff.css">
 <style id="ac-plat-style">
   .plat-rows { margin-bottom: 10px; }
   .plat-row { display: flex; align-items: center; gap: 10px; margin-bottom: 8px; }
@@ -328,9 +329,7 @@
       <div class="nav-label">Planning</div>
       <div class="nav-item hidden" data-press onclick="setNav('pretests',this)"><svg viewBox="0 0 24 24"><path d="M9 3h6M10 3v6L4.5 19a1.5 1.5 0 0 0 1.3 2h12.4a1.5 1.5 0 0 0 1.3-2L14 9V3"/></svg>Pre-tests</div>
       <div class="nav-item hidden" data-press onclick="setNav('sov',this)"><svg viewBox="0 0 24 24"><path d="M12 3a9 9 0 1 0 9 9h-9z"/><path d="M15 3.5A9 9 0 0 1 20.5 9H15z"/></svg>Share of voice</div>
-      <!-- Temporarily hidden, uncomment to restore:
-      <div class="nav-item" data-press onclick="setNav('signoff',this)"><svg viewBox="0 0 24 24"><path d="M5 12.5l4.5 4.5L19 7.5"/></svg>Campaign Sign-Off</div>
-      -->
+      <div class="nav-item hidden" data-press onclick="setNav('signoff',this)"><svg viewBox="0 0 24 24"><rect x="5" y="3.5" width="14" height="17" rx="2"/><path d="M9 3.5h6v2.5H9zM8.5 12l2.2 2.2L15.5 9.5"/></svg>Campaign sign-off</div>
     </nav>
 
     <div class="topbar-right sb-foot">
@@ -611,6 +610,7 @@ window.addEventListener('load', () => setTimeout(syncFilterPills, 400));
   <script src="/js/dashboard.js"></script>
   <script src="/js/creators.js"></script>
   <script src="/js/kpi-dashboard.js"></script>
+  <script src="/js/signoff-items.js"></script>
   <script src="/js/signoff.js"></script>
   <script src="/js/dropdowns.js"></script>
   <script src="/js/pretest.js"></script>

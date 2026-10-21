@@ -166,6 +166,8 @@ const FEATURE_GATES = [
     covers: p => p.startsWith('/api/pretests') || p.startsWith('/api/pretest-scores/') },
   { flag: 'sov',         label: 'Share of voice',
     covers: p => p === '/api/sov' },
+  { flag: 'signoff',     label: 'Campaign sign-off',
+    covers: p => p.startsWith('/api/signoffs') },
   // Media Summary and Creators are drawn from the same creative data the
   // Creative Hub uses, so there is no endpoint of their own to refuse.
   // The page removes them, and /api/dashboard-data leaves out the
@@ -178,7 +180,7 @@ app.use(async (req, res, next) => {
   // A session signed in before the media, creators and share of voice
   // flags existed has no value for them. Read the account's flags once so
   // a change of access applies now, not only at the next sign-in.
-  if (f.sov === undefined && req.session.user) {
+  if ((f.sov === undefined || f.signoff === undefined) && req.session.user) {
     try {
       f = req.session.features = await loadFeatures(req.session.user);
     } catch (e) {
@@ -365,6 +367,8 @@ require('./server/brainsuite/routes')(app);
 // Digital share of voice: shares by category, read-only.
 require('./server/sov/routes')(app);
 require('./server/sov/automation')(app);
+// Campaign sign-off: checklists, the media head's review, approval.
+require('./server/signoff/routes')(app);
 // Ask Lens chat routes
 require('./server/chat/routes')(app);
 

@@ -11,6 +11,7 @@
  *   media        Media Summary                 can_media      (021)
  *   creators     Creators                      can_creators   (021)
  *   sov          Share of voice                can_sov        (021)
+ *   signoff      Campaign sign-off             can_signoff    (035)
  */
 const { query } = require('../db');
 
@@ -21,6 +22,7 @@ const FLAGS = {
   media: 'can_media',
   creators: 'can_creators',
   sov: 'can_sov',
+  signoff: 'can_signoff',
 };
 
 /** Everything allowed: used when an account's flags cannot be read. */
