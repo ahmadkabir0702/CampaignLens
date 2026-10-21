@@ -75,6 +75,6 @@
 .rp-perf-tile{padding:14px 16px}
 .rp-perf-figs{display:grid;grid-template-columns:repeat(4,auto);gap:4px 14px;justify-content:start}
 .rp-perf-figs div{display:flex;flex-direction:column}
-.rp-perf-figs b{font:500 19px/24px var(--font);color:var(--ink-900);font-variant-numeric:tabular-nums}
+.rp-perf-figs b{font:500 19px/24px var(--font);white-space:nowrap;color:var(--ink-900);font-variant-numeric:tabular-nums}
 .rp-perf-figs span{font:400 11.5px var(--font);color:var(--ink-400)}
 .rp-perf-figs .rp-bad b{color:var(--neg)}
