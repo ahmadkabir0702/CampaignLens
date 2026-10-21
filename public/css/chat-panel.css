@@ -371,3 +371,52 @@ body.al-open { padding-right: var(--al-width); }
 .al-review-head { font-weight: 500; color: var(--ink-900); }
 .al-review-why { color: var(--neg); margin-top: 3px; }
 .al-review-card { color: var(--ink-500); margin-top: 3px; }
+
+
+/* ---- Ask Lens bar on the Creative Hub ---- */
+.al-hero {
+  display: flex; align-items: flex-start; gap: 16px;
+  margin: 0 0 20px; padding: 18px 20px;
+  border: 1px solid var(--sel-line); border-radius: 14px;
+  background:
+    radial-gradient(120% 140% at 0% 0%, color-mix(in srgb, var(--primary) 9%, #fff) 0%, #fff 55%),
+    var(--white);
+  box-shadow: var(--shadow-card);
+}
+.al-hero-mark { padding-top: 2px; }
+.al-hero-body { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 10px; }
+.al-hero-title { display: flex; align-items: baseline; gap: 10px; flex-wrap: wrap; }
+.al-hero-title b { font: 600 17px/22px var(--font); color: var(--ink-900); letter-spacing: -.01em; }
+.al-hero-title span { font-size: 13px; color: var(--ink-500); }
+.al-hero-form { display: flex; gap: 8px; }
+.al-hero-input {
+  flex: 1; min-width: 0; height: 46px; padding: 0 16px;
+  font: 400 15px/1 var(--font); color: var(--ink-900);
+  background: var(--white); border: 1px solid var(--line); border-radius: 10px;
+  transition: border-color var(--t-base) var(--ease), box-shadow var(--t-base) var(--ease);
+}
+.al-hero-input::placeholder { color: var(--ink-400); }
+.al-hero-input:focus { outline: none; border-color: var(--primary); box-shadow: 0 0 0 3px var(--ring); }
+.al-hero-send {
+  height: 46px; padding: 0 22px; flex: none;
+  font: 500 14px/1 var(--font); color: var(--white);
+  background: var(--primary); border: 0; border-radius: 10px; cursor: pointer;
+  transition: filter var(--t-fast) var(--ease);
+}
+.al-hero-send:hover { filter: brightness(1.08); }
+.al-hero-try { display: flex; flex-wrap: wrap; gap: 6px; }
+.al-hero-chip {
+  font: 400 12.5px/1 var(--font); color: var(--ink-600);
+  background: var(--white); border: 1px solid var(--line); border-radius: var(--r-pill);
+  padding: 7px 12px; cursor: pointer;
+  transition: border-color var(--t-fast) var(--ease), color var(--t-fast) var(--ease);
+}
+.al-hero-chip:hover { border-color: var(--primary); color: var(--primary); }
+/* Typing into the bar focuses the lens. */
+.al-hero:focus-within .al-mark .al-mark-turn { transform: rotate(60deg); }
+.al-hero:focus-within .al-mark .al-mark-iris { transform: scale(.8); }
+@media (max-width: 700px) {
+  .al-hero { padding: 14px; gap: 12px; }
+  .al-hero-mark { display: none; }
+  .al-hero-title span { display: none; }
+}

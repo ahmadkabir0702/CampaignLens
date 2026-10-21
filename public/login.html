@@ -4,6 +4,7 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Sign in · Campaign Lens</title>
+<link rel="icon" type="image/svg+xml" href="/img/campaign-lens.svg">
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link href="https://fonts.googleapis.com/css2?family=Onest:wght@400;500;600&display=swap" rel="stylesheet">
@@ -38,8 +39,11 @@ body{font:400 15px/22px var(--font);color:var(--ink-900);background:var(--white)
 .col{width:100%;max-width:352px;text-align:center;margin:auto 0}
 
 .logo{margin-bottom:30px;display:flex;justify-content:center}
-/* The product name, set in type. There is no image logo. */
-.logo span{font:600 19px/46px var(--font);letter-spacing:-.015em;color:var(--ink-900)}
+/* The mark and the product name. */
+.logo{align-items:center;gap:11px}
+.logo .cl-mark{width:34px;height:34px;flex:none}
+.logo .cl-word{color:#0F6E8C}
+.logo > span{font:600 19px/46px var(--font);letter-spacing:-.015em;color:var(--ink-900)}
 
 h1{font:600 26px/32px var(--font);letter-spacing:-.025em;color:var(--ink-900);margin-bottom:6px}
 .sub{font-size:15px;line-height:22px;color:var(--ink-600);margin-bottom:24px}
@@ -86,7 +90,8 @@ input:focus{outline:none;border-color:var(--navy);box-shadow:0 0 0 3px rgba(15,1
 /* Short viewports (laptops, 125–150% Windows scaling) */
 @media (max-height:760px){
   .logo{margin-bottom:20px}
-  .logo span{font-size:17px;line-height:38px}
+  .logo > span{font-size:17px;line-height:38px}
+  .logo .cl-mark{width:30px;height:30px}
   h1{font-size:23px;line-height:30px}
   .sub{margin-bottom:18px}
   .field{margin-bottom:11px}
@@ -118,7 +123,8 @@ input:focus{outline:none;border-color:var(--navy);box-shadow:0 0 0 3px rgba(15,1
     <div class="col">
 
       <div class="logo">
-        <span>Campaign Lens</span>
+        <svg class="cl-mark" viewBox="0 0 32 32" aria-hidden="true" focusable="false"><defs><linearGradient id="cllgr" x1="0" y1="0" x2="1" y2="1"><stop offset="0" stop-color="#3B8BA5"/><stop offset="1" stop-color="#0A4F66"/></linearGradient><radialGradient id="cllgg" cx=".34" cy=".3" r=".85"><stop offset="0" stop-color="#FFFFFF"/><stop offset="1" stop-color="#D9EAF0"/></radialGradient></defs><circle cx="16" cy="16" r="13" fill="url(#cllgg)"/><path d="M25.2 6.8A13 13 0 1 0 25.2 25.2" fill="none" stroke="url(#cllgr)" stroke-width="2.6" stroke-linecap="round"/><circle cx="16" cy="16" r="6.2" fill="none" stroke="#0F6E8C" stroke-width="2"/><circle cx="16" cy="16" r="2.2" fill="#0F6E8C"/><circle cx="27.4" cy="16" r="1.7" fill="#0F6E8C"/></svg>
+        <span>Campaign <span class="cl-word">Lens</span></span>
       </div>
 
       <h1>Sign in</h1>

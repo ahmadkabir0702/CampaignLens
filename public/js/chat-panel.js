@@ -219,6 +219,75 @@
     return btn;
   }
 
+  // ---- The Ask Lens bar on the Creative Hub ----------------------
+  //
+  // The panel's button sits at the foot of the sidebar, where it is easy to
+  // miss. This puts the question box itself at the top of the home page:
+  // type and press Ask, and the panel opens with the question already
+  // asked. Three starter questions sit under it.
+  function brandName() {
+    var sel = document.getElementById('brand-switcher');
+    var opt = sel && sel.selectedOptions && sel.selectedOptions[0];
+    return opt ? opt.textContent.trim() : 'this brand';
+  }
+
+  function buildHero(mount) {
+    if (!mount) return;
+    var hero = el('section', 'al-hero');
+    hero.setAttribute('aria-label', 'Ask Lens');
+
+    var mark = el('div', 'al-hero-mark');
+    mark.innerHTML = lensMark(40);
+
+    var form = el('form', 'al-hero-form');
+    var input = el('input', 'al-hero-input');
+    input.type = 'text';
+    input.setAttribute('aria-label', 'Ask Lens a question');
+    var go = el('button', 'al-hero-send', 'Ask');
+    go.type = 'submit';
+    form.appendChild(input);
+    form.appendChild(go);
+    form.addEventListener('submit', function (e) {
+      e.preventDefault();
+      var text = input.value.trim();
+      if (!text) { input.focus(); return; }
+      input.value = '';
+      askNow(text);
+    });
+
+    var body = el('div', 'al-hero-body');
+    var title = el('div', 'al-hero-title');
+    title.innerHTML = '<b>Ask Lens</b><span>Answers from this brand\'s live creative and campaign data</span>';
+    body.appendChild(title);
+    body.appendChild(form);
+
+    var tries = el('div', 'al-hero-try');
+    STARTERS.slice(0, 3).forEach(function (q) {
+      var b = el('button', 'al-hero-chip', q);
+      b.type = 'button';
+      b.addEventListener('click', function () { askNow(q); });
+      tries.appendChild(b);
+    });
+    body.appendChild(tries);
+
+    hero.appendChild(mark);
+    hero.appendChild(body);
+    mount.insertBefore(hero, mount.firstChild);
+
+    function placeholder() { input.placeholder = 'Ask anything about ' + brandName() + '\u2019s creatives, campaigns or spend'; }
+    placeholder();
+    var sel = document.getElementById('brand-switcher');
+    if (sel) sel.addEventListener('change', placeholder);
+    nodes.heroPlaceholder = placeholder;
+  }
+
+  /** Open the panel and ask straight away, once the session exists. */
+  function askNow(text) {
+    if (!state.open) open();
+    if (state.busy) return;
+    ask(text);
+  }
+
   function refreshUsage() {
     fetch('/api/chat/usage', { credentials: 'same-origin' })
       .then(function (r) { return r.ok ? r.json() : null; })
@@ -295,12 +364,15 @@
   // ---- Sessions ------------------------------------------------
 
   function startSession(clear) {
+    if (state.starting) return state.starting;
     if (clear) {
       nodes.messages.innerHTML = '';
       state.store = new Cards.Store();
       syncContext();
     }
-    return fetch('/api/chat/sessions', {
+    // Remembered while in flight, so opening the panel and asking from the
+    // home page bar at the same moment share one session, not two.
+    state.starting = fetch('/api/chat/sessions', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       credentials: 'same-origin',
@@ -313,7 +385,9 @@
       })
       .catch(function () {
         showSystem('Could not start a chat session. Reload the page and try again.');
-      });
+      })
+      .then(function () { state.starting = null; });
+    return state.starting;
   }
 
   function renderEmptyState() {
@@ -444,7 +518,9 @@
   function ask(text) {
     if (state.busy) return;
     if (!state.sessionId) {
-      startSession(false).then(function () { ask(text); });
+      // One wait for a session, then ask only if it was made; a failed
+      // start already said so and must not loop.
+      startSession(false).then(function () { if (state.sessionId) ask(text); });
       return;
     }
 
@@ -775,6 +851,7 @@
 
     buildPanel();
     buildToggle(opts.mountButton);
+    buildHero(opts.mountHero);
 
     document.addEventListener('keydown', function (e) {
       if (e.key === 'Escape' && state.open) close();
@@ -792,6 +869,7 @@
     init: init,
     open: open,
     close: close,
+    ask: askNow,
     onBrandChange: onBrandChange,
     onRangeChange: onBrandChange,
   };
