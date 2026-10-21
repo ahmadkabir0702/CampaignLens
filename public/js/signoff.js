@@ -24,6 +24,42 @@
   let FILTER = { brand: '', q: '' };
   let CURRENT = null;       // detail payload
   let DRAFT = null;         // the record being edited { id, brand_id, meta, fields, review }
+  let ARRIVE = false;       // the next draw is a new view: fade it in and grow its bars
+
+  /** Take the arrival flag: true once per new view, false on redraws. */
+  const arriving = () => { const a = ARRIVE; ARRIVE = false; return a; };
+
+  // Placeholders in the shape of each view, on the Creative Hub's .sk sweep.
+  function skeletonBoard() {
+    const card = (i) => `<div class="sg-card sg-card-sk">
+        <div class="sk" style="width:${[34, 42, 30][i % 3]}%;height:10px;margin-bottom:9px"></div>
+        <div class="sk" style="width:${[78, 64, 70][i % 3]}%;height:14px;margin-bottom:12px"></div>
+        <div class="sk" style="width:100%;height:5px;border-radius:99px;margin-bottom:12px"></div>
+        <div class="sk" style="width:${[56, 48, 62][i % 3]}%;height:10px"></div></div>`;
+    return `<div class="sg-wrap sg-board-wrap" aria-busy="true">
+      <div class="sg-toolbar"><div class="sg-tools"><div class="sk" style="width:150px;height:38px;border-radius:8px"></div>
+        <div class="sk" style="width:280px;height:38px;border-radius:8px"></div></div>
+        <div class="sk" style="width:128px;height:36px;border-radius:8px"></div></div>
+      <div class="sg-board">${[2, 3, 1, 2].map((n, c) => `<section class="sg-col"><header><div class="sk" style="width:${[46, 96, 112, 70][c]}px;height:12px"></div></header>
+        <div class="sg-col-body">${Array.from({ length: n }, (_, i) => card(i + c)).join('')}</div></section>`).join('')}</div></div>`;
+  }
+  function skeletonDetail() {
+    const item = (i) => `<div class="sg-item"><div class="sk" style="width:${[30, 38, 26, 34][i % 4]}%;height:11px;margin-bottom:10px"></div>
+        <div class="sk" style="width:${[62, 48, 70, 54][i % 4]}%;height:13px"></div></div>`;
+    return `<div class="sg-wrap sg-detail" aria-busy="true">
+      <div class="sk" style="width:110px;height:12px;margin-bottom:18px"></div>
+      <div class="sk" style="width:90px;height:11px;margin-bottom:8px"></div>
+      <div class="sk" style="width:320px;height:24px;margin-bottom:10px"></div>
+      <div class="sk" style="width:260px;height:12px;margin-bottom:18px"></div>
+      <div class="sk" style="height:44px;border-radius:var(--r-btn);margin-bottom:14px"></div>
+      <div class="sk-row" style="margin-bottom:18px">${[60, 150, 110, 120].map(w => `<div class="sk" style="width:${w}px;height:36px;border-radius:8px"></div>`).join('')}</div>
+      <div class="sg-detail-grid">
+        <div class="sg-main">${[3, 3].map((n, s) => `<section class="sg-section"><h3><div class="sk" style="width:${[140, 110][s]}px;height:14px"></div></h3>
+          ${Array.from({ length: n }, (_, i) => item(i + s)).join('')}</section>`).join('')}</div>
+        <aside class="sg-side">${[150, 110, 170].map(h => `<div class="sg-panel"><div class="sk" style="width:46%;height:14px;margin-bottom:14px"></div>
+          <div class="sk" style="height:${h - 50}px;border-radius:var(--r-btn)"></div></div>`).join('')}</aside>
+      </div></div>`;
+  }
 
   const STATUS = {
     draft:             { label: 'Draft',              cls: 'sg-st-draft' },
@@ -98,10 +134,10 @@
     fields: s.fields || I.blankFields(),
   });
 
-  function progressBar(p, small) {
+  function progressBar(p, small, grow) {
     const pct = p.total ? Math.round((p.done / p.total) * 100) : 0;
     return `<div class="sg-prog${small ? ' sg-prog-sm' : ''}" title="${p.done} of ${p.total} required items filled in">
-      <div class="sg-prog-track"><i style="width:${pct}%"></i></div>
+      <div class="sg-prog-track"><i class="${grow ? 'grow-x' : ''}" style="width:${pct}%"></i></div>
       <span>${p.done} of ${p.total}</span></div>`;
   }
 
@@ -129,16 +165,18 @@
   async function render() {
     const el = host();
     if (!el) return;
-    el.innerHTML = `<div class="sg-wrap"><div class="sg-loading">Loading checklists…</div></div>`;
+    el.innerHTML = skeletonBoard();
     try {
       await loadBrands();
       const data = await api('GET', '/api/signoffs');
       LIST = data.signoffs || [];
       ME = data.me || ME;
     } catch (e) {
-      el.innerHTML = `<div class="sg-wrap"><div class="sg-empty">${esc(e.message)}</div></div>`;
+      el.innerHTML = `<div class="sg-wrap"><div class="load-msg load-msg-error">Couldn't load the checklists. ${esc(e.message)}
+        <button class="load-retry" onclick="Signoff.render()">Try again</button></div></div>`;
       return;
     }
+    ARRIVE = true;
     drawBoard();
     refreshBadge();
   }
@@ -157,13 +195,14 @@
       { key: 'approved', title: 'Approved', empty: 'Nothing approved yet.' },
     ];
     const mine = ME.reviewer ? 'submitted' : 'changes_requested';
+    const arrive = arriving();
     const waiting = rows.filter((s) => s.status === mine).length;
 
     const card = (s) => {
       const since = waitingSince(s);
       const d = daysSince(since);
       const flagged = Object.values((s.review || {}).items || {}).filter((v) => v === 'change').length;
-      return `<button class="sg-card${s.status === mine ? ' is-mine' : ''}" onclick="Signoff.open(${s.id})">
+      return `<button class="sg-card${s.status === mine ? ' is-mine' : ''}" data-press onclick="Signoff.open(${s.id})">
         <div class="sg-card-top">
           <span class="sg-card-brand">${esc(s.brand_name || s.brand_id)}</span>
           ${s.version > 1 ? `<span class="sg-ver">v${s.version}</span>` : ''}
@@ -171,27 +210,27 @@
         <div class="sg-card-name">${esc(s.campaign_name || 'Untitled campaign')}</div>
         ${s.status === 'approved'
           ? `<div class="sg-card-line sg-ok">Approved ${fmtDate(s.approved_at)}</div>`
-          : progressBar(s.progress, true)}
+          : progressBar(s.progress, true, arrive)}
         ${s.status === 'changes_requested' && flagged ? `<div class="sg-card-line sg-warn">${plural(flagged, 'item')} to change</div>` : ''}
         <div class="sg-card-foot">
           ${goLiveTag(s)}
-          ${d !== null ? `<span class="sg-wait${d >= 3 ? ' is-long' : ''}">${d === 0 ? 'Since today' : `Waiting ${plural(d, 'day')}`}</span>` : ''}
+          ${d !== null ? `<span class="sg-wait${d >= 3 ? ' is-long' : ''}">${d === 0 ? 'Waiting since today' : `Waiting ${plural(d, 'day')}`}</span>` : ''}
         </div>
         <div class="sg-card-by">${esc(s.created_by_name || s.created_by || '')}${s.notes ? ` · ${plural(s.notes, 'note')}` : ''}</div>
       </button>`;
     };
 
-    el.innerHTML = `<div class="sg-wrap sg-board-wrap">
+    el.innerHTML = `<div class="sg-wrap sg-board-wrap${arrive ? ' page-in' : ''}">
       <div class="sg-toolbar">
         <div class="sg-tools">
           <select class="sg-select" aria-label="Brand" onchange="Signoff.filter('brand', this.value)">
             <option value="">All brands</option>
             ${BRANDS.map((b) => `<option value="${esc(b.id)}"${FILTER.brand === b.id ? ' selected' : ''}>${esc(b.name)}</option>`).join('')}
           </select>
-          <input class="sg-search" type="search" placeholder="Search campaign, brand or person" value="${esc(FILTER.q)}"
+          <input class="search-input sg-search" type="search" placeholder="Search checklists" value="${esc(FILTER.q)}"
                  oninput="Signoff.filter('q', this.value)" aria-label="Search checklists">
         </div>
-        ${ME.canCreate ? `<button class="btn-primary" onclick="Signoff.create()">New checklist</button>` : ''}
+        ${ME.canCreate ? `<button class="btn-primary" data-press onclick="Signoff.create()">New checklist</button>` : ''}
       </div>
       ${waiting ? `<div class="sg-callout">${ME.reviewer
         ? `<b>${plural(waiting, 'checklist')} waiting for your review.</b> Open one to go through it, mark each item, then approve or send it back.`
@@ -234,7 +273,7 @@
   // =======================================================================
   async function open(id) {
     const el = host();
-    el.innerHTML = `<div class="sg-wrap"><div class="sg-loading">Loading…</div></div>`;
+    el.innerHTML = skeletonDetail();
     try {
       await loadBrands();
       CURRENT = await api('GET', `/api/signoffs/${id}`);
@@ -243,6 +282,7 @@
       el.innerHTML = `<div class="sg-wrap"><button class="sg-back" onclick="Signoff.render()">← All checklists</button><div class="sg-empty">${esc(e.message)}</div></div>`;
       return;
     }
+    ARRIVE = true;
     drawDetail();
     window.scrollTo({ top: 0 });
   }
@@ -324,12 +364,12 @@
     if (s.status === 'superseded') banner = `<div class="sg-banner">This version was replaced by a newer approved version.</div>`;
 
     const actions = [];
-    if (editable) actions.push(`<button class="btn-outline" onclick="Signoff.edit()">Edit</button>`);
-    if (editable) actions.push(`<button class="btn-primary" onclick="Signoff.submitFromDetail()">Send to media head</button>`);
-    if (ME.canCreate && s.status === 'draft' && !s.submitted_at) actions.push(`<button class="btn-outline sg-danger" onclick="Signoff.remove()">Delete</button>`);
-    if (ME.canCreate && s.status === 'approved') actions.push(`<button class="btn-outline" onclick="Signoff.amend()">Amend</button>`);
-    if (ME.canCreate) actions.push(`<button class="btn-outline" onclick="Signoff.duplicate()">Copy to new</button>`);
-    actions.push(`<button class="btn-outline" onclick="Signoff.pdf()">Download PDF</button>`);
+    if (editable) actions.push(`<button class="btn-outline" data-press onclick="Signoff.edit()">Edit</button>`);
+    if (editable) actions.push(`<button class="btn-primary" data-press onclick="Signoff.submitFromDetail()">Send to media head</button>`);
+    if (ME.canCreate && s.status === 'draft' && !s.submitted_at) actions.push(`<button class="btn-outline sg-danger" data-press onclick="Signoff.remove()">Delete</button>`);
+    if (ME.canCreate && s.status === 'approved') actions.push(`<button class="btn-outline" data-press onclick="Signoff.amend()">Amend</button>`);
+    if (ME.canCreate) actions.push(`<button class="btn-outline" data-press onclick="Signoff.duplicate()">Copy to new</button>`);
+    actions.push(`<button class="btn-outline" data-press onclick="Signoff.pdf()">Download PDF</button>`);
 
     const itemRow = (it) => {
       const missing = it.required ? it.problem(rec) : null;
@@ -361,12 +401,12 @@
         <label class="sg-field">Agreed KPIs<textarea id="sg-r-kpis" placeholder="e.g. CPM under LKR 90, VTR above 25%" onchange="Signoff.saveReview()">${esc(review.kpis || '')}</textarea></label>
         <label class="sg-field">Conditions of approval<textarea id="sg-r-conditions" placeholder="Anything that must happen before or during the campaign" onchange="Signoff.saveReview()">${esc(review.conditions || '')}</textarea></label>
         <div class="sg-decide">
-          <button class="btn-primary" onclick="Signoff.approve()">Approve</button>
-          <button class="btn-outline" onclick="Signoff.returnBox(this)">Send back for changes</button>
+          <button class="btn-primary" data-press onclick="Signoff.approve()">Approve</button>
+          <button class="btn-outline" data-press onclick="Signoff.returnBox(this)">Send back for changes</button>
         </div>
         <div class="sg-return" id="sg-return" hidden>
           <label class="sg-field">What needs to change<textarea id="sg-return-note" placeholder="Optional if you have marked the items; it goes on the checklist as a note"></textarea></label>
-          <div class="sg-decide"><button class="btn-primary" onclick="Signoff.sendBack()">Send back</button><button class="btn-outline" onclick="Signoff.returnBox()">Cancel</button></div>
+          <div class="sg-decide"><button class="btn-primary" data-press onclick="Signoff.sendBack()">Send back</button><button class="btn-outline" data-press onclick="Signoff.returnBox()">Cancel</button></div>
         </div>
       </div>`
       : (has(review.approvedBudget) || has(review.kpis) || has(review.conditions)) ? `
@@ -380,7 +420,8 @@
       </div>` : '';
 
     const overall = notesBy._ || [];
-    host().innerHTML = `<div class="sg-wrap sg-detail">
+    const arrive = arriving();
+    host().innerHTML = `<div class="sg-wrap sg-detail${arrive ? ' page-in' : ''}">
       <button class="sg-back" onclick="Signoff.render()">← All checklists</button>
       <div class="sg-detail-head">
         <div>
@@ -394,7 +435,7 @@
       <div class="sg-actions">${actions.join('')}</div>
       <div class="sg-detail-grid">
         <div class="sg-main">
-          ${s.status !== 'approved' ? `<div class="sg-progress-row">${progressBar(s.progress)}<span class="sg-progress-note">required items filled in</span></div>` : ''}
+          ${s.status !== 'approved' ? `<div class="sg-progress-row">${progressBar(s.progress, false, arrive)}<span class="sg-progress-note">required items filled in</span></div>` : ''}
           ${I.SECTIONS.map((sec) => `<section class="sg-section">
               <h3>${esc(sec.title)}</h3>
               ${I.ITEMS.filter((it) => it.section === sec.key).map(itemRow).join('')}
@@ -583,7 +624,7 @@
       <div class="so-item-label">${label}</div>${flag(k)}${inner}</div>`;
     const firstDraft = !d.id || (d.status === 'draft' && d.version === 1);
 
-    host().innerHTML = `<div class="sg-wrap sg-form">
+    host().innerHTML = `<div class="sg-wrap sg-form page-in">
       <button class="sg-back" onclick="${d.id ? `Signoff.open(${d.id})` : 'Signoff.render()'}">← ${d.id ? 'Back to the checklist' : 'All checklists'}</button>
       <div class="sg-form-head">
         <div><h2>${d.id ? 'Edit checklist' : 'New checklist'}</h2>
@@ -657,9 +698,9 @@
 
       <div class="sg-problems" id="sg-problems" hidden></div>
       <div class="sg-form-bar">
-        <button class="btn-outline" onclick="${d.id ? `Signoff.open(${d.id})` : 'Signoff.render()'}">Cancel</button>
-        <button class="btn-outline" onclick="Signoff.save()">Save draft</button>
-        <button class="btn-primary" onclick="Signoff.submitForm()">Send to media head</button>
+        <button class="btn-outline" data-press onclick="${d.id ? `Signoff.open(${d.id})` : 'Signoff.render()'}">Cancel</button>
+        <button class="btn-outline" data-press onclick="Signoff.save()">Save draft</button>
+        <button class="btn-primary" data-press onclick="Signoff.submitForm()">Send to media head</button>
       </div>
     </div>`;
 

@@ -222,3 +222,15 @@ figcaption{font:400 12.5px/18px var(--font);color:var(--ink-600);margin-top:4px}
   #pt-print .bs-table{margin-bottom:12px}
   #pt-print .bs-table tr{break-inside:avoid;page-break-inside:avoid}
 }
+
+
+/* ---------- Loading ---------------------------------------------------
+   Skeletons in the shape of the table and the heatmaps, on the shared
+   .sk sweep from styles.css. */
+.bs-sk-table{padding:4px 0}
+.bs-sk-row{display:grid;grid-template-columns:minmax(0,2.6fr) 1fr 1fr 1.6fr 1.1fr 60px;gap:16px;align-items:center;
+  padding:16px 16px;border-top:1px solid var(--line-soft)}
+.bs-sk-head{border-top:0;padding:14px 16px 12px}
+.bs-media-sk{display:grid;grid-template-columns:repeat(3,1fr);gap:10px}
+.bs-media-sk .sk{aspect-ratio:9/16;max-height:220px;border-radius:var(--r-btn)}
+@media (max-width:800px){.bs-sk-row{grid-template-columns:minmax(0,2fr) 1fr 60px}.bs-sk-row > :nth-child(n+3):not(:last-child){display:none}}
