@@ -208,11 +208,11 @@ let AGENCIES = [], CURRENT_USER = '', CURRENT_ROLE = '', CURRENT_IS_INTERNAL = f
 // What this account may use. Starts closed: the controls are only put on
 // the page once the server has said so, so a failed or slow /api/brands
 // shows nothing rather than briefly offering a button that would 403.
-let FEATURES = { askLens: false, addCreative: false, pretest: false, media: false, creators: false, sov: false, signoff: false };
+let FEATURES = { askLens: false, addCreative: false, pretest: false, media: false, creators: false, sov: false, signoff: false, repurpose: false };
 
 // Pages that need a feature. A page not listed here (the Creative Hub) is
 // open to every account.
-const PAGE_FEATURE = { pretests: 'pretest', kpi: 'media', creators: 'creators', sov: 'sov', signoff: 'signoff' };
+const PAGE_FEATURE = { pretests: 'pretest', kpi: 'media', creators: 'creators', sov: 'sov', signoff: 'signoff', repurpose: 'repurpose' };
 
 /** The page to show for a request: the one asked for, or the Creative Hub if this account may not see it. */
 function allowedPage(page) {
@@ -253,6 +253,8 @@ function applyFeatures() {
   // started rather than started and then taken apart.
   // The sign-off menu item carries a count of what is waiting on this person.
   if (FEATURES.signoff && typeof Signoff !== 'undefined') Signoff.refreshBadge();
+  // Repurposing: the menu count and the agency tags on hub cards.
+  if (FEATURES.repurpose && typeof Repurpose !== 'undefined' && !applyFeatures.rpUp) { applyFeatures.rpUp = true; Repurpose.init(); }
   if (FEATURES.askLens && typeof AskLens !== 'undefined' && !applyFeatures.askLensUp) {
     applyFeatures.askLensUp = true;
     AskLens.init({ mountButton: document.querySelector('.topbar-right'),
@@ -269,7 +271,7 @@ async function loadBrands() {
     CURRENT_USER = (user && user.displayName) || '';
     CURRENT_ROLE = (user && user.role) || '';
     CURRENT_IS_INTERNAL = !!isInternal;
-    FEATURES = Object.assign({ askLens: true, addCreative: true, pretest: true, media: true, creators: true, sov: true, signoff: true }, features || {});
+    FEATURES = Object.assign({ askLens: true, addCreative: true, pretest: true, media: true, creators: true, sov: true, signoff: true, repurpose: true }, features || {});
     applyFeatures();
     const sel = document.getElementById('brand-switcher');
     if (!sel) return;
@@ -528,6 +530,7 @@ const PAGE_HEADS = {
   creators:  { title: 'Creators',       sub: 'Every creator and community page that has posted about the brand.' },
   pretests:  { title: 'Pre-tests',      sub: 'Score a video before it goes live.' },
   sov:       { title: 'Share of voice', sub: 'The brand\'s share of the conversation in its category.' },
+  repurpose: { title: 'Repurposing', sub: 'Creatives assigned to an agency for repurposing, from assignment to Unilever approval.' },
   signoff:   { title: 'Campaign sign-off', sub: 'A checklist for each campaign, approved by the Unilever media head before it goes live.' },
 };
 
@@ -552,7 +555,7 @@ function setNav(page, element) {
     // itself refuses rather than relying on the link being gone.
     page = allowedPage(page);
     if (element && !element.matches(`[onclick*="setNav('${page}'"]`)) element = null;
-    ['page-creatives', 'page-kpi', 'page-creators', 'page-pretests', 'page-signoff'].forEach(id => {
+    ['page-creatives', 'page-kpi', 'page-creators', 'page-pretests', 'page-signoff', 'page-repurpose'].forEach(id => {
         const el = document.getElementById(id);
         if (el) el.classList.add('hidden');
     });
@@ -1994,10 +1997,11 @@ function getRecHTML(item, titleLabel) {
     // Only the admin (role='admin') or a client user (not internal agency
     // staff) may mark a recommendation actioned and assign it to an agency.
     // Everyone else sees the same pending state with no way to act on it.
-    const canAssignAgency = CURRENT_ROLE === 'admin' || !CURRENT_IS_INTERNAL;
+    // Acting on it now goes through Repurposing (the block at the top of
+    // this panel): approving a repurposing request marks it actioned.
     const actionBadge = isActioned
-      ? `<div class="sheet-rec-action">Actioned by ${item.actionBy||'Unknown'} on ${item.actionDate||'Date unknown'} (${item.agency||'Agency unassigned'})</div>`
-      : `<div class="sheet-rec-action" style="color:#8A5A12">Pending action (${item.agency||'Agency unassigned'}) ${canAssignAgency ? `<button class="action-btn" onclick="openActionModal('${item.id}', '${titleLabel}')">Mark Actioned</button>` : ''}</div>`;
+      ? `<div class="sheet-rec-action">Actioned by ${item.actionBy||'Unknown'} on ${item.actionDate||'Date unknown'}${item.agency ? ` (${item.agency})` : ''}</div>`
+      : '';
     // Structured recommendations render as parts. Rows written before the
     // structured schema have no .rec and fall back to the original blob.
     const r = item.rec;
@@ -2645,6 +2649,8 @@ function renderDetail(d) {
       </div>
 
       ${detailSummaryHTML(d)}
+
+      ${FEATURES.repurpose && typeof Repurpose !== 'undefined' ? Repurpose.panelBlock(d) : ''}
 
       ${buildLineageHTML(d)}
 

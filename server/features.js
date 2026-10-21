@@ -12,6 +12,7 @@
  *   creators     Creators                      can_creators   (021)
  *   sov          Share of voice                can_sov        (021)
  *   signoff      Campaign sign-off             can_signoff    (035)
+ *   repurpose    Repurposing                   can_repurpose  (036)
  */
 const { query } = require('../db');
 
@@ -23,6 +24,7 @@ const FLAGS = {
   creators: 'can_creators',
   sov: 'can_sov',
   signoff: 'can_signoff',
+  repurpose: 'can_repurpose',
 };
 
 /** Everything allowed: used when an account's flags cannot be read. */
