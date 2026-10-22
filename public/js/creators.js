@@ -473,7 +473,7 @@ function crRenderDetail(name) {
             <div class="cr-asset-meta">${[a.date, a.campaign, a.contentType, a.duration ? Math.round(a.duration) + 's' : null]
               .filter(Boolean).map(msEsc).join(' · ')}</div>
           </div>
-          ${a.creativeLink ? `<a class="view-btn" href="${msEsc(a.creativeLink)}" target="_blank" rel="noopener">View ↗</a>` : ''}
+          ${safeUrl(a.creativeLink) ? `<a class="view-btn" href="${msEsc(safeUrl(a.creativeLink))}" target="_blank" rel="noopener noreferrer">View ↗</a>` : ''}
         </div>
         ${paid}
         <div class="cr-plat-grid">${platCols}</div>
@@ -491,8 +491,8 @@ function crRenderDetail(name) {
     <div class="cm-body">
       <div class="detail-header">
         <div>
-          <div class="detail-title">${p.profileUrl
-            ? `<a href="${msEsc(p.profileUrl)}" target="_blank" rel="noopener" class="creator-link">${msEsc(p.name)}</a>`
+          <div class="detail-title">${safeUrl(p.profileUrl)
+            ? `<a href="${msEsc(safeUrl(p.profileUrl))}" target="_blank" rel="noopener noreferrer" class="creator-link">${msEsc(p.name)}</a>`
             : msEsc(p.name)}</div>
           <div class="detail-meta">${v.title} · ${crPlural(p.posts.length, 'post')} · ${p.platforms.map(pl => pl.label).join(', ')}</div>
         </div>

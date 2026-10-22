@@ -7,11 +7,21 @@
 // =====================================================================
 const { Pool } = require('pg');
 
+// TLS to Supabase. With DATABASE_CA_CERT set (the PEM text of the Supabase
+// project's CA certificate, from Settings > Database > SSL), the server's
+// certificate is verified. Without it the connection is still encrypted but
+// not verified, which is how it ran before; set the variable to close that.
+function dbSsl() {
+  const ca = process.env.DATABASE_CA_CERT;
+  if (ca && ca.includes('BEGIN CERTIFICATE')) return { ca, rejectUnauthorized: true };
+  return { rejectUnauthorized: false };
+}
+
 const pool = new Pool({
   connectionString: process.env.DATABASE_URL,
   // Supabase terminates TLS at the pooler with a cert that Node does not
   // trust by default. Traffic is still encrypted.
-  ssl: { rejectUnauthorized: false },
+  ssl: dbSsl(),
   max: 5,
   idleTimeoutMillis: 30000,
   connectionTimeoutMillis: 10000
@@ -60,12 +70,13 @@ async function brandsForUser(username) {
 // Throws rather than returning empty, so a missing check is a loud
 // failure instead of a silent empty dashboard.
 function assertBrandAllowed(session, brandId) {
-  if (!session || !session.brands) throw new Error('No brand access on session');
-  if (!brandId) throw new Error('brand_id is required');
+  const fail = (status, msg) => { const e = new Error(msg); e.status = status; return e; };
+  if (!session || !session.brands) throw fail(403, 'No brand access on session');
+  if (!brandId) throw fail(400, 'brand_id is required');
   if (!session.brands.includes(brandId)) {
-    throw new Error(`Access denied for brand: ${brandId}`);
+    throw fail(403, 'Access denied for this brand.');
   }
   return brandId;
 }
 
-module.exports = { pool, query, brandsForUser, assertBrandAllowed };
+module.exports = { pool, query, brandsForUser, assertBrandAllowed, dbSsl };

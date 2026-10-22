@@ -18,6 +18,9 @@
 
   const esc = s => String(s == null ? '' : s).replace(/[&<>"']/g,
     c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
+  // An argument inside an inline handler: a JS string first, then escaped
+  // for the attribute, so a quote in the value cannot end the string.
+  const jsq = s => esc(JSON.stringify(String(s == null ? '' : s)));
 
   // Score ratings -> one of four looks.
   const TONE = {
@@ -403,7 +406,7 @@
         ? `<span class="bs-score t-${tone(p.totalRating)}">${Math.round(p.totalScore)}</span>` : '<span class="bs-quiet">–</span>';
       const extra = p.status === 'failed' && p.error ? `<div class="bs-row-err">${esc(p.error)}</div>`
         : p.status === 'succeeded' ? `<div class="bs-row-sub">${esc(timeLeft(p.expiresAt))}</div>` : '';
-      return `<tr class="${open ? 'is-open' : ''}" ${open ? `tabindex="0" data-press onclick="PreTest.openReport('${esc(p.id)}')" onkeydown="if(event.key==='Enter')PreTest.openReport('${esc(p.id)}')"` : ''}>
+      return `<tr class="${open ? 'is-open' : ''}" ${open ? `tabindex="0" data-press onclick="PreTest.openReport(${jsq(p.id)})" onkeydown="if(event.key==='Enter')PreTest.openReport(${jsq(p.id)})"` : ''}>
         <td><div class="bs-row-name">${esc(p.assetName)}</div>${extra}</td>
         <td>${esc(p.channelLabel)}</td>
         <td>${esc(p.contentOrigin === 'Creator' ? 'Others Say' : 'Brand Say')}</td>
@@ -475,7 +478,7 @@
         ${p.status === 'succeeded' ? reportHTML(p.summary, { jobId: p.id, kind: 'pretest' })
           : `<div class="organic-empty">${esc(STATUS[p.status] || p.status)}${p.error ? `: ${esc(p.error)}` : ''}</div>`}
         ${p.canManage && p.status === 'succeeded' ? `<div class="modal-actions">
-          <button class="modal-btn modal-cancel bs-danger" onclick="PreTest.remove('${esc(p.id)}')">Delete report now</button></div>` : ''}
+          <button class="modal-btn modal-cancel bs-danger" onclick="PreTest.remove(${jsq(p.id)})">Delete report now</button></div>` : ''}
       </div>`;
       loadMedia(box);
     } catch (e) {
@@ -743,7 +746,7 @@
     const head = d.bsStatus === 'succeeded' && d.bsScore != null
       ? `${Math.round(d.bsScore)} of 100 · ${TONE_WORD[tone(d.bsRating)]}`
       : RUNNING.has(d.bsStatus) ? 'Scoring now' : STATUS[d.bsStatus] || '';
-    return `<details class="org-details bs-detail" style="margin-top:12px;" ontoggle="PreTest.loadCreative(this, '${esc(d.id)}')">
+    return `<details class="org-details bs-detail" style="margin-top:12px;" ontoggle="PreTest.loadCreative(this, ${jsq(d.id)})">
       <summary class="org-summary">Pre-test Score <span style="color:var(--c-muted);font-size:10px;">${esc(head)} ▼</span></summary>
       <div class="org-content">${lineSkeleton(3)}</div>
     </details>`;

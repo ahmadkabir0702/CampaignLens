@@ -1,23 +1,29 @@
 const express = require('express');
-const cors = require('cors');
 const path = require('path');
 const fs = require('fs');
+const crypto = require('crypto');
 const youtubedl = require('youtube-dl-exec');
-const os = require('os'); // <--- ADD THIS
 const { GoogleGenAI } = require('@google/genai');
 const session = require('express-session');
 const bcrypt = require('bcryptjs');
-const { query } = require('./db');
+const { query, brandsForUser } = require('./db');
 const { loadFeatures } = require('./server/features');
+const SEC = require('./server/security');
 
 const app = express();
+app.disable('x-powered-by');
+// Render terminates TLS at its proxy, so without this Express sees the request
+// as plain HTTP and a secure cookie would never be set on the custom domain.
+app.set('trust proxy', 1);
+app.use(SEC.headers());
 // Gzip every response. The dashboard payload is repetitive JSON and
 // shrinks several times over, which is most of what a first load costs.
 try { app.use(require('compression')()); }
 catch (e) { console.warn('[server] compression not installed, responses go uncompressed'); }
-app.use(cors({ origin: '*' }));
-app.use(express.json());
-app.use(express.urlencoded({ extended: true }));
+// No CORS: the browser app and the API share one origin, and nothing else
+// should be reading the API from a web page.
+app.use(express.json({ limit: '1mb' }));
+app.use(express.urlencoded({ extended: true, limit: '100kb' }));
 
 // Where sign-in sessions are kept.
 //
@@ -59,13 +65,19 @@ if (!sessionStore) {
   console.warn('[session] no shared store, using memory: sessions reset on every restart.');
 }
 
-// Render terminates TLS at its proxy, so without this Express sees the request
-// as plain HTTP and a secure cookie would never be set on the custom domain.
-app.set('trust proxy', 1);
+// The key that signs session cookies. Without one set, a random key is made
+// for this run: nobody can forge a cookie, but every restart signs everyone
+// out, so set SESSION_SECRET on Render.
+const SESSION_SECRET = process.env.SESSION_SECRET && process.env.SESSION_SECRET.length >= 32
+  ? process.env.SESSION_SECRET
+  : (() => {
+      console.error('[security] SESSION_SECRET is missing or shorter than 32 characters. Using a random key for this run; set it on Render.');
+      return crypto.randomBytes(48).toString('hex');
+    })();
 
 app.use(session({
   store: sessionStore,
-  secret: process.env.SESSION_SECRET || 'changeme-set-in-env',
+  secret: SESSION_SECRET,
   resave: false,
   saveUninitialized: false,
   // Eight hours from the last request, not from signing in.
@@ -85,14 +97,26 @@ app.use(session({
   cookie: {
     maxAge: SESSION_TTL_MS,
     httpOnly: true,
-    sameSite: 'lax'
+    sameSite: 'lax',
+    // HTTPS only in production. 'auto' follows the request, so local runs
+    // over plain HTTP still work.
+    secure: SEC.PROD ? true : 'auto'
   }
 }));
 
+// Requests that carry their own secret instead of a session (n8n). They are
+// let past the login check and the cross-site check; each checks its token.
+const TOKEN_ROUTE = p => p === '/api/sov/automation' || p.startsWith('/api/sov/runs')
+  || /^\/api\/sov\/periods\/\d+\/publish$/.test(p) || p === '/api/chat/warm';
+
+// Refuse posts from other sites before anything else reads the body.
+app.use(SEC.sameOrigin({ exempt: TOKEN_ROUTE }));
+
 // Auth middleware — skips login/logout routes
 function requireAuth(req, res, next) {
-  if (req.path === '/login' || req.path === '/logout' || req.path === '/api/test-gemini') return next();
-  if (req.path.startsWith('/img/')) return next();
+  if (req.path === '/login' || req.path === '/logout' || req.path === '/api/health') return next();
+  if (req.path.startsWith('/img/') || req.path.startsWith('/fonts/')) return next();
+  if (req.path === '/api/chat/warm') return next();
   // Share of voice runs, started by n8n. Protected by x-sov-token
   // (server/sov/automation.js), not by a login session.
   if (req.path === '/api/sov/automation' || req.path.startsWith('/api/sov/runs')
@@ -105,9 +129,10 @@ function requireAuth(req, res, next) {
   res.redirect('/login');
 }
 
-app.options('*', cors({ origin: '*' }));
-
 app.use(requireAuth);
+// Re-reads the account once a minute: deactivation, a password change and
+// brand access take effect within a minute (server/security.js).
+app.use(SEC.revalidate({ query, brandsForUser, loadFeatures }));
 
 // Role isolation. An influencer coordinator gets exactly one page and the
 // handful of API routes it needs; anything else bounces them back to it.
@@ -161,7 +186,8 @@ const FEATURE_GATES = [
   { flag: 'askLens',     label: 'Ask Lens',
     covers: p => p.startsWith('/api/chat/') },
   { flag: 'addCreative', label: 'Add creative',
-    covers: p => p === '/api/add-creative' || p === '/api/check-links' },
+    covers: p => p === '/api/add-creative' || p === '/api/check-links'
+      || p === '/api/regenerate-description' },
   { flag: 'pretest',     label: 'Pre-tests',
     covers: p => p.startsWith('/api/pretests') || p.startsWith('/api/pretest-scores/') },
   { flag: 'sov',         label: 'Share of voice',
@@ -222,19 +248,24 @@ app.get('/coordinator', (req, res) => {
 
 const LOGIN_HTML = fs.readFileSync(path.join(__dirname, 'public', 'login.html'), 'utf8');
 
+const LOGIN_ERRORS = {
+  locked: 'Too many sign-in attempts. Wait 15 minutes and try again.',
+  ended: 'Your session ended. Sign in again.',
+};
 app.get('/login', (req, res) => {
   if (req.session && req.session.user) return res.redirect('/');
-  const err = req.query.error
-    ? '<div class="err">Incorrect username or password.</div>'
-    : '';
+  const msg = req.query.error ? (LOGIN_ERRORS[req.query.error] || 'Incorrect username or password.') : '';
+  const err = msg ? `<div class="err">${msg}</div>` : '';
   res.send(LOGIN_HTML.replace('<!-- ERROR_BLOCK -->', err));
 });
 
-
-app.get('/logout', (req, res) => {
-  req.session.destroy();
-  res.redirect('/login');
-});
+function logout(req, res) {
+  const done = () => { res.clearCookie('connect.sid'); res.redirect('/login'); };
+  if (!req.session) return done();
+  req.session.destroy(done);
+}
+app.get('/logout', logout);
+app.post('/logout', logout);
 
 // ---------------------------------------------------------------------
 //  Changing your own password
@@ -250,14 +281,17 @@ app.get('/logout', (req, res) => {
 // ---------------------------------------------------------------------
 const CHANGE_PW_HTML = fs.readFileSync(path.join(__dirname, 'public', 'change-password.html'), 'utf8');
 
+const escHtml = s => String(s ?? '').replace(/[&<>"']/g,
+  c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
+
 function renderChangePw(req, message) {
-  const err = message ? `<div class="err">${message}</div>` : '';
+  const err = message ? `<div class="err">${escHtml(message)}</div>` : '';
   const shared = req.session.mustChangePassword
     ? 'This account needs a new password before you can continue.'
     : 'If several people share this login, everyone will need the new password.';
   return CHANGE_PW_HTML
     .replace('<!-- ERROR_BLOCK -->', err)
-    .replace('<!-- USERNAME -->', String(req.session.user || ''))
+    .replace('<!-- USERNAME -->', escHtml(req.session.user || ''))
     .replace('<!-- SHARED_NOTE -->', shared);
 }
 
@@ -271,8 +305,12 @@ app.post('/change-password', async (req, res) => {
 
   const fail = (m) => res.type('html').send(renderChangePw(req, m));
 
+  if (SEC.pwChangeByUser.blocked(user)) {
+    return fail('Too many wrong attempts. Wait 15 minutes and try again.');
+  }
   if (next !== confirm) return fail('The two new passwords do not match.');
-  if (next.length < 10) return fail('Use at least 10 characters.');
+  const problem = passwordProblem(next, user);
+  if (problem) return fail(problem);
   if (next === current) return fail('The new password is the same as the current one.');
 
   try {
@@ -280,17 +318,25 @@ app.post('/change-password', async (req, res) => {
       `select password_hash from app_users where username = $1 and is_active = true`, [user]);
     if (!rows.length) return res.redirect('/logout');
     if (!await bcrypt.compare(current, rows[0].password_hash)) {
+      SEC.pwChangeByUser.hit(user);
+      console.warn(`[change-password] wrong current password for ${user}`);
       return fail('That is not the current password.');
     }
-    const hash = await bcrypt.hash(next, 10);
-    await query(
+    SEC.pwChangeByUser.reset(user);
+    const hash = await bcrypt.hash(next, 12);
+    const { rows: upd } = await query(
       `update app_users
           set password_hash = $2, password_changed_at = now(), must_change_password = false
-        where username = $1`, [user, hash]);
+        where username = $1
+        returning password_changed_at`, [user, hash]);
 
     // The flag lives on the session too, so clear it here or the gate
     // below keeps redirecting until they sign in again.
     req.session.mustChangePassword = false;
+    // This session carries the new change time, so it stays signed in;
+    // every other session on this login is signed out within a minute.
+    req.session.pwAt = upd[0] && upd[0].password_changed_at
+      ? new Date(upd[0].password_changed_at).getTime() : 0;
     console.log(`[change-password] ${user} changed their password`);
     res.redirect('/');
   } catch (e) {
@@ -298,6 +344,21 @@ app.post('/change-password', async (req, res) => {
     fail('Could not change the password. Try again, and tell Kabir if it keeps failing.');
   }
 });
+
+// Rules for a new password. bcrypt reads only the first 72 bytes, so
+// longer ones are refused rather than silently cut.
+const COMMON = new Set(['password', 'password1', 'password123', 'qwertyuiop', '1234567890',
+  '12345678910', 'iloveyou12', 'welcome123', 'unilever123', 'mindshare1', 'campaignlens']);
+function passwordProblem(pw, user) {
+  if (pw.length < 12) return 'Use at least 12 characters.';
+  if (Buffer.byteLength(pw) > 72) return 'Use 72 characters or fewer.';
+  if (pw.trim() !== pw) return 'The password cannot start or end with a space.';
+  const low = pw.toLowerCase();
+  if (COMMON.has(low)) return 'That password is too common. Choose another.';
+  if (user && low.includes(String(user).toLowerCase())) return 'The password cannot contain the username.';
+  if (/^(.)\1+$/.test(pw)) return 'The password cannot be one repeated character.';
+  return null;
+}
 
 // A forced change is not optional. Anyone carrying the flag goes to the
 // form and stays there, including on API calls, which would otherwise let
@@ -310,36 +371,6 @@ app.use((req, res, next) => {
   res.redirect('/change-password');
 });
 
-app.post('/api/test-gemini', async (req, res) => {
-  const { videoBase64, password } = req.body;
-  if (password !== process.env.TEST_SECRET) return res.status(401).json({ error: 'Wrong password' });
-  try {
-  console.log(`[AI Worker] Generating detailed descriptions...`);
-    
-    const prompt = `Watch this video carefully and provide a highly descriptive visual and narrative analysis. Extract the following 5 segments:
-
-1. "hook": Write exactly 2 detailed sentences describing the opening hook (first 3 seconds). Note the visual impact, audio, or text used to grab attention.
-2. "seg1": (0–25%) Write exactly 2-3 detailed sentences describing the setting, who appears, specific actions, and any text on screen.
-3. "seg2": (25–50%) Write exactly 2-3 detailed sentences describing how the narrative, demonstration, or emotional tone develops.
-4. "seg3": (50–75%) Write exactly 2-3 detailed sentences describing the core product moment, key features shown, or the climax of the message.
-5. "seg4": (75–100%) Write exactly 2-3 detailed sentences describing the closing scene, final branding moments, and the call to action.
-
-Make your descriptions vivid and specific (mention colors, emotions, or exact text if relevant). Return ONLY a valid JSON object with exactly these keys: "hook", "seg1", "seg2", "seg3", "seg4". Do not use markdown formatting or include any extra text outside the JSON.`;
-    const result = await ai.models.generateContent({
-      model: process.env.GEMINI_MODEL || 'gemini-3.6-flash',
-      contents: [{ role: 'user', parts: [
-        { inlineData: { mimeType: 'video/mp4', data: videoBase64 } },
-        { text: prompt }
-      ]}],
-      config: { responseMimeType: 'application/json', maxOutputTokens: 4000 }
-    });
-    const parsed = JSON.parse(result.text.replace(/```json|```/g, '').trim());
-    res.json({ success: true, result: parsed });
-  } catch(err) {
-    res.json({ success: false, error: err.message });
-  }
-});
-
 // Serve static files — only after auth middleware
 app.use(express.static(path.join(__dirname, 'public')));
 
@@ -349,7 +380,8 @@ const ai = new GoogleGenAI({ apiKey: process.env.GEMINI_API_KEY });
 
 
 
-// Background download queue — routes only mount when REDIS_URL is set
+// Background analysis queue (Redis). No routes of its own: add-creative
+// reaches it through app.get('mediaQueue').
 require('./media-queue').mountMediaQueue(app);
 
 // Run the queue worker inside this process. At current volume a dedicated
@@ -376,8 +408,21 @@ require('./server/repurpose/routes')(app);
 // Ask Lens chat routes
 require('./server/chat/routes')(app);
 
+// An API path nothing answered is a 404, not the app's page.
+app.all('/api/*', (req, res) => res.status(404).json({ error: 'Not found.' }));
+
 app.get('*', (req, res) => {
   res.sendFile(path.join(__dirname, 'public', 'index.html'));
+});
+
+// Last resort: an error nothing caught is logged, never shown.
+// eslint-disable-next-line no-unused-vars
+app.use((err, req, res, next) => {
+  console.error('[server] unhandled:', err && err.stack ? err.stack.split('\n').slice(0, 3).join(' | ') : err);
+  if (res.headersSent) return;
+  const status = err.status || err.statusCode || 500;
+  if (req.path.startsWith('/api/')) return res.status(status).json({ error: status < 500 ? 'Bad request.' : 'Something went wrong. Try again.' });
+  res.status(status).send(status < 500 ? 'Bad request.' : 'Something went wrong.');
 });
 
 const PORT = process.env.PORT || 8080;

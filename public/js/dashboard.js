@@ -276,7 +276,7 @@ async function loadBrands() {
     const sel = document.getElementById('brand-switcher');
     if (!sel) return;
     sel.innerHTML = brands
-      .map(b => `<option value="${b.brand_id}"${b.brand_id === active ? ' selected' : ''}>${b.name}</option>`)
+      .map(b => `<option value="${escapeHtml(b.brand_id)}"${b.brand_id === active ? ' selected' : ''}>${escapeHtml(b.name)}</option>`)
       .join('');
     if (brands.length < 2) sel.style.pointerEvents = 'none';
     if (typeof renderBrandSwitcher === 'function') renderBrandSwitcher(brands, active);
@@ -390,7 +390,7 @@ async function loadData() {
 
     if (!data.total) {
       document.getElementById('kpi-row').innerHTML =
-        `<div class="load-msg">No creatives added for ${BRAND_NAME} yet. Use Add creative to enter one.</div>`;
+        `<div class="load-msg">No creatives added for ${escapeHtml(BRAND_NAME)} yet. Use Add creative to enter one.</div>`;
       // Clear the previous brand's cards — returning early used to leave
       // them on screen next to a message saying there were none.
       document.getElementById('card-grid').innerHTML = '';
@@ -405,7 +405,7 @@ async function loadData() {
       // path returns before render(), so renderKpiTab never runs.
       const kpEmpty = document.getElementById('page-kpi');
       if (currentPage === 'kpi' && kpEmpty) kpEmpty.innerHTML =
-        `<div class="load-msg">No creatives added for ${BRAND_NAME} yet. Use Add creative to enter one.</div>`;
+        `<div class="load-msg">No creatives added for ${escapeHtml(BRAND_NAME)} yet. Use Add creative to enter one.</div>`;
       if (currentPage === 'creators' && typeof renderCreatorTab === 'function') renderCreatorTab();
       return;
     }
@@ -417,13 +417,13 @@ async function loadData() {
     render();
   } catch(err) {
     document.getElementById('kpi-row').innerHTML =
-      `<div class="load-msg load-msg-error">Couldn't load campaign data. ${err.message}
+      `<div class="load-msg load-msg-error">Couldn't load campaign data. ${escapeHtml(err.message)}
          <button class="load-retry" onclick="loadData()">Try again</button></div>`;
     document.getElementById('card-grid').innerHTML = '';
     document.getElementById('grid-count').textContent = '';
     const kp = document.getElementById('page-kpi');
     if (currentPage === 'kpi' && kp) kp.innerHTML =
-      `<div class="load-msg load-msg-error">Couldn't load campaign data. ${err.message}
+      `<div class="load-msg load-msg-error">Couldn't load campaign data. ${escapeHtml(err.message)}
         <button class="load-retry" onclick="loadData()">Try again</button></div>`;
     console.error(err);
   } finally {
@@ -464,7 +464,7 @@ function withLibrary(page, draw) {
     if (currentPage === page) draw();
   }).catch(err => {
     if (currentPage !== page || !el) return;
-    el.innerHTML = `<div class="load-msg load-msg-error">${err.message}
+    el.innerHTML = `<div class="load-msg load-msg-error">${escapeHtml(err.message)}
       <button class="load-retry" onclick="render()">Try again</button></div>`;
   });
 }
@@ -730,7 +730,7 @@ async function loadHub() {
   } catch (err) {
     if (seq !== HUB.seq) return;
     console.error('[hub]', err);
-    if (grid) grid.innerHTML = `<div class="load-msg load-msg-error">Couldn't load the creatives. ${err.message}
+    if (grid) grid.innerHTML = `<div class="load-msg load-msg-error">Couldn't load the creatives. ${escapeHtml(err.message)}
       <button class="load-retry" onclick="render()">Try again</button></div>`;
   } finally {
     clearTimeout(slow);
@@ -993,7 +993,7 @@ function renderKPIs(sum) {
          onclick="toggleKpiList('${key}', this)" title="Show the top five">
       <div class="kpi-label">${label}<span class="kpi-more" id="kpi-more-${key}">${
         KPI_LISTS[key].length > 1 ? `+${KPI_LISTS[key].length - 1} more` : ''}</span></div>
-      <div class="kpi-named">${e.d.short || e.d.id}</div>
+      <div class="kpi-named">${escapeHtml(e.d.short || e.d.id)}</div>
       <div class="kpi-sub"><span class="cqr-badge ${cqrClass(e.grade)}" style="margin-right:6px">${e.grade}</span>${
         srcWord(e.src)}${sub ? ' · ' + sub : ''}</div>
     </div>` : `
@@ -1112,9 +1112,9 @@ function toggleKpiList(key, trigger) {
     </div>
     <table class="kpi-list">
       <tbody>${rows.map((r, i) => `
-        <tr data-press onclick="selectCard('${r.d.id}', this)" title="Open this creative">
+        <tr data-press onclick="selectCard(${jsq(r.d.id)}, this)" title="Open this creative">
           <td class="kpi-list-n">${i + 1}</td>
-          <td>${r.d.short || r.d.id}<div class="fat-dates">${r.d.campaign || ''}${
+          <td>${escapeHtml(r.d.short || r.d.id)}<div class="fat-dates">${escapeHtml(r.d.campaign || '')}${
             r.d.month ? ' · ' + r.d.month : ''}</div></td>
           <td class="kpi-list-num">${key === 'weak' ? '' : fmtN(r.d.reach || 0) + ' reach'}</td>
           <td class="kpi-list-grade"><span class="cqr-badge ${cqrClass(r.grade)}">${r.grade}</span>
@@ -1192,7 +1192,7 @@ function cardMediaHTML(d) {
   const mark = d.platform === 'tiktok' ? 'TT' : 'META';
   const play = open ? `<button class="card-play" data-press title="Open on ${escapeHtml(links[0].name)}"
        aria-label="Open on ${escapeHtml(links[0].name)}"
-       onclick="event.stopPropagation();window.open('${escapeHtml(open)}','_blank','noopener')"
+       onclick="event.stopPropagation();window.open(${jsq(safeUrl(open))},'_blank','noopener')"
       >${d.isStatic ? openMark(12) : playMark(13)}</button>` : '';
   const stack = d.isStatic && d.slideCount > 1
     ? `<span class="card-thumb-stack" title="${d.slideCount} slides">${d.slideCount}</span>` : '';
@@ -1562,13 +1562,13 @@ function cardHTML(d) {
         <div class="card-cqr"><div class="card-cqr-head">Organic</div>${orgBlock || '<span class="card-cqr-state">No numbers yet</span>'}</div>
         <div class="card-cqr"><div class="card-cqr-head">Paid</div>${paidVals || '<span class="card-cqr-state">Not on paid</span>'}</div>
       </div>` : '';
-    return `<div class="card ${d.id===selectedId?'selected':''}" data-press onclick="selectCard('${d.id}', this)">
+    return `<div class="card ${d.id===selectedId?'selected':''}" data-press onclick="selectCard(${jsq(d.id)}, this)">
       <div class="card-head">
         ${cardMediaHTML(d)}
         <div class="card-ident">
           <div class="card-type-line">${typeText}${repTag}</div>
-          <div class="card-name" title="${escapeHtml(d.id)}">${d.short || d.id}</div>
-          <div class="card-campaign">${d.campaign} · ${d.month}</div>
+          <div class="card-name" title="${escapeHtml(d.id)}">${escapeHtml(d.short || d.id)}</div>
+          <div class="card-campaign">${escapeHtml(d.campaign)} · ${escapeHtml(d.month)}</div>
           ${creatorTag}
           <div class="card-tags">${durTag}${ctTag}${valTag}</div>
         </div>
@@ -2017,13 +2017,13 @@ function getRecHTML(item, titleLabel) {
     // Acting on it now goes through Repurposing (the block at the top of
     // this panel): approving a repurposing request marks it actioned.
     const actionBadge = isActioned
-      ? `<div class="sheet-rec-action">Actioned by ${item.actionBy||'Unknown'} on ${item.actionDate||'Date unknown'}${item.agency ? ` (${item.agency})` : ''}</div>`
+      ? `<div class="sheet-rec-action">Actioned by ${escapeHtml(item.actionBy||'Unknown')} on ${escapeHtml(item.actionDate||'Date unknown')}${item.agency ? ` (${escapeHtml(item.agency)})` : ''}</div>`
       : '';
     // Structured recommendations render as parts. Rows written before the
     // structured schema have no .rec and fall back to the original blob.
     const r = item.rec;
     const body = r ? recStructuredHTML(r)
-                   : `<div class="sheet-rec-text">${item.recommendation}</div>`;
+                   : `<div class="sheet-rec-text">${escapeHtml(item.recommendation)}</div>`;
     const chips = r ? recChipsHTML(r) : '';
     return `<div class="sheet-rec"><div class="sheet-rec-content"><div class="sheet-rec-head"><div class="sheet-rec-label">${titleLabel} Live Recommendation</div>${chips}</div>${body}${actionBadge}</div></div>`;
   } else {
@@ -2554,9 +2554,9 @@ function originOf(d) {
 function lineageRow(x) {
   const bits = [x.campaign, x.month].filter(Boolean).join(' · ');
   const hook = (x.hookRate || x.hookRate === 0) ? kpiPct(x.hookRate) : '—';
-  return `<button class="lin-row" data-press onclick="selectCard('${x.id}', this)">
-      <span class="lin-name">${x.short || x.id}</span>
-      <span class="lin-meta">${bits}</span>
+  return `<button class="lin-row" data-press onclick="selectCard(${jsq(x.id)}, this)">
+      <span class="lin-name">${escapeHtml(x.short || x.id)}</span>
+      <span class="lin-meta">${escapeHtml(bits)}</span>
       <span class="lin-metric">Hook ${hook}</span>
     </button>`;
 }
@@ -2610,10 +2610,10 @@ function renderDetail(d) {
   let linkBtns = '<div class="btn-group">';
   links.forEach((l, i) => {
     linkBtns += `<button class="view-btn${i === 0 ? ' primary' : ''}"
-      onclick="window.open('${escapeHtml(l.url)}','_blank','noopener')">Open on ${escapeHtml(l.name)}</button>`;
+      onclick="window.open(${jsq(safeUrl(l.url))},'_blank','noopener')">Open on ${escapeHtml(l.name)}</button>`;
   });
   if (!links.length && d.originalUrl) {
-    linkBtns += `<button class="view-btn primary" onclick="window.open('${escapeHtml(d.originalUrl)}','_blank','noopener')">Open the original</button>`;
+    linkBtns += `<button class="view-btn primary" onclick="window.open(${jsq(safeUrl(d.originalUrl))},'_blank','noopener')">Open the original</button>`;
   }
   linkBtns += '</div>';
 
@@ -2623,7 +2623,7 @@ function renderDetail(d) {
       <img src="${escapeHtml(d.thumbnail)}" alt="" onerror="this.closest('.detail-media').remove()">
       ${previewLink ? `<button class="detail-play" data-press title="Open on ${escapeHtml(previewLink.name)}"
          aria-label="Open on ${escapeHtml(previewLink.name)}"
-         onclick="window.open('${escapeHtml(previewLink.url)}','_blank','noopener')"
+         onclick="window.open(${jsq(safeUrl(previewLink.url))},'_blank','noopener')"
         >${d.isStatic ? openMark(22) : playMark(26)}</button>` : ''}
     </div>` : '';
 
@@ -2640,9 +2640,9 @@ function renderDetail(d) {
   if (d.type === 'Others Say') {
     const creator = creatorInfo(d);
     if (creator) {
-      const linkEl = creator.profileUrl
-        ? `<a href="${creator.profileUrl}" target="_blank" class="creator-link">${creator.username} ↗</a>`
-        : `<span class="creator-name">${creator.username}</span>`;
+      const linkEl = safeUrl(creator.profileUrl)
+        ? `<a href="${escapeHtml(safeUrl(creator.profileUrl))}" target="_blank" rel="noopener noreferrer" class="creator-link">${escapeHtml(creator.username)} ↗</a>`
+        : `<span class="creator-name">${escapeHtml(creator.username)}</span>`;
       creatorHTML = `<div class="creator-row">Creator: ${linkEl}</div>`;
     }
   }
@@ -2655,7 +2655,7 @@ function renderDetail(d) {
     <div class="cm-body">
       <div class="detail-header">
         <div>
-          <div class="detail-title">${d.short}<span class="card-type ${d.type==='Brand Say'?'bs-tag':'os-tag'}" style="margin-left:6px">${d.type}</span>${d.source==='community'?'<span class="card-type community-tag" style="margin-left:4px">Community</span>':''}${d.creatorLed?'<span class="card-type creator-led-tag" style="margin-left:4px">Creator-led</span>':''}${valUI}</div>
+          <div class="detail-title">${escapeHtml(d.short)}<span class="card-type ${d.type==='Brand Say'?'bs-tag':'os-tag'}" style="margin-left:6px">${d.type}</span>${d.source==='community'?'<span class="card-type community-tag" style="margin-left:4px">Community</span>':''}${d.creatorLed?'<span class="card-type creator-led-tag" style="margin-left:4px">Creator-led</span>':''}${valUI}</div>
           <div class="detail-meta">${metaParts.join(' · ')}</div>
           ${creatorHTML}${repText}${linkBtns}
         </div>
@@ -2671,7 +2671,7 @@ function renderDetail(d) {
 
       ${buildLineageHTML(d)}
 
-      <details class="org-details" style="margin-top:12px;" open ontoggle="loadOrganicValidation(this, '${d.id}')">
+      <details class="org-details" style="margin-top:12px;" open ontoggle="loadOrganicValidation(this, ${jsq(d.id)})">
         <summary class="org-summary">Organic Performance <span style="color:var(--c-muted);font-size:10px;">Numbers, why this rating, and whether to boost ▼</span></summary>
         <div class="org-content"
              data-fallback="${encodeURIComponent(buildOrganicHTML(d))}"><div class="organic-empty">Loading…</div></div>
@@ -2683,7 +2683,7 @@ function renderDetail(d) {
 
       ${buildCreativeBriefHTML(d)}
 
-      <details class="org-details" style="margin-top:12px;" ontoggle="loadFatigue(this, '${d.id}')">
+      <details class="org-details" style="margin-top:12px;" ontoggle="loadFatigue(this, ${jsq(d.id)})">
         <summary class="org-summary">How it is holding up <span style="color:var(--c-muted);font-size:10px;">CQR over time, not lifetime ▼</span></summary>
         <div class="org-content"><div class="organic-empty">Loading…</div></div>
       </details>
@@ -2772,7 +2772,7 @@ function openActionModal(creativeId, platform) {
   document.getElementById('actionNameDisplay').textContent = CURRENT_USER || 'Unknown user';
   const ag = document.getElementById('actionAgencyInput');
   ag.innerHTML = '<option value="">Select agency</option>' +
-    AGENCIES.map(a => `<option value="${a.name}">${a.name}</option>`).join('');
+    AGENCIES.map(a => `<option value="${escapeHtml(a.name)}">${escapeHtml(a.name)}</option>`).join('');
 }
 
 function closeActionModal() {
@@ -2836,7 +2836,7 @@ function openAddCreativeModal() {
   if (campaigns.length === 0) {
     campaignSelect.innerHTML += '<option value="Cool Fresh">Cool Fresh</option>';
   } else {
-    campaigns.forEach(c => { campaignSelect.innerHTML += `<option value="${c}">${c}</option>`; });
+    campaigns.forEach(c => { campaignSelect.innerHTML += `<option value="${escapeHtml(c)}">${escapeHtml(c)}</option>`; });
   }
   const orgIdSelect = document.getElementById('ac-original-id');
   orgIdSelect.innerHTML = '<option value="" disabled selected>Select Original Creative ID</option>';
@@ -2956,7 +2956,7 @@ function showCreativeSummary(result) {
       <div style="font:400 13px/18px var(--font-ui);color:var(--ink-500);margin-top:8px">
         The creative is saved. Descriptions can be generated again without re-entering anything.
       </div>` : `
-      ${a.hook ? `<div class="brief-hook" style="margin-top:12px"><span class="brief-hook-label">Hook</span><div class="brief-hook-text">${a.hook}</div></div>` : ''}
+      ${a.hook ? `<div class="brief-hook" style="margin-top:12px"><span class="brief-hook-label">Hook</span><div class="brief-hook-text">${escapeHtml(a.hook)}</div></div>` : ''}
       ${segs.length ? `<div class="brief-segs" style="margin-top:12px">${
         segs.map((s,i)=>`<div class="seg-row"><div class="seg-label">${labels[i]||''}</div><div class="seg-text">${s}</div></div>`).join('')
       }</div>` : ''}`}
@@ -3260,8 +3260,18 @@ let AC_REVIEWED = false;
 let AC_CONTENT = null;
 
 function escapeHtml(s) {
-  return String(s ?? '').replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
+  return String(s ?? '').replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;').replace(/'/g, '&#39;');
 }
+
+// A value passed as an argument inside an inline handler, onclick="f(${jsq(x)})".
+// HTML escaping alone is not enough there: the browser decodes &#39; back to '
+// before the script runs. JSON makes it a safe JS string, then it is escaped
+// for the attribute.
+function jsq(s) { return escapeHtml(JSON.stringify(String(s ?? ''))); }
+
+// Only web links are opened or linked; javascript: and data: links are dropped.
+function safeUrl(u) { const s = String(u ?? '').trim(); return /^https?:\/\//i.test(s) ? s : ''; }
 
 async function submitCreative(e) {
   e.preventDefault();

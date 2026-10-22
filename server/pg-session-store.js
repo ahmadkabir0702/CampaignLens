@@ -35,7 +35,7 @@ module.exports = function makePgSessionStore(session) {
       this.cache = new Map();
       this.pool = new Pool({
         connectionString: process.env.DATABASE_URL,
-        ssl: { rejectUnauthorized: false },
+        ssl: require('../db').dbSsl(),
         max: 2,
         idleTimeoutMillis: 30000,
         connectionTimeoutMillis: 10000,

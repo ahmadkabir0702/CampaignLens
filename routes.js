@@ -20,6 +20,8 @@ const { checkLinks } = require('./link-check');
 const { checkContent } = require('./content-check');
 const { buildValidation } = require('./organic-validation');
 const { fatigueFor } = require('./server/fatigue');
+const SEC = require('./server/security');
+const { sendError, cleanName } = SEC;
 
 // Review runs the content check; Confirm needs the same answer a moment later.
 // Caching by the normalised links means each link is scraped once per add,
@@ -64,6 +66,16 @@ module.exports = function mountRoutes(app, deps = {}) {
   });
   const { ai, youtubedl } = deps;
 
+  // Unilever and Mindshare staff, and the admin. Agencies, the influencer
+  // coordinator and the media head (read-only) are not.
+  const canManage = (req) => {
+    const s = req.session || {};
+    if (s.role === 'admin') return true;
+    if (s.role === 'media_head' || s.role === 'influencer_coordinator') return false;
+    return s.org === 'unilever' || s.org === 'mindshare';
+  };
+  const notPermitted = (res) => res.status(403).json({ error: 'Not permitted for this account.' });
+
   // Resolve which brand this request is for: explicit ?brand=, else the
   // session's active brand, else their first allowed brand.
   function resolveBrand(req) {
@@ -76,13 +88,24 @@ module.exports = function mountRoutes(app, deps = {}) {
   //  LOGIN — reads app_users instead of USER_* environment variables
   // -------------------------------------------------------------------
   app.post('/login', async (req, res) => {
-    const username = (req.body.username || '').trim();
-    const password = (req.body.password || '').trim();
+    const username = String(req.body.username || '').trim().slice(0, 100);
+    // Passwords are compared as typed. Older accounts were set while the
+    // form trimmed them, so a trimmed match is still accepted below.
+    const password = String(req.body.password || '').slice(0, 200);
+    const ip = req.ip || 'unknown';
+    const key = username.toLowerCase();
+
+    // Too many attempts from this address, or wrong passwords for this
+    // username: wait, whatever was typed this time.
+    if (SEC.loginByIp.blocked(ip) || SEC.loginByUser.blocked(key)) {
+      console.warn(`[login] attempt blocked for ${key || '(blank)'} from ${ip}`);
+      return res.redirect('/login?error=locked');
+    }
+    SEC.loginByIp.hit(ip);
 
     try {
       const { rows } = await query(
-        `select password_hash, role, must_change_password,
-                can_ask_lens, can_add_creative, can_pretest
+        `select username, password_hash, role, must_change_password, password_changed_at, org
            from app_users
           where username = $1 and is_active = true`,
         [username]
@@ -92,35 +115,50 @@ module.exports = function mountRoutes(app, deps = {}) {
       // wrong password take the same time and cannot be told apart.
       const hash = rows.length ? rows[0].password_hash
                                : '$2a$10$invalidinvalidinvalidinvalidinvalidinvalidinvalidinvalidiu';
-      const ok = await bcrypt.compare(password, hash);
-      if (!rows.length || !ok) return res.redirect('/login?error=1');
+      let ok = await bcrypt.compare(password, hash);
+      if (!ok && password.trim() !== password) ok = await bcrypt.compare(password.trim(), hash);
+      if (!rows.length || !ok) {
+        SEC.loginByUser.hit(key);
+        console.warn(`[login] failed for ${key || '(blank)'} from ${ip}`);
+        return res.redirect('/login?error=1');
+      }
+      const user = rows[0].username;
 
-      const access = await brandsForUser(username);
+      const access = await brandsForUser(user);
       if (!access || !access.brands.length) {
-        console.warn(`[login] ${username} authenticated but has no brands assigned`);
+        console.warn(`[login] ${user} authenticated but has no brands assigned`);
         return res.redirect('/login?error=2');
       }
+      const features = await loadFeatures(user);
 
-      req.session.user = username;
-      req.session.brands = access.brands;
-      req.session.isInternal = access.isInternal;
-      req.session.role = rows[0].role || null;
-      // Read once at login rather than per request. A change to someone's
-      // access takes effect on their next sign-in, which is the same way
-      // their brand list already behaves.
-      req.session.features = await loadFeatures(username);
-      req.session.activeBrand = access.brands[0];
-      req.session.mustChangePassword = rows[0].must_change_password === true;
+      // A new session id at sign-in, so an id planted before login is
+      // worth nothing after it.
+      req.session.regenerate(err => {
+        if (err) { console.error('[login] session regenerate:', err.message); return res.redirect('/login?error=1'); }
+        SEC.loginByUser.reset(key);
+        const s = req.session;
+        s.user = user;
+        s.brands = access.brands;
+        s.isInternal = access.isInternal;
+        s.role = rows[0].role || null;
+        s.org = rows[0].org || null;
+        s.features = features;
+        s.activeBrand = access.brands[0];
+        s.mustChangePassword = rows[0].must_change_password === true;
+        s.authAt = Date.now();
+        s.checkedAt = Date.now();
+        s.pwAt = rows[0].password_changed_at ? new Date(rows[0].password_changed_at).getTime() : 0;
 
-      // Stamped after the session is settled, and deliberately not awaited:
-      // a slow or failing write here should not stop someone signing in.
-      query(`update app_users set last_login_at = now() where username = $1`, [username])
-        .catch(e => console.warn('[login] last_login_at not recorded:', e.message));
+        // Not awaited: a slow write here should not stop someone signing in.
+        query(`update app_users set last_login_at = now() where username = $1`, [user])
+          .catch(e => console.warn('[login] last_login_at not recorded:', e.message));
+        console.log(`[login] ${user} signed in from ${ip}`);
 
-      req.session.save(err => {
-        if (err) { console.error('[login] session save:', err); return res.redirect('/login?error=1'); }
-        if (req.session.mustChangePassword) return res.redirect('/change-password');
-        res.redirect(req.session.role === 'influencer_coordinator' ? '/coordinator' : '/');
+        s.save(err2 => {
+          if (err2) { console.error('[login] session save:', err2.message); return res.redirect('/login?error=1'); }
+          if (s.mustChangePassword) return res.redirect('/change-password');
+          res.redirect(s.role === 'influencer_coordinator' ? '/coordinator' : '/');
+        });
       });
     } catch (err) {
       console.error('[login] failed:', err.message);
@@ -152,19 +190,16 @@ module.exports = function mountRoutes(app, deps = {}) {
       );
       res.json(rows);
     } catch (err) {
-      res.status(err.status || 500).json({ error: err.message });
+      sendError(res, 'api', err);
     }
   });
 
   app.post('/api/campaigns', async (req, res) => {
     try {
       const brand = resolveBrand(req);
-      // Adding campaigns is an internal job, not a coordinator one.
-      if (req.session.role === 'influencer_coordinator') {
-        return res.status(403).json({ error: 'Not permitted for this role' });
-      }
-      const name = (req.body.name || '').trim();
-      if (!name) return res.status(400).json({ error: 'Campaign name is required.' });
+      // Adding campaigns is a Unilever or Mindshare job.
+      if (!canManage(req)) return notPermitted(res);
+      const name = cleanName(req.body.name, { label: 'Campaign name' });
       await query(
         `insert into campaigns (brand_id, name) values ($1,$2)
          on conflict (brand_id, name) do update set is_active = true`,
@@ -172,7 +207,7 @@ module.exports = function mountRoutes(app, deps = {}) {
       );
       res.json({ success: true, name });
     } catch (err) {
-      res.status(err.status || 500).json({ error: err.message });
+      sendError(res, 'api', err);
     }
   });
 
@@ -188,8 +223,16 @@ module.exports = function mountRoutes(app, deps = {}) {
   // admin list needs.
   app.get('/api/creators', async (req, res) => {
     try {
-      resolveBrand(req);            // brand access check
+      const brand = resolveBrand(req);
       const campaignId = req.query.campaign_id;
+      // Creators are shared across brands. Only staff see the whole list;
+      // anyone else only a campaign of a brand they can see.
+      if (!campaignId && !canManage(req)) return notPermitted(res);
+      if (campaignId) {
+        const { rows: own } = await query(
+          'select 1 from campaigns where id = $1 and brand_id = $2', [campaignId, brand]);
+        if (!own.length) return res.status(404).json({ error: 'Campaign not found for this brand.' });
+      }
       const params = [];
       let sql = `select c.id, c.name,
                         coalesce(json_agg(json_build_object(
@@ -207,7 +250,7 @@ module.exports = function mountRoutes(app, deps = {}) {
       const { rows } = await query(sql, params);
       res.json(rows);
     } catch (err) {
-      res.status(err.status || 500).json({ error: err.message });
+      sendError(res, 'api', err);
     }
   });
 
@@ -215,11 +258,8 @@ module.exports = function mountRoutes(app, deps = {}) {
   app.post('/api/creators', async (req, res) => {
     try {
       resolveBrand(req);
-      if (req.session.role === 'influencer_coordinator') {
-        return res.status(403).json({ error: 'Not permitted for this role' });
-      }
-      const name = (req.body.name || '').trim();
-      if (!name) return res.status(400).json({ error: 'Creator name is required.' });
+      if (!canManage(req)) return notPermitted(res);
+      const name = cleanName(req.body.name, { label: 'Creator name' });
 
       const { rows } = await query(
         `insert into creators (name) values ($1)
@@ -230,6 +270,9 @@ module.exports = function mountRoutes(app, deps = {}) {
       // profiles: [{ platform, handle, url }]
       for (const p of (req.body.profiles || [])) {
         if (!p || !['ig','fb','tt','yt','other'].includes(p.platform)) continue;
+        if (p.url && !/^https:\/\//i.test(String(p.url))) continue;
+        p.handle = p.handle ? String(p.handle).slice(0, 100) : null;
+        p.url = p.url ? String(p.url).slice(0, 500) : null;
         await query(
           `insert into creator_profiles (creator_id, platform, handle, profile_url)
            values ($1,$2,$3,$4)
@@ -239,7 +282,7 @@ module.exports = function mountRoutes(app, deps = {}) {
       }
       res.json({ success: true, id, name });
     } catch (err) {
-      res.status(err.status || 500).json({ error: err.message });
+      sendError(res, 'api', err);
     }
   });
 
@@ -247,9 +290,7 @@ module.exports = function mountRoutes(app, deps = {}) {
   app.post('/api/campaign-creators', async (req, res) => {
     try {
       const brand = resolveBrand(req);
-      if (req.session.role === 'influencer_coordinator') {
-        return res.status(403).json({ error: 'Not permitted for this role' });
-      }
+      if (!canManage(req)) return notPermitted(res);
       const { campaign_id, creator_ids, remove } = req.body;
       if (!campaign_id) return res.status(400).json({ error: 'campaign_id is required.' });
 
@@ -273,7 +314,7 @@ module.exports = function mountRoutes(app, deps = {}) {
       }
       res.json({ success: true, count: ids.length });
     } catch (err) {
-      res.status(err.status || 500).json({ error: err.message });
+      sendError(res, 'api', err);
     }
   });
 
@@ -307,7 +348,7 @@ app.get('/api/brands', async (req, res) => {
         features: req.session.features || ALL_ON
       });
     } catch (err) {
-      res.status(500).json({ error: err.message });
+      sendError(res, 'api', err);
     }
   });
 
@@ -333,10 +374,7 @@ app.get('/api/brands', async (req, res) => {
   // -------------------------------------------------------------------
   const C = require('./creatives');
 
-  const fail = (tag, res, err) => {
-    console.error(`[${tag}]`, err.message);
-    res.status(err.message.startsWith('Access denied') ? 403 : 500).json({ error: err.message });
-  };
+  const fail = (tag, res, err) => sendError(res, tag, err);
 
   // Serialised here rather than by res.json, so the size can be recorded.
   const sendJson = (res, brand, body) => {
@@ -483,6 +521,24 @@ app.get('/api/brands', async (req, res) => {
     // Null on Others Say: there the creator made it, so the flag says nothing.
     const creatorLedValue = type === 'Brand Say' ? creatorLed : null;
     if (!campaign) return res.status(400).json({ error: 'Campaign is required.' });
+    // Free text from the form is checked here too; the browser check can be
+    // skipped. A campaign name is shown across the app, so no markup in it.
+    let campaignName, creatorName;
+    try {
+      campaignName = cleanName(campaign, { label: 'Campaign' });
+      creatorName = creator ? cleanName(creator, { label: 'Creator', max: 200 }) : null;
+    } catch (e) { return res.status(400).json({ error: e.message }); }
+    if (description && String(description).length > 200) {
+      return res.status(400).json({ error: 'Description must be 200 characters or fewer.' });
+    }
+    if (originalId) {
+      if (!/^[A-Za-z0-9_.-]{1,80}$/.test(String(originalId))) {
+        return res.status(400).json({ error: 'Original creative id is not valid.' });
+      }
+      const { rows: orig } = await query(
+        'select 1 from creatives where creative_id = $1 and brand_id = $2', [originalId, brand]);
+      if (!orig.length) return res.status(400).json({ error: 'The original creative was not found for this brand.' });
+    }
 
     // Links are checked here as well as in the browser. The browser check is
     // a convenience; this is the one that counts, since it cannot be skipped.
@@ -545,7 +601,12 @@ app.get('/api/brands', async (req, res) => {
     try {
       const q = app.get('mediaQueue');
       if (q && typeof q.getJobs === 'function') {
-        const jobs = await q.getJobs(['waiting', 'active', 'delayed', 'paused']);
+        // Bounded: if Redis is unreachable this gives up after 5 seconds
+        // instead of holding the request open.
+        const jobs = await Promise.race([
+          q.getJobs(['waiting', 'active', 'delayed', 'paused']),
+          new Promise((_, rej) => setTimeout(() => rej(new Error('queue did not answer in 5s')), 5000)),
+        ]);
         for (const j of jobs) {
           const id = j && j.data && j.data.creativeId;
           if (id) pendingIds.add(id);
@@ -624,12 +685,12 @@ app.get('/api/brands', async (req, res) => {
         const job = await queue.add(
           'process-creative',
           {
-            creativeId, brand, campaign, type, date: date || null,
+            creativeId, brand, campaign: campaignName, type, date: date || null,
             repurposed: repurposed === 'Yes', originalId: originalId || null,
             ig: ig || null, fb: fb || null, tt: tt || null,
             source: sourceValue,
             creatorLed: creatorLedValue,
-            creator: creator || null,
+            creator: creatorName,
             creatorId: creator_id || null,
             contentType,
             format,
@@ -672,17 +733,16 @@ app.get('/api/brands', async (req, res) => {
             original_creative_id, content_type, ig_link, fb_link, tt_link,
             creator_profile, creator_id, source, creator_led)
          values ($1,$2,coalesce($3::date, current_date),$4,$5,$6,$7,$15,$8,$9,$10,$11,$12,$13,$14)`,
-        [creativeId, brand, date || null, campaign, type, repurposed === 'Yes',
+        [creativeId, brand, date || null, campaignName, type, repurposed === 'Yes',
          originalId || null, ig || null, fb || null, tt || null,
-         creator || null, creator_id || null, sourceValue, creatorLedValue, contentType]
+         creatorName, creator_id || null, sourceValue, creatorLedValue, contentType]
       );
       return res.json({
         success: true, creativeId, queued: false,
         message: videoLink ? 'Added without analysis (no worker configured).' : 'Added.'
       });
     } catch (err) {
-      console.error('[add-creative]', err.message);
-      return res.status(500).json({ error: err.message });
+      return sendError(res, 'add-creative', err);
     }
   });
 
@@ -691,6 +751,8 @@ app.get('/api/brands', async (req, res) => {
     try { brand = resolveBrand(req); }
     catch (err) { return res.status(403).json({ error: err.message }); }
 
+    // Spends a Gemini call and a download: Unilever and Mindshare only.
+    if (!canManage(req)) return notPermitted(res);
     const { creative_id } = req.body;
     if (!creative_id) return res.status(400).json({ error: 'creative_id is required' });
     if (!ai || !youtubedl) return res.status(503).json({ error: 'Video analysis is not configured on this server.' });
@@ -713,7 +775,6 @@ app.get('/api/brands', async (req, res) => {
         format: 'bv*[ext=mp4]+ba[ext=m4a]/b[ext=mp4]/b',
         mergeOutputFormat: 'mp4',
         noWarnings: true,
-        noCheckCertificates: true,
         addHeader: [
           'user-agent:Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/114.0.0.0 Safari/537.36',
           'accept-language:en-US,en;q=0.9'
@@ -722,11 +783,12 @@ app.get('/api/brands', async (req, res) => {
 
       geminiFile = await ai.files.upload({ file: videoPath, mimeType: 'video/mp4' });
       let state = await ai.files.get({ name: geminiFile.name });
-      while (state.state === 'PROCESSING') {
+      const until = Date.now() + 5 * 60 * 1000;
+      while (state.state === 'PROCESSING' && Date.now() < until) {
         await new Promise(r => setTimeout(r, 3000));
         state = await ai.files.get({ name: geminiFile.name });
       }
-      if (state.state === 'FAILED') throw new Error('Gemini processing failed.');
+      if (state.state !== 'ACTIVE') throw new Error(`Gemini processing did not finish (${state.state}).`);
 
       // Same shape as the worker so a regenerate cannot leave a creative with
       // quartile segments but no timeline.
@@ -771,8 +833,7 @@ app.get('/api/brands', async (req, res) => {
         usage: a._usage || null
       });
     } catch (err) {
-      console.error('[regenerate-description]', err.message);
-      res.status(500).json({ error: err.message });
+      sendError(res, 'regenerate-description', err);
     } finally {
       if (videoPath && fs.existsSync(videoPath)) fs.unlinkSync(videoPath);
       if (geminiFile) { try { await ai.files.delete({ name: geminiFile.name }); } catch (e) {} }
@@ -788,12 +849,12 @@ app.get('/api/brands', async (req, res) => {
       const brand = resolveBrand(req);
       const { creative_id, platform, action_status, actioned_by, action_date, agency } = req.body;
 
-      // Only the admin or a client user (not internal agency staff) may
-      // mark a recommendation actioned and assign it to an agency.
+      // Only the admin or a Unilever account may mark a recommendation
+      // actioned and assign it to an agency.
       const isAdmin = req.session.role === 'admin';
-      const isClient = !req.session.isInternal;
+      const isClient = req.session.org === 'unilever' && req.session.role !== 'media_head';
       if (!isAdmin && !isClient) {
-        return res.status(403).json({ error: 'Only the admin or a client user can assign this to an agency.' });
+        return res.status(403).json({ error: 'Only the admin or a Unilever account can assign this to an agency.' });
       }
 
       if (!creative_id) return res.status(400).json({ error: 'creative_id is required' });
@@ -824,8 +885,7 @@ app.get('/api/brands', async (req, res) => {
 
       res.json({ success: true });
     } catch (err) {
-      console.error('[update-action]', err.message);
-      res.status(500).json({ error: err.message });
+      sendError(res, 'update-action', err);
     }
   });
 
@@ -868,7 +928,7 @@ app.get('/api/brands', async (req, res) => {
       );
       res.json(rows);
     } catch (err) {
-      res.status(500).json({ error: err.message });
+      sendError(res, 'api', err);
     }
   });
 
@@ -894,8 +954,7 @@ app.get('/api/brands', async (req, res) => {
       if (!out) return res.status(404).json({ error: 'Creative not found for this brand' });
       res.json(out);
     } catch (err) {
-      console.error('[organic-validation]', err.message);
-      res.status(500).json({ error: err.message });
+      sendError(res, 'organic-validation', err);
     }
   });
 
@@ -924,76 +983,9 @@ app.get('/api/brands', async (req, res) => {
       // creatives have never run.
       res.json(out || { creative_id: creativeId, platforms: [], history: [] });
     } catch (err) {
-      console.error('[creative-fatigue]', err.message);
-      res.status(500).json({ error: err.message });
+      sendError(res, 'creative-fatigue', err);
     }
   });
-
-  // -------------------------------------------------------------------
-  //  TEMPORARY manual-upload tool. Takes a raw MP4 body, runs it through
-  //  the same Gemini Files-API flow as add-creative, and returns the
-  //  descriptions without touching the database. Backs upload-test.html.
-  //  Session-protected via the global requireAuth (path is under /api/).
-  //  Safe to delete this route + the HTML page when no longer needed.
-  // -------------------------------------------------------------------
-  app.post('/api/describe-upload',
-    express.raw({ type: () => true, limit: '200mb' }),
-    async (req, res) => {
-      if (!ai) return res.status(500).json({ error: 'Gemini is not configured (GEMINI_API_KEY missing).' });
-      if (!req.body || !req.body.length) return res.status(400).json({ error: 'No file received.' });
-
-      let videoPath = null, geminiFile = null;
-      try {
-        videoPath = path.join(os.tmpdir(), `upload_${Date.now()}.mp4`);
-        fs.writeFileSync(videoPath, req.body);
-
-        geminiFile = await ai.files.upload({ file: videoPath, mimeType: 'video/mp4' });
-        let state = await ai.files.get({ name: geminiFile.name });
-        while (state.state === 'PROCESSING') {
-          await new Promise(r => setTimeout(r, 3000));
-          state = await ai.files.get({ name: geminiFile.name });
-        }
-        if (state.state === 'FAILED') throw new Error('Gemini processing failed.');
-
-        // Same prompt and schema as the worker, so the test page shows exactly
-        // what a real analysis would store, including format classification.
-        const prompt = buildPrompt(null);
-
-        const result = await ai.models.generateContent({
-          model: GEMINI_MODEL,
-          contents: [{ role: 'user', parts: [
-            { fileData: { fileUri: geminiFile.uri, mimeType: 'video/mp4' } },
-            { text: prompt }
-          ]}],
-          config: { responseMimeType: 'application/json', responseSchema: RESPONSE_SCHEMA, maxOutputTokens: 16000 }
-        });
-
-        const a = JSON.parse(result.text.replace(/```json|```/g, '').trim());
-        // Same accounting as the worker: thinking tokens bill at output rates.
-        const u = result.usageMetadata || {};
-        const inTok = u.promptTokenCount || 0;
-        const outTok = u.candidatesTokenCount || 0;
-        const think = u.thoughtsTokenCount || 0;
-        const IN_RATE = Number(process.env.GEMINI_IN_RATE || 0.75) / 1e6;
-        const OUT_RATE = Number(process.env.GEMINI_OUT_RATE || 3.75) / 1e6;
-        const usage = {
-          model: GEMINI_MODEL,
-          input_tokens: inTok,
-          output_tokens: outTok,
-          thinking_tokens: think,
-          total_tokens: u.totalTokenCount || (inTok + outTok + think),
-          cost_usd: Number((inTok * IN_RATE + (outTok + think) * OUT_RATE).toFixed(6)),
-        };
-        console.log(`[describe-upload] in=${inTok} out=${outTok} thinking=${think} cost=$${usage.cost_usd.toFixed(4)}`);
-        res.json({ success: true, analysis: a, usage });
-      } catch (err) {
-        console.error('[describe-upload]', err.message);
-        if (!res.headersSent) res.status(500).json({ success: false, error: err.message });
-      } finally {
-        if (videoPath && fs.existsSync(videoPath)) fs.unlinkSync(videoPath);
-        if (geminiFile) { try { await ai.files.delete({ name: geminiFile.name }); } catch (e) {} }
-      }
-    });
 
   // -------------------------------------------------------------------
   //  Health check. Doubles as the free-tier keep-alive target.
@@ -1003,7 +995,8 @@ app.get('/api/brands', async (req, res) => {
       await query('select 1');
       res.json({ ok: true });
     } catch (err) {
-      res.status(503).json({ ok: false, error: err.message });
+      console.error('[health]', err.message);
+      res.status(503).json({ ok: false });
     }
   });
 };

@@ -51,7 +51,7 @@ const MS_GRADES = ['Good', 'Average', 'Poor'];
 const msNum = (v) => (v === null || v === undefined || isNaN(v)) ? 0 : Number(v);
 const msPct = (n, d) => d ? Math.round(n / d * 100) : 0;
 const msEsc = (s) => String(s === null || s === undefined ? '' : s)
-  .replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
+  .replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;').replace(/'/g, '&#39;');
 
 const MS_PLATFORMS = [
   { code: 'ig', label: 'Instagram', key: 'igOrganic', link: 'igLink' },
@@ -551,7 +551,7 @@ function msPaidHookHold(boosted) {
     <div class="ms-lead">${lead}</div>
     <div class="ms-compare-rows">${groups.map(g => `
       <div class="ms-compare-row">
-        <div class="ms-compare-k">${g.label}</div>
+        <div class="ms-compare-k">${msEsc(g.label)}</div>
         <div class="ms-compare-track"><div class="ms-compare-fill"
           style="width:${g.n ? Math.max(2, g.n / max * 100) : 0}%;background:${g.c}"></div></div>
         <div class="ms-compare-v">${g.n}</div>
@@ -643,7 +643,7 @@ function msPaidPlatformFit(boosted) {
     <div class="ms-lead">${lead}</div>
     <div class="ms-compare-rows">${parts.map(p => `
       <div class="ms-compare-row">
-        <div class="ms-compare-k">${p.label}</div>
+        <div class="ms-compare-k">${msEsc(p.label)}</div>
         <div class="ms-compare-track"><div class="ms-compare-fill"
           style="width:${p.n ? Math.max(2, p.n / max * 100) : 0}%;background:${p.c}"></div></div>
         <div class="ms-compare-v">${p.n}</div>
@@ -901,7 +901,7 @@ function msSectionCreators(data) {
     <table class="ms-table ms-table-cut">
       <tbody>${rows.map(r => `
         <tr>
-          <td class="ms-cut-k">${r.label}<div class="ms-cut-n">${r.items.length} post${r.items.length === 1 ? '' : 's'}</div></td>
+          <td class="ms-cut-k">${msEsc(r.label)}<div class="ms-cut-n">${r.items.length} post${r.items.length === 1 ? '' : 's'}</div></td>
           <td class="ms-mixcell">${msCqrBar(msMix(r.items), r.items.length)}</td>
         </tr>`).join('')}
       </tbody>
