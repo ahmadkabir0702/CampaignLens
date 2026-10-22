@@ -284,7 +284,10 @@ module.exports = function mountRoutes(app, deps = {}) {
     }
   });
 
-  // Rename a campaign, or hide it from the pickers (and show it again).
+  // Rename a campaign, or put one that was taken out of the pickers back.
+  // Campaigns are not hidden from the app: a hidden campaign with creatives
+  // would still show in some pickers and not others. A mistaken one is
+  // deleted instead (below), which is only allowed while nothing uses it.
   // A rename carries over to every creative and sign-off that uses the old
   // name, in one transaction, so nothing is left under the old spelling.
   app.put('/api/campaigns/:id', async (req, res) => {
@@ -320,8 +323,8 @@ module.exports = function mountRoutes(app, deps = {}) {
           }
         }
       }
-      if (req.body.is_active !== undefined) {
-        await client.query(`update campaigns set is_active = $2 where id = $1`, [id, req.body.is_active === true]);
+      if (req.body.is_active === true) {
+        await client.query(`update campaigns set is_active = true where id = $1`, [id]);
       }
       await client.query('commit');
       console.log(`[campaigns] ${req.session.user} changed "${old}" in ${brand}`
@@ -333,6 +336,31 @@ module.exports = function mountRoutes(app, deps = {}) {
     } finally {
       client.release();
     }
+  });
+
+  // Delete a campaign added by mistake (a typo, a duplicate). Only while
+  // no creative and no sign-off uses it, so nothing can lose its campaign.
+  app.delete('/api/campaigns/:id', async (req, res) => {
+    try {
+      const brand = resolveBrand(req);
+      if (!canManage(req)) return notPermitted(res);
+      const id = Number(req.params.id);
+      if (!Number.isInteger(id) || id <= 0) throw httpErr(400, 'Not a campaign.');
+      const { rows } = await query(`select name from campaigns where id = $1 and brand_id = $2`, [id, brand]);
+      if (!rows.length) throw httpErr(404, 'Campaign not found for this brand.');
+      const name = rows[0].name;
+      const { rows: used } = await query(
+        `select count(*)::int as n from creatives where brand_id = $1 and campaign = $2`, [brand, name]);
+      if (used[0].n) throw httpErr(409, `It has ${used[0].n} creative${used[0].n === 1 ? '' : 's'}, so it cannot be deleted. Rename it instead.`);
+      try {
+        const { rows: so } = await query(
+          `select count(*)::int as n from sign_offs where campaign_id = $1 or (brand_id = $2 and campaign_name = $3)`, [id, brand, name]);
+        if (so[0].n) throw httpErr(409, 'It has a sign-off checklist, so it cannot be deleted.');
+      } catch (e) { if (e.status) throw e; if (e.code !== '42P01' && e.code !== '42703') throw e; }
+      await query(`delete from campaigns where id = $1`, [id]);
+      console.log(`[campaigns] ${req.session.user} deleted "${name}" from ${brand}`);
+      res.json({ success: true });
+    } catch (err) { sendError(res, 'campaigns', err); }
   });
 
   // -------------------------------------------------------------------
