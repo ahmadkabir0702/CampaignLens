@@ -18,8 +18,9 @@ function windowStart(kind, now = new Date()) {
 
 /**
  * Increments both windows and returns { allowed, reason, retryAfter }.
- * Fails open: if the counter table is unreachable, the message goes
- * through. The Anthropic spend cap is the real backstop.
+ * Fails closed: if the counter table is unreachable, the question is
+ * refused rather than sent uncounted, so a database fault cannot turn
+ * into unmetered AI spend.
  */
 async function consume(userId, opts = {}) {
   const pool = opts.pool || getPool();
@@ -55,8 +56,12 @@ async function consume(userId, opts = {}) {
 
     return { allowed: true };
   } catch (err) {
-    console.error('[rateLimit] failing open:', err.message);
-    return { allowed: true };
+    console.error('[rateLimit] could not count, refusing:', err.message);
+    return {
+      allowed: false,
+      reason: 'Ask Lens is unavailable for a moment. Try again shortly.',
+      retryAfter: 60,
+    };
   }
 }
 

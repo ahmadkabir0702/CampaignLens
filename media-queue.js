@@ -4,81 +4,35 @@
  * This was previously written into creatives.js, which overwrote the module
  * that builds the dashboard payload. It lives in its own file now.
  *
- * Mounting is opt-in: without REDIS_URL the routes are not registered at all,
- * so the app boots normally on a machine with no Redis.
+ * Opt-in: without REDIS_URL there is no queue, and add-creative writes the
+ * row directly. The queue has no HTTP routes of its own; the old upload and
+ * job-status routes were removed (they were unused and showed any brand's
+ * jobs to any signed-in account).
  */
-const express = require('express');
 
 function mountMediaQueue(app) {
   if (!process.env.REDIS_URL) {
-    console.log('[media-queue] REDIS_URL not set — queue routes disabled.');
+    console.log('[media-queue] REDIS_URL not set, no analysis queue.');
     return null;
   }
 
   const { Queue } = require('bullmq');
   const IORedis = require('ioredis');
 
-  const connection = new IORedis(process.env.REDIS_URL, { maxRetriesPerRequest: null });
+  const connection = new IORedis(process.env.REDIS_URL, {
+    maxRetriesPerRequest: null,
+    // Fail fast instead of queueing commands while Redis is unreachable, so
+    // add-creative answers with an error rather than hanging.
+    enableOfflineQueue: false,
+    connectTimeout: 10000,
+  });
   connection.on('error', e => console.error('[media-queue] redis:', e.message));
 
   const downloadQueue = new Queue('creative-downloads', { connection });
-  const router = express.Router();
-
-  // Instagram first, then TikTok — matches add-creative's existing priority.
-  function selectPriorityUrl(body = {}) {
-    const { ig_link, tt_link, instagram_url, tiktok_url } = body;
-    const ig = ig_link || instagram_url;
-    const tt = tt_link || tiktok_url;
-    if (ig && ig.includes('instagram.com')) return ig.trim();
-    if (tt && tt.includes('tiktok.com')) return tt.trim();
-    return null;
-  }
-
-  router.post('/upload', async (req, res) => {
-    const selectedUrl = selectPriorityUrl(req.body);
-    const creativeId = req.body.creative_id || null;
-    if (!selectedUrl) {
-      return res.status(400).json({ error: 'A valid Instagram or TikTok URL is required.' });
-    }
-    const platform = selectedUrl.includes('instagram.com') ? 'instagram' : 'tiktok';
-
-    try {
-      const job = await downloadQueue.add(
-        'download-media',
-        { mediaUrl: selectedUrl, creativeId, platform,
-          outputFileName: `creative_${platform}_${Date.now()}.mp4` },
-        // Retry options belong on the job, not on the Worker.
-        { attempts: 3, backoff: { type: 'exponential', delay: 10000 },
-          removeOnComplete: 100, removeOnFail: 500 }
-      );
-      return res.status(202).json({ jobId: job.id, platform, queued: true });
-    } catch (error) {
-      console.error('[media-queue] enqueue failed:', error.message);
-      return res.status(500).json({ error: 'Failed to queue download task.' });
-    }
-  });
-
-  router.get('/status/:jobId', async (req, res) => {
-    try {
-      const job = await downloadQueue.getJob(req.params.jobId);
-      if (!job) return res.status(404).json({ error: 'Job not found.' });
-      return res.json({
-        id: job.id,
-        state: await job.getState(),
-        progress: job.progress || null,
-        result: job.returnvalue || null,
-        failedReason: job.failedReason || null,
-      });
-    } catch (error) {
-      return res.status(500).json({ error: 'Failed to retrieve job status.' });
-    }
-  });
-
-  app.use('/api/media', router);
   // routes.js reaches the queue through this rather than importing it, so the
   // add-creative route works unchanged when Redis is absent.
   app.set('mediaQueue', downloadQueue);
-  console.log('[media-queue] mounted at /api/media');
+  console.log('[media-queue] queue ready');
   return downloadQueue;
 }
 

@@ -38,7 +38,7 @@ module.exports = function mountChatRoutes(app) {
   app.post('/api/chat/warm', express.json(), async (req, res) => {
     const secret = process.env.ASK_LENS_WARM_SECRET;
     if (!secret) return res.status(503).json({ error: 'ASK_LENS_WARM_SECRET not configured.' });
-    if (req.get('X-Warm-Secret') !== secret) return res.status(401).json({ error: 'Unauthorized' });
+    if (!require('../security').secretEquals(req.get('X-Warm-Secret'), secret)) return res.status(401).json({ error: 'Unauthorized' });
     try {
       const results = await warmAll({ quiet: true });
       const failed = results.filter((r) => r.error);

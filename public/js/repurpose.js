@@ -17,6 +17,9 @@
 
   const esc = (s) => String(s == null ? '' : s)
     .replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
+  // An argument inside an inline handler: a JS string first, then escaped
+  // for the attribute, so a quote in the value cannot end the string.
+  const jsq = (s) => esc(JSON.stringify(String(s == null ? '' : s)));
   const MON = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
   const isoDay = (d) => {
     if (!d) return '';
@@ -123,7 +126,7 @@
         body = `<div class="rp-assign">
           <label>Agency<select id="rp-agency">${agencies.length > 1 ? '<option value="">Pick an agency</option>' : ''}${agencies.map((a) => `<option value="${esc(a.key)}">${esc(a.name)}</option>`).join('')}</select></label>
           <label>Due date<input id="rp-due" type="date" min="${min}" value="${def}"></label>
-          <button class="btn-primary" data-press onclick="Repurpose.assign('${esc(PANEL.id)}')">Assign agency for repurposing</button>
+          <button class="btn-primary" data-press onclick="Repurpose.assign(${jsq(PANEL.id)})">Assign agency for repurposing</button>
         </div>`;
       }
     } else {
@@ -301,7 +304,7 @@
       }
       const wd = t.status === 'done' ? Math.max(0, daysBetween(isoDay(t.done_at), TODAY)) : null;
       const wait = wd === null ? '' : wd === 0 ? 'Waiting since today' : `Waiting ${plural(wd, 'day')}`;
-      return `<div class="sg-card rp-card" data-press role="button" tabindex="0" onclick="Repurpose.openCreative('${esc(t.creative_id)}', '${esc(t.brand_id)}')">
+      return `<div class="sg-card rp-card" data-press role="button" tabindex="0" onclick="Repurpose.openCreative(${jsq(t.creative_id)}, ${jsq(t.brand_id)})">
         <div class="rp-card-row">
           ${t.thumbnail_url ? `<img class="rp-thumb" src="${esc(t.thumbnail_url)}" alt="" loading="lazy" onerror="this.remove()">` : '<div class="rp-thumb rp-thumb-none"></div>'}
           <div class="rp-card-main">
