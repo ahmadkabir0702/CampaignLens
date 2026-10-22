@@ -39,7 +39,8 @@ async function ensureTable() {
       last_ok_at  timestamptz,
       last_try_at timestamptz,
       last_error  text,
-      last_ms     integer)`);
+      last_ms     integer);
+    alter table app_jobs enable row level security;`);
 }
 
 async function loadLast() {

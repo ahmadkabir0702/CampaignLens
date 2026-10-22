@@ -133,6 +133,13 @@ app.use(requireAuth);
 // Re-reads the account once a minute: deactivation, a password change and
 // brand access take effect within a minute (server/security.js).
 app.use(SEC.revalidate({ query, brandsForUser, loadFeatures }));
+// Ask Lens questions per login, for the admin page's usage view.
+app.use((req, res, next) => {
+  if (req.method === 'POST' && req.path === '/api/chat/message' && req.session && req.session.user) {
+    res.on('finish', () => { if (res.statusCode < 400) require('./server/ops').countUse(req.session.user, 'ask-lens-question'); });
+  }
+  next();
+});
 
 // Role isolation. An influencer coordinator gets exactly one page and the
 // handful of API routes it needs; anything else bounces them back to it.
@@ -239,6 +246,7 @@ const COORDINATOR_HTML = (() => {
 })();
 
 app.get('/coordinator', (req, res) => {
+  if (req.session && req.session.user) require('./server/ops').countUse(req.session.user, 'coordinator');
   if (!COORDINATOR_HTML) {
     return res.status(503).send('Coordinator page is not installed on this deploy.');
   }
@@ -408,6 +416,8 @@ require('./server/signoff/routes')(app);
 require('./server/repurpose/routes')(app);
 // Ask Lens chat routes
 require('./server/chat/routes')(app);
+// Admin: logins, access, usage and health. Admin role only.
+require('./server/admin/routes')(app);
 
 // An API path nothing answered is a 404, not the app's page.
 app.all('/api/*', (req, res) => res.status(404).json({ error: 'Not found.' }));
@@ -420,6 +430,7 @@ app.get('*', (req, res) => {
 // eslint-disable-next-line no-unused-vars
 app.use((err, req, res, next) => {
   console.error('[server] unhandled:', err && err.stack ? err.stack.split('\n').slice(0, 3).join(' | ') : err);
+  if (!(err.status < 500)) require('./server/ops').logError('unhandled', err, req);
   if (res.headersSent) return;
   const status = err.status || err.statusCode || 500;
   if (req.path.startsWith('/api/')) return res.status(status).json({ error: status < 500 ? 'Bad request.' : 'Something went wrong. Try again.' });

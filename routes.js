@@ -349,7 +349,9 @@ app.get('/api/brands', async (req, res) => {
         // What this account may use. The server refuses these endpoints
         // regardless; this is so the UI does not offer a button that
         // would only return 403.
-        features: req.session.features || ALL_ON
+        // admin is not an account flag: it follows the role, and the
+        // admin routes check the role themselves.
+        features: { ...(req.session.features || ALL_ON), admin: req.session.role === 'admin' }
       });
     } catch (err) {
       sendError(res, 'api', err);
@@ -988,6 +990,15 @@ app.get('/api/brands', async (req, res) => {
     } catch (err) {
       sendError(res, 'creative-fatigue', err);
     }
+  });
+
+  // -------------------------------------------------------------------
+  //  Which section someone opened, for the admin page's usage view. Only
+  //  the section name and the login are kept, counted per day.
+  // -------------------------------------------------------------------
+  app.post('/api/usage', (req, res) => {
+    const ok = require('./server/ops').countUse(req.session.user, String((req.body || {}).section || ''));
+    res.status(ok ? 204 : 400).end();
   });
 
   // -------------------------------------------------------------------
