@@ -965,9 +965,8 @@ app.get('/api/brands', async (req, res) => {
   // -------------------------------------------------------------------
   //  CREATIVE FATIGUE — the same rating over windows of time.
   //
-  //  The rating everywhere else is a lifetime figure that takes the best
-  //  single day a creative ever had, so a creative that has decayed
-  //  still reads Good. This grades each stretch on its own.
+  //  The rating everywhere else covers the whole run, weighted by
+  //  impressions, so a creative that has decayed can still read Good. This grades each stretch on its own.
   // -------------------------------------------------------------------
   app.get('/api/creative-fatigue', async (req, res) => {
     try {
@@ -989,6 +988,29 @@ app.get('/api/brands', async (req, res) => {
     } catch (err) {
       sendError(res, 'creative-fatigue', err);
     }
+  });
+
+  // -------------------------------------------------------------------
+  //  How fresh the brand's data is, for the stamp under each page title.
+  //  Paid: the latest day of delivery on file. Organic: the last time any
+  //  post's numbers were captured. Either can be missing on a new brand.
+  // -------------------------------------------------------------------
+  app.get('/api/freshness', async (req, res) => {
+    try {
+      const brand = resolveBrand(req);
+      const soft = (p) => p.then(r => r.rows[0] || {}).catch(e => {
+        if (e.code === '42P01' || e.code === '42703') return {};
+        throw e;
+      });
+      const [paid, organic] = await Promise.all([
+        soft(query(`select max(date)::text as last_day from creative_metrics_unified where brand_id = $1`, [brand])),
+        soft(query(`select max(h.captured_at) as last_at
+                      from organic_perf_history h
+                      join creatives c on c.creative_id = h.creative_id
+                     where c.brand_id = $1`, [brand])),
+      ]);
+      res.json({ brand, paid_through: paid.last_day || null, organic_at: organic.last_at || null });
+    } catch (err) { sendError(res, 'freshness', err); }
   });
 
   // -------------------------------------------------------------------

@@ -365,7 +365,59 @@ function showSkeleton() {
   if (c) c.textContent = '';
 }
 
+// ---------------------------------------------------------------------
+//  Data freshness, under the title of the pages built from synced data.
+//  Paid more than two days behind is shown in amber: the numbers on the
+//  page are older than people will assume.
+// ---------------------------------------------------------------------
+const FRESH_PAGES = new Set(['creatives', 'kpi', 'creators']);
+const FRESH = { brand: null, at: 0, data: null };
+const FRESH_MONTHS = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
+
+function freshDay(iso) {
+  const d = new Date(String(iso).slice(0, 10) + 'T00:00:00');
+  return `${d.getDate()} ${FRESH_MONTHS[d.getMonth()]}`;
+}
+function freshWhen(ts) {
+  const d = new Date(ts);
+  const time = d.toLocaleTimeString('en-GB', { hour: 'numeric', minute: '2-digit', timeZone: 'Asia/Colombo' });
+  return `${d.toLocaleDateString('en-GB', { day: 'numeric', month: 'short', timeZone: 'Asia/Colombo' })}, ${time}`;
+}
+
+async function showFreshness(page) {
+  const el = document.getElementById('page-fresh');
+  if (!el) return;
+  if (!FRESH_PAGES.has(page || currentPage)) { el.hidden = true; return; }
+  // Cleared by loadData on every brand switch, so one slot is enough.
+  const brand = 'active';
+  try {
+    if (!FRESH.data || FRESH.brand !== brand || Date.now() - FRESH.at > 5 * 60 * 1000) {
+      const r = await fetch('/api/freshness');
+      if (!r.ok) throw new Error(String(r.status));
+      FRESH.data = await r.json(); FRESH.brand = brand; FRESH.at = Date.now();
+    }
+    const f = FRESH.data;
+    const bits = [];
+    let stale = false;
+    if (f.paid_through) {
+      const days = Math.floor((Date.now() - new Date(f.paid_through + 'T00:00:00').getTime()) / 86400000);
+      stale = days > 2;
+      bits.push(stale ? `Paid data is ${days} days old (to ${freshDay(f.paid_through)})` : `Paid data to ${freshDay(f.paid_through)}`);
+    }
+    if (f.organic_at) bits.push(`organic numbers updated ${freshWhen(f.organic_at)}`);
+    if (!bits.length) { el.hidden = true; return; }
+    const text = bits.join(' · ');
+    el.textContent = text.charAt(0).toUpperCase() + text.slice(1);
+    el.classList.toggle('is-stale', stale);
+    el.hidden = !FRESH_PAGES.has(currentPage);
+  } catch (e) {
+    el.hidden = true;
+  }
+}
+
 async function loadData() {
+  FRESH.data = null;
+  showFreshness(currentPage);
   isLoading = true;
   showSkeleton();
   // A new brand, or the same one after a write: nothing kept from before
@@ -565,6 +617,7 @@ function setNav(page, element) {
     if (titleEl) titleEl.innerText = (PAGE_HEADS[page] || {}).title || '';
     const subEl = document.getElementById('page-sub');
     if (subEl) subEl.innerText = (PAGE_HEADS[page] || {}).sub || '';
+    showFreshness(page);
     document.querySelectorAll('.nav-item').forEach(el => el.classList.remove('active'));
     if (element) {
         element.classList.add('active');
@@ -2120,9 +2173,8 @@ async function loadOrganicValidation(detailsEl, creativeId) {
 }
 
 // ---------------------------------------------------------------------
-//  Creative fatigue. The rating elsewhere is a lifetime figure that
-//  takes the best single day a creative ever had, so decay is invisible
-//  there. This grades each stretch of time on its own.
+//  Creative fatigue. The rating elsewhere covers the whole run,
+//  weighted by impressions, so recent decay is diluted there. This grades each stretch of time on its own.
 // ---------------------------------------------------------------------
 const fatigueCache = new Map();
 

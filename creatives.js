@@ -131,29 +131,24 @@ async function paidExtras(brandId) {
   // dates let us check.
   try {
     const { rows } = await query(
-      `select creative_id, platform, window_name, cqr, from_date, to_date, impressions
+      `select creative_id, platform, window_name, cqr, from_date, to_date, impressions,
+              spend, is_active, is_current
          from v_paid_windowed
         where brand_id = $1 and window_name in ('first_7','last_7','lifetime')`, [brandId]);
     const byId = {};
     for (const r of rows) (((byId[r.creative_id] ||= {})[r.platform] ||= {}))[r.window_name] = r;
-    const RANK = { Good: 0, Average: 1, Poor: 2 };
+    // The same rule as the fatigue panel and Ask Lens (assessFade).
+    const { assessFade } = require('./server/fatigue');
     for (const [id, plats] of Object.entries(byId)) {
       let faded = false, from = null, to = null, checked = false;
       // Which platform faded, not just that one did. The card has to say
       // "fatiguing on TikTok", and this loop already knows.
       const fadedOn = [];
       for (const [plat, w] of Object.entries(plats)) {
-        const life = w.lifetime, first = w.first_7, last = w.last_7;
-        if (!life || !first || !last) continue;
-        const runDays = Math.round((new Date(life.to_date) - new Date(life.from_date)) / 86400000) + 1;
-        if (runDays < 14) continue;                       // no two windows to compare
-        if (Number(last.impressions) < 1000) continue;    // too thin to read
-        if (RANK[first.cqr] === undefined || RANK[last.cqr] === undefined) continue;
+        const a = assessFade(w);
+        if (!a.checked) continue;
         checked = true;
-        if (RANK[last.cqr] > RANK[first.cqr]) {
-          faded = true; from = first.cqr; to = last.cqr;
-          fadedOn.push(plat);
-        }
+        if (a.faded) { faded = true; from = a.from; to = a.to; fadedOn.push(plat); }
       }
       out.window[id] = { ...(out.window[id] || {}), faded, fadedFrom: from, fadedTo: to, fadedOn, checked };
     }

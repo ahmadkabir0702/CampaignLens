@@ -148,6 +148,12 @@ summary:focus-visible,.nav-item:focus-visible,.card:focus-visible,
 .page-title{min-width:0}
 #page-sub{margin-top:4px;font:400 14.5px/21px var(--font);color:var(--ink-500);max-width:62ch}
 #page-sub:empty{display:none}
+/* When the numbers were last updated, under the subtitle on data pages. */
+.page-fresh{margin-top:6px;display:flex;align-items:center;gap:7px;font:400 12.5px/18px var(--font);color:var(--ink-400)}
+.page-fresh[hidden]{display:none}
+.page-fresh::before{content:'';width:7px;height:7px;border-radius:50%;background:var(--pos);flex:none}
+.page-fresh.is-stale{color:var(--warn)}
+.page-fresh.is-stale::before{background:var(--warn)}
 /* Tracking is size-specific. Letters read too far apart as they grow, so
    display sizes tighten and small labels open up a fraction. A single
    letter-spacing value across a type scale is wrong at one end or the

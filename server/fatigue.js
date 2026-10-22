@@ -114,6 +114,34 @@ function trendOf(first, last, lastImpressions) {
   return { direction: 'held', from: first, to: last };
 }
 
+/**
+ * The one fatigue rule. The Creative Hub card, the fatigue panel and Ask
+ * Lens all call this, so they cannot disagree about a creative.
+ *
+ * wins: the creative's rows on one platform from v_paid_windowed, keyed by
+ * window_name (first_7, last_7, lifetime). A trend is read only when:
+ *   - it has run at least MIN_RUN_DAYS, so first and last week differ
+ *   - both weeks had at least WINDOW_FLOOR impressions
+ *   - both weeks have a grade
+ * faded: graded worse in its last week than its first. still_running says
+ * whether that last week is the current one and the creative is live.
+ */
+function assessFade(wins) {
+  const first = wins && wins.first_7, last = wins && wins.last_7, life = wins && wins.lifetime;
+  if (!first || !last || !life) return { checked: false, reason: 'no windows' };
+  const runDays = Math.round((new Date(life.to_date) - new Date(life.from_date)) / 86400000) + 1;
+  const stillRunning = !!(last.is_active && last.is_current);
+  const base = { run_days: runDays, still_running: stillRunning };
+  if (!(runDays >= MIN_RUN_DAYS)) return { ...base, checked: false, reason: 'too short' };
+  const imp = (w) => (w.impressions === null || w.impressions === undefined ? null : Number(w.impressions));
+  if (imp(last) === null || imp(last) < WINDOW_FLOOR) return { ...base, checked: false, reason: 'thin last week' };
+  if (imp(first) === null || imp(first) < WINDOW_FLOOR) return { ...base, checked: false, reason: 'thin first week' };
+  const trend = trendOf(first.cqr, last.cqr, imp(last));
+  if (!trend) return { ...base, checked: false, reason: 'ungraded' };
+  return { ...base, checked: true, trend, faded: trend.direction === 'faded', from: first.cqr, to: last.cqr,
+           spend_last: last.spend === null || last.spend === undefined ? 0 : Number(last.spend) };
+}
+
 function trendWords(t, platLabel, stillRunning) {
   if (!t) return null;
   if (t.direction === 'faded') {
@@ -160,10 +188,9 @@ async function fatigueFor(brandId, creativeId) {
       : 0;
     const tooShort = runDays < MIN_RUN_DAYS;
 
-    const thin = last && Number(last.impressions) < WINDOW_FLOOR;
-    const trend = (!tooShort && first && last)
-      ? trendOf(first.cqr, last.cqr, last.impressions === null ? null : Number(last.impressions))
-      : null;
+    const a = assessFade(wins);
+    const thin = a.reason === 'thin last week' || a.reason === 'thin first week';
+    const trend = a.checked ? a.trend : null;
     const stillRunning = !!(last && last.is_active && last.is_current);
 
     return {
@@ -197,7 +224,7 @@ async function fatigueFor(brandId, creativeId) {
       verdict: tooShort
         ? `Only ${runDays} day${runDays === 1 ? '' : 's'} of delivery on ${label} so far. There is no earlier stretch to compare against yet, so nothing here says whether it is holding up. Come back once it has run a fortnight.`
         : thin
-          ? `Too little delivery on ${label} in its last week to read a trend from.`
+          ? `Too little delivery on ${label} in its ${a.reason === 'thin first week' ? 'first' : 'last'} week to read a trend from.`
           : trendWords(trend, label, stillRunning),
     };
   });
@@ -225,8 +252,8 @@ async function fatigueFor(brandId, creativeId) {
     history,
     // Said once, because it explains why this panel can disagree with
     // the rating shown everywhere else on the same screen.
-    note: 'The CQR elsewhere in Campaign Lens is a lifetime figure, and it takes the best single day the creative ever had. These windows grade each stretch of time on its own, which is why a creative can read Good overall and Average now.',
+    note: 'The CQR elsewhere in Campaign Lens covers the whole run, weighted by impressions, so a recent decline is diluted by earlier weeks. These windows grade each stretch of time on its own, which is why a creative can read Good overall and Average now.',
   };
 }
 
-module.exports = { recordChanges, fatigueFor, WINDOW_FLOOR };
+module.exports = { recordChanges, fatigueFor, assessFade, WINDOW_FLOOR, MIN_RUN_DAYS };

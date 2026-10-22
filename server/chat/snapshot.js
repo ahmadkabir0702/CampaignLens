@@ -28,7 +28,10 @@ const { getPool } = require('./db');
 // rated on (migration 023).
 // Bumped to 10: creator posts are rated against the brand's own creators
 // (migration 028), and the rulebook says so.
-const SNAPSHOT_SCHEMA_VERSION = 10;
+// Bumped to 11: fatigue uses the same rule as the rest of the app
+// (assessFade), and the lifetime rating is no longer described as the
+// best day.
+const SNAPSHOT_SCHEMA_VERSION = 11;
 
 const T = S.tables, C = S.creative, P = S.paidView, O = S.organicView, OR = S.organicRawCols;
 const OB = S.organicBest, B = S.boost, TH = S.thresholds, CR = S.creator;
@@ -162,6 +165,7 @@ async function qWindowed(pool, brand) {
   return soft(async () => {
     const { rows } = await pool.query(
       `select ${W.creativeId} as id, ${W.platform} as platform, ${W.windowName} as window_name,
+              ${W.fromDate} as from_date, ${W.toDate} as to_date, ${W.impressions} as impressions,
               ${W.cqr} as cqr, ${W.hookRate} as hook_rate, ${W.holdRate} as hold_rate,
               ${W.spend} as spend, ${W.isActive} as is_active, ${W.isCurrent} as is_current
          from ${T.paidWindowed} where ${W.brand} = $1`, [brand]);
@@ -394,17 +398,16 @@ function renderDigest(an, insights) {
   L.push(`  Poor creatives: ${an.poorSplit.activeCount} still running on ${money(an.poorSplit.activeSpend)} (current waste), ${an.poorSplit.stoppedCount} stopped after ${money(an.poorSplit.stoppedSpend)} (past spend, already addressed)`);
 
   // ---- Fatigue -------------------------------------------------
-  // The lifetime rating takes the best day a creative ever had, so it
-  // cannot fall. Decline is only visible by comparing windows, which is
-  // why this is stated separately rather than left for the model to
-  // infer from a rating that structurally never drops.
+  // The lifetime rating covers the whole run, so recent decline is
+  // diluted in it. Decline is only clear by comparing windows, which is
+  // why this is stated separately rather than left for the model to infer.
   if ((an.fatiguing || []).length) {
     L.push('');
     L.push('FATIGUING (rated worse in the latest window than in its first, and still running)');
     for (const f of an.fatiguing.slice(0, 10)) {
       L.push(`  ${f.id} on ${S.platformLabels[f.platform] || f.platform}: ${f.from} to ${f.to}, ${money(f.spend)} in the latest window`);
     }
-    L.push('  The lifetime rating will not show this. It keeps the best day the creative ever had.');
+    L.push('  The lifetime rating covers the whole run weighted by impressions, so a recent decline is diluted there and shows here first.');
   }
 
   // ---- Pre-test Score ------------------------------------------
@@ -657,27 +660,24 @@ async function buildSnapshot(brand, _r, opts = {}) {
   // ---------------------------------------------------------------
   //  Fatigue, from the windowed view
   //
-  //  A creative is fatiguing when its rating in the latest window is
-  //  worse than in its first and it is still running. The lifetime
-  //  rating cannot show this: it takes the best day a creative ever had,
-  //  so it never falls.
+  //  A creative is fatiguing when it is graded worse in its last week
+  //  than its first, by the same rule as the Creative Hub and the fatigue
+  //  panel (assessFade in server/fatigue.js), and it is still running.
+  //  The windows are matched by name, never by row order.
   // ---------------------------------------------------------------
+  const { assessFade } = require('../fatigue');
   const byCreativePlat = new Map();
   for (const w of windowRows) {
     const k = `${w.id}|${w.platform}`;
-    if (!byCreativePlat.has(k)) byCreativePlat.set(k, []);
-    byCreativePlat.get(k).push(w);
+    if (!byCreativePlat.has(k)) byCreativePlat.set(k, {});
+    byCreativePlat.get(k)[w.window_name] = w;
   }
   const fatiguing = [];
-  for (const [k, ws] of byCreativePlat) {
-    const graded = ws.filter((w) => S.cqrGrades.includes(w.cqr));
-    if (graded.length < 2) continue;
-    const first = graded[0], last = graded[graded.length - 1];
-    if (!last.is_current || !last.is_active) continue;
-    if (S.cqrRank[last.cqr] > S.cqrRank[first.cqr]) {
-      const [id, platform] = k.split('|');
-      fatiguing.push({ id, platform, from: first.cqr, to: last.cqr, spend: num(last.spend) });
-    }
+  for (const [k, wins] of byCreativePlat) {
+    const a = assessFade(wins);
+    if (!a.checked || !a.faded || !a.still_running) continue;
+    const [id, platform] = k.split('|');
+    fatiguing.push({ id, platform, from: a.from, to: a.to, spend: a.spend_last });
   }
   fatiguing.sort((a, b) => b.spend - a.spend);
 
