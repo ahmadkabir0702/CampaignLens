@@ -23,6 +23,8 @@
 .cp-acts{display:flex;gap:2px;flex:none}
 .cp-act{border:0;background:none;cursor:pointer;padding:6px 9px;border-radius:7px;font:500 12.5px var(--font);color:var(--primary)}
 .cp-act:hover{background:var(--sel)}
+.cp-act-del{color:var(--neg)}
+.cp-act-del:hover{background:var(--neg-bg)}
 .cp-note{flex-basis:100%;font:400 12px var(--font);color:var(--ink-400)}
 .cp-empty{padding:22px 0;text-align:center;font:400 13.5px var(--font);color:var(--ink-400)}
 .cp-toggle{align-self:flex-start;border:0;background:none;cursor:pointer;padding:10px 0 2px;font:500 12.5px var(--font);color:var(--primary)}

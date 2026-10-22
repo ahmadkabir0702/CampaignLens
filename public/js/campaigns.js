@@ -3,7 +3,8 @@
  *
  *   Campaigns.open()       the Campaigns window from the Creative Hub:
  *                          every campaign for the brand with how many
- *                          creatives use it; add, rename, hide, show
+ *                          creatives use it; add, rename, and delete one
+ *                          added by mistake while nothing uses it
  *   Campaigns.inlineOpen() "Add a new campaign" inside the Add creative
  *                          form, so nobody has to leave the form
  *
@@ -15,7 +16,7 @@
     (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
   const MON = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
   const day = (v) => { if (!v) return ''; const d = new Date(v); return `${d.getDate()} ${MON[d.getMonth()]} ${d.getFullYear()}`; };
-  const S = { list: null, editing: null, showHidden: false };
+  const S = { list: null, editing: null };
   const can = () => typeof FEATURES !== 'undefined' && FEATURES.manageCampaigns === true;
   const say = (m, t) => (typeof toast === 'function' ? toast(m, t) : null);
 
@@ -113,8 +114,7 @@
 
   function draw(focusId) {
     const el = overlay();
-    const shown = S.list.filter((c) => c.is_active);
-    const hidden = S.list.filter((c) => !c.is_active);
+    const shown = S.list;
     const row = (c) => {
       const key = c.id == null ? `n:${c.name}` : String(c.id);
       if (S.editing === key) {
@@ -129,19 +129,22 @@
         c.signed_off ? 'Signed off' : '',
         c.created_by ? `Added by ${esc(c.created_by)}${c.created_at ? ` on ${day(c.created_at)}` : ''}` : '',
       ].filter(Boolean).join(' · ');
+      // Delete only while nothing uses it: a typo or a duplicate.
+      const unused = !c.creatives && !c.signed_off;
       const acts = c.id == null
         ? `<button class="cp-act" onclick="Campaigns.adopt(${esc(JSON.stringify(c.name))})">Add to list</button>`
         : `<button class="cp-act" onclick="Campaigns.edit(${c.id})">Rename</button>
-           <button class="cp-act" onclick="Campaigns.setActive(${c.id}, ${!c.is_active})">${c.is_active ? 'Hide' : 'Show'}</button>`;
-      return `<div class="cp-row${c.is_active ? '' : ' is-hidden'}"><div class="cp-main"><div class="cp-name">${esc(c.name)}</div>
-          <div class="cp-meta">${meta}${c.id == null ? ' · <span class="cp-legacy">Only on creatives, not in the list</span>' : ''}</div></div>
+           ${c.is_active ? '' : `<button class="cp-act" onclick="Campaigns.restore(${c.id})">Put back in the list</button>`}
+           ${unused ? `<button class="cp-act cp-act-del" onclick="Campaigns.remove(${c.id}, ${esc(JSON.stringify(c.name))})">Delete</button>` : ''}`;
+      const note = c.id == null ? ' · <span class="cp-legacy">Only on creatives, not in the list</span>'
+        : !c.is_active ? ' · <span class="cp-legacy">Not offered when adding a creative</span>' : '';
+      return `<div class="cp-row"><div class="cp-main"><div class="cp-name">${esc(c.name)}</div>
+          <div class="cp-meta">${meta}${note}</div></div>
         <div class="cp-acts">${acts}</div></div>`;
     };
     el.querySelector('.cp-box').innerHTML = `${head()}
       <div class="cp-list">${shown.length ? shown.map(row).join('') : '<div class="cp-empty">No campaigns yet. Add the first one above.</div>'}</div>
-      ${hidden.length ? `<button class="cp-toggle" onclick="Campaigns.toggleHidden()">${S.showHidden ? 'Hide' : 'Show'} ${hidden.length} hidden campaign${hidden.length === 1 ? '' : 's'}</button>
-        ${S.showHidden ? `<div class="cp-list cp-list-hidden">${hidden.map(row).join('')}</div>` : ''}` : ''}
-      <div class="cp-foot">Hidden campaigns stay on their creatives and in reports; they are only left out of the pickers.</div>`;
+      <div class="cp-foot">Rename fixes a typo everywhere the campaign is used. Delete is only offered while no creative or sign-off uses it.</div>`;
     const f = document.getElementById(focusId || (S.editing ? 'cp-edit' : 'cp-new'));
     if (f) { f.focus(); if (f.id === 'cp-edit') f.select(); }
   }
@@ -188,15 +191,23 @@
     } catch (e) { err(e.message); }
   }
 
-  async function setActive(id, on) {
+  async function restore(id) {
     try {
-      await api('PUT', `/api/campaigns/${id}`, { is_active: on });
+      await api('PUT', `/api/campaigns/${id}`, { is_active: true });
       await load();
       refreshPickers();
     } catch (e) { err(e.message); }
   }
 
-  function toggleHidden() { S.showHidden = !S.showHidden; draw(); }
+  async function remove(id, name) {
+    if (!confirm(`Delete "${name}"? Nothing uses it yet, so nothing else changes.`)) return;
+    try {
+      await api('DELETE', `/api/campaigns/${id}`);
+      await load();
+      refreshPickers();
+      say(`Deleted "${name}".`);
+    } catch (e) { err(e.message); }
+  }
   function close() { const el = document.getElementById('campaignsModal'); if (el) el.style.display = 'none'; }
   document.addEventListener('keydown', (e) => {
     const el = document.getElementById('campaignsModal');
@@ -228,5 +239,5 @@
     } catch (x) { e.hidden = false; e.textContent = x.message; }
   }
 
-  window.Campaigns = { init, open, close, add, adopt, edit, cancelEdit, saveRename, setActive, toggleHidden, inlineOpen, inlineClose, inlineAdd };
+  window.Campaigns = { init, open, close, add, adopt, edit, cancelEdit, saveRename, restore, remove, inlineOpen, inlineClose, inlineAdd };
 })();
