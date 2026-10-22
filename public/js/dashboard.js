@@ -618,6 +618,11 @@ function setNav(page, element) {
     const subEl = document.getElementById('page-sub');
     if (subEl) subEl.innerText = (PAGE_HEADS[page] || {}).sub || '';
     showFreshness(page);
+    // Which sections get used, for the admin page. Fire and forget.
+    try {
+      fetch('/api/usage', { method: 'POST', keepalive: true,
+        headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ section: page }) }).catch(() => {});
+    } catch (e) { /* never block navigation */ }
     document.querySelectorAll('.nav-item').forEach(el => el.classList.remove('active'));
     if (element) {
         element.classList.add('active');

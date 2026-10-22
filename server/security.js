@@ -228,6 +228,9 @@ function sendError(res, tag, err) {
   const status = statusOf(err);
   if (status >= 500) {
     console.error(`[${tag}]`, err && err.stack ? err.stack.split('\n').slice(0, 3).join(' | ') : err);
+    // Kept for the admin page too. Loaded here, not at the top, so this
+    // file has no database dependency of its own.
+    try { require('./ops').logError(tag, err, res.req); } catch (e) { /* never a second error */ }
     return res.status(status).json({ error: 'Something went wrong. Try again.' });
   }
   return res.status(status).json({ error: err.message });

@@ -991,6 +991,15 @@ app.get('/api/brands', async (req, res) => {
   });
 
   // -------------------------------------------------------------------
+  //  Which section someone opened, for the admin page's usage view. Only
+  //  the section name and the login are kept, counted per day.
+  // -------------------------------------------------------------------
+  app.post('/api/usage', (req, res) => {
+    const ok = require('./server/ops').countUse(req.session.user, String((req.body || {}).section || ''));
+    res.status(ok ? 204 : 400).end();
+  });
+
+  // -------------------------------------------------------------------
   //  How fresh the brand's data is, for the stamp under each page title.
   //  Paid: the latest day of delivery on file. Organic: the last time any
   //  post's numbers were captured. Either can be missing on a new brand.
