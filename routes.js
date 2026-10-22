@@ -349,7 +349,9 @@ app.get('/api/brands', async (req, res) => {
         // What this account may use. The server refuses these endpoints
         // regardless; this is so the UI does not offer a button that
         // would only return 403.
-        features: req.session.features || ALL_ON
+        // admin is not an account flag: it follows the role, and the
+        // admin routes check the role themselves.
+        features: { ...(req.session.features || ALL_ON), admin: req.session.role === 'admin' }
       });
     } catch (err) {
       sendError(res, 'api', err);

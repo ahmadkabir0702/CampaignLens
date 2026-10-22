@@ -212,7 +212,7 @@ let FEATURES = { askLens: false, addCreative: false, pretest: false, media: fals
 
 // Pages that need a feature. A page not listed here (the Creative Hub) is
 // open to every account.
-const PAGE_FEATURE = { pretests: 'pretest', kpi: 'media', creators: 'creators', sov: 'sov', signoff: 'signoff', repurpose: 'repurpose' };
+const PAGE_FEATURE = { pretests: 'pretest', kpi: 'media', creators: 'creators', sov: 'sov', signoff: 'signoff', repurpose: 'repurpose', admin: 'admin' };
 
 /** The page to show for a request: the one asked for, or the Creative Hub if this account may not see it. */
 function allowedPage(page) {
@@ -415,7 +415,19 @@ async function showFreshness(page) {
   }
 }
 
+// Which sections get used, for the admin page. Fire and forget.
+let USE_COUNTED_FIRST = false;
+function countUse(page) {
+  try {
+    fetch('/api/usage', { method: 'POST', keepalive: true,
+      headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ section: page }) }).catch(() => {});
+  } catch (e) { /* never block navigation */ }
+}
+
 async function loadData() {
+  // The page the app opens on is not reached through setNav, so it is
+  // counted here, once.
+  if (!USE_COUNTED_FIRST) { USE_COUNTED_FIRST = true; countUse(currentPage); }
   FRESH.data = null;
   showFreshness(currentPage);
   isLoading = true;
@@ -584,6 +596,7 @@ const PAGE_HEADS = {
   sov:       { title: 'Share of voice', sub: 'The brand\'s share of the conversation in its category.' },
   repurpose: { title: 'Repurposing', sub: 'Creatives assigned to an agency for repurposing, from assignment to Unilever approval.' },
   signoff:   { title: 'Campaign sign-off', sub: 'A checklist for each campaign, approved by the Unilever media head before it goes live.' },
+  admin:     { title: 'Admin', sub: 'Logins and access, who uses what, and the health of the data.' },
 };
 
 // The white tab behind the active section slides to it.
@@ -607,7 +620,7 @@ function setNav(page, element) {
     // itself refuses rather than relying on the link being gone.
     page = allowedPage(page);
     if (element && !element.matches(`[onclick*="setNav('${page}'"]`)) element = null;
-    ['page-creatives', 'page-kpi', 'page-creators', 'page-pretests', 'page-signoff', 'page-repurpose'].forEach(id => {
+    ['page-creatives', 'page-kpi', 'page-creators', 'page-pretests', 'page-signoff', 'page-repurpose', 'page-admin'].forEach(id => {
         const el = document.getElementById(id);
         if (el) el.classList.add('hidden');
     });
@@ -618,11 +631,7 @@ function setNav(page, element) {
     const subEl = document.getElementById('page-sub');
     if (subEl) subEl.innerText = (PAGE_HEADS[page] || {}).sub || '';
     showFreshness(page);
-    // Which sections get used, for the admin page. Fire and forget.
-    try {
-      fetch('/api/usage', { method: 'POST', keepalive: true,
-        headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ section: page }) }).catch(() => {});
-    } catch (e) { /* never block navigation */ }
+    countUse(page);
     document.querySelectorAll('.nav-item').forEach(el => el.classList.remove('active'));
     if (element) {
         element.classList.add('active');

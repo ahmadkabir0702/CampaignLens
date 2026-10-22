@@ -51,8 +51,10 @@ Render, and the routine jobs that keep it that way.
 
 ## Routine jobs
 
-- **Someone leaves.** For a personal login: `update app_users set is_active = false where username = '...';` They are signed out within a minute. For a shared login, change its password instead and give the new one to the people who stay: everyone on that login is signed out within a minute and signs in with the new password.
-- **Every quarter.** Rotate the shared logins' passwords. Check who has signed in: `select username, last_login_at from app_users where is_active order by last_login_at nulls first;` and deactivate accounts nobody uses.
+Most of these are done on the Admin page (admin role only): add a login, change its brands and sections, reset its password, switch it off. Every change there is written to `app_admin_log` and shown under Change log. Changes apply within a minute, including to people already signed in.
+
+- **Someone leaves.** For a personal login, switch it off on the Admin page. They are signed out within a minute. For a shared login, change its password instead and give the new one to the people who stay: everyone on that login is signed out within a minute and signs in with the new password.
+- **Every quarter.** Rotate the shared logins' passwords (Reset password on the Admin page). Check Usage on the Admin page and switch off logins nobody uses.
 - **Backups.** Confirm in Supabase (Project Settings > Database > Backups) that daily backups, and point-in-time recovery if on the Pro plan, are on. Test a restore to a branch once a year.
 - **Dependencies.** Run `npm audit` before each release.
 

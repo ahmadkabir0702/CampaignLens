@@ -416,6 +416,8 @@ require('./server/signoff/routes')(app);
 require('./server/repurpose/routes')(app);
 // Ask Lens chat routes
 require('./server/chat/routes')(app);
+// Admin: logins, access, usage and health. Admin role only.
+require('./server/admin/routes')(app);
 
 // An API path nothing answered is a 404, not the app's page.
 app.all('/api/*', (req, res) => res.status(404).json({ error: 'Not found.' }));
