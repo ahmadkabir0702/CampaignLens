@@ -71,3 +71,13 @@ test('sendError shows our refusals and hides faults', () => {
   assert.equal(r2.code, 500);
   assert.doesNotMatch(r2.body.error, /secret_table/);
 });
+
+test('the content policy lets pre-test videos upload to the scoring service', () => {
+  const headers = {};
+  const res = { setHeader: (k, v) => { headers[k] = v; }, removeHeader() {} };
+  SEC.headers()({ path: '/', secure: true }, res, () => {});
+  const csp = headers['Content-Security-Policy'];
+  assert.match(csp, /connect-src 'self' https:/);
+  assert.match(csp, /script-src 'self' 'unsafe-inline'(;|$)/, 'scripts still only from this site');
+  assert.match(csp, /frame-ancestors 'none'/);
+});

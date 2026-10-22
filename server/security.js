@@ -24,8 +24,8 @@ const PROD = process.env.NODE_ENV === 'production' || !!process.env.RENDER;
 //
 //  Inline handlers (onclick="...") are used throughout the front end, so
 //  scripts still allow 'unsafe-inline'. What the policy does buy: scripts
-//  only from this site, data only sent back to this site (connect-src),
-//  no framing (clickjacking), no plugins, and forms only post here.
+//  only from this site, requests only over HTTPS, no framing
+//  (clickjacking), no plugins, and forms only post here.
 // ---------------------------------------------------------------------
 const CSP = [
   "default-src 'self'",
@@ -35,7 +35,11 @@ const CSP = [
   // Thumbnails and pre-test heatmaps come from platform and vendor CDNs.
   "img-src 'self' data: blob: https:",
   "media-src 'self' blob: https:",
-  "connect-src 'self'",
+  // Pre-test videos go from the browser straight to the scoring service's
+  // storage, at an address it hands out per upload, so any HTTPS address
+  // is allowed here. Images already load from any HTTPS address, so this
+  // opens nothing new for data leaving the page.
+  "connect-src 'self' https:",
   "frame-ancestors 'none'",
   "base-uri 'self'",
   "form-action 'self'",

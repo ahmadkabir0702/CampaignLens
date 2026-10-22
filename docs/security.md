@@ -31,7 +31,7 @@ Render, and the routine jobs that keep it that way.
 
 **Requests**
 - A state-changing request whose Origin or Referer names another site is refused.
-- Every response carries a Content-Security-Policy (scripts and data only from this site, no framing, no plugins), `X-Content-Type-Options`, `X-Frame-Options`, `Referrer-Policy`, `Permissions-Policy`, and HSTS over HTTPS. API answers are not cached.
+- Every response carries a Content-Security-Policy (scripts only from this site, requests only over HTTPS, no framing, no plugins; pre-test videos upload from the browser straight to the scoring service's storage), `X-Content-Type-Options`, `X-Frame-Options`, `Referrer-Policy`, `Permissions-Policy`, and HSTS over HTTPS. API answers are not cached.
 - No CORS: the API answers only its own pages.
 - Chart.js is served from the app (`public/vendor`), not a third-party CDN.
 
