@@ -94,14 +94,14 @@ module.exports = function mountRoutes(app, deps = {}) {
     const password = String(req.body.password || '').slice(0, 200);
     const ip = req.ip || 'unknown';
     const key = username.toLowerCase();
+    const device = SEC.deviceKey(req, key);
 
-    // Too many attempts from this address, or wrong passwords for this
-    // username: wait, whatever was typed this time.
-    if (SEC.loginByIp.blocked(ip) || SEC.loginByUser.blocked(key)) {
+    // Too many wrong passwords from this browser, on this login or from
+    // this address: wait, whatever was typed this time (server/security.js).
+    if (SEC.loginByDevice.blocked(device) || SEC.loginByUser.blocked(key) || SEC.loginByIp.blocked(ip)) {
       console.warn(`[login] attempt blocked for ${key || '(blank)'} from ${ip}`);
       return res.redirect('/login?error=locked');
     }
-    SEC.loginByIp.hit(ip);
 
     try {
       const { rows } = await query(
@@ -118,7 +118,9 @@ module.exports = function mountRoutes(app, deps = {}) {
       let ok = await bcrypt.compare(password, hash);
       if (!ok && password.trim() !== password) ok = await bcrypt.compare(password.trim(), hash);
       if (!rows.length || !ok) {
+        SEC.loginByDevice.hit(device);
         SEC.loginByUser.hit(key);
+        SEC.loginByIp.hit(ip);
         console.warn(`[login] failed for ${key || '(blank)'} from ${ip}`);
         return res.redirect('/login?error=1');
       }
@@ -135,7 +137,9 @@ module.exports = function mountRoutes(app, deps = {}) {
       // worth nothing after it.
       req.session.regenerate(err => {
         if (err) { console.error('[login] session regenerate:', err.message); return res.redirect('/login?error=1'); }
-        SEC.loginByUser.reset(key);
+        // Only this browser's count is cleared. The login's own count stays,
+        // so a correct sign-in by a colleague does not reset an attack.
+        SEC.loginByDevice.reset(device);
         const s = req.session;
         s.user = user;
         s.brands = access.brands;

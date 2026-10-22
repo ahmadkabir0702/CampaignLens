@@ -15,7 +15,11 @@ Render, and the routine jobs that keep it that way.
 ## Controls
 
 **Signing in**
-- Five wrong passwords for one username locks it for 15 minutes. Thirty attempts from one address in 15 minutes blocks that address for the rest of the window. Both are logged.
+- Most logins are shared by a team, so wrong passwords are counted three ways, over 15 minutes:
+    - 5 from one browser on one login: that browser waits. Colleagues on the same login are not affected.
+    - 20 on one login from anywhere: treated as a guessing attack, and the login waits for everyone.
+    - 50 from one network address across all logins: that address waits.
+  All are logged. A correct sign-in clears only that browser's count.
 - A new session id is issued at sign-in.
 - Sessions end after 8 hours idle and 12 hours at most, however active.
 - Each signed-in account is re-read once a minute. Deactivating an account, removing its brands or changing its password signs it out everywhere within a minute (the session that changed the password stays in).
@@ -23,7 +27,7 @@ Render, and the routine jobs that keep it that way.
 
 **Passwords**
 - New passwords: at least 12 characters, at most 72 bytes (the bcrypt limit), no leading or trailing space, not a common password, not containing the username. Stored with bcrypt cost 12.
-- Five wrong current passwords on the change form locks the form for 15 minutes.
+- Five wrong current passwords on the change form locks the form in that browser for 15 minutes.
 
 **Requests**
 - A state-changing request whose Origin or Referer names another site is refused.
@@ -42,12 +46,12 @@ Render, and the routine jobs that keep it that way.
 - A failed request shows our own message when we refused it, and "Something went wrong" otherwise. Database errors and stack traces stay in the log.
 
 **Cost and abuse**
-- Ask Lens is limited per account per hour and day, and refuses questions if the limit cannot be counted.
+- Ask Lens is limited per login: 60 questions an hour and 300 a day by default, set for a shared team login (`ASK_LENS_PER_HOUR`, `ASK_LENS_PER_DAY` on Render). It refuses questions if the limit cannot be counted.
 - The open test route that called Gemini, the raw upload test page and the unused media queue routes are removed.
 
 ## Routine jobs
 
-- **Someone leaves.** `update app_users set is_active = false where username = '...';` They are signed out within a minute. For a shared login, change its password instead and give the new one to the people who stay.
+- **Someone leaves.** For a personal login: `update app_users set is_active = false where username = '...';` They are signed out within a minute. For a shared login, change its password instead and give the new one to the people who stay: everyone on that login is signed out within a minute and signs in with the new password.
 - **Every quarter.** Rotate the shared logins' passwords. Check who has signed in: `select username, last_login_at from app_users where is_active order by last_login_at nulls first;` and deactivate accounts nobody uses.
 - **Backups.** Confirm in Supabase (Project Settings > Database > Backups) that daily backups, and point-in-time recovery if on the Pro plan, are on. Test a restore to a branch once a year.
 - **Dependencies.** Run `npm audit` before each release.

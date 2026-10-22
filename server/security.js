@@ -132,12 +132,24 @@ class Limiter {
 }
 
 const MIN = 60 * 1000;
-// Wrong passwords for one username: five, then a 15 minute wait.
-const loginByUser = new Limiter({ max: 5, windowMs: 15 * MIN });
-// All sign-in attempts from one address, right or wrong.
-const loginByIp = new Limiter({ max: 30, windowMs: 15 * MIN });
-// Wrong current passwords on the change-password form.
+// Most logins are shared by a team, often from one office network, so a
+// lock on the login itself would let one person's typos lock out the rest.
+// Three counts instead, all of wrong passwords only:
+//   one browser on one login   5 in 15 minutes, then that browser waits
+//   the login as a whole      20 in 15 minutes: a guessing attack, so the
+//                             login waits for everyone
+//   one network address       50 in 15 minutes, across all logins
+const loginByDevice = new Limiter({ max: 5, windowMs: 15 * MIN });
+const loginByUser = new Limiter({ max: 20, windowMs: 15 * MIN });
+const loginByIp = new Limiter({ max: 50, windowMs: 15 * MIN });
+// Wrong current passwords on the change-password form, per browser.
 const pwChangeByUser = new Limiter({ max: 5, windowMs: 15 * MIN });
+
+/** One browser on one login: the username, the address and the browser. */
+function deviceKey(req, user) {
+  const ua = crypto.createHash('sha1').update(String(req.get('user-agent') || '')).digest('hex').slice(0, 12);
+  return `${String(user || '').toLowerCase()}|${req.ip || ''}|${ua}`;
+}
 
 // ---------------------------------------------------------------------
 //  Session checks
@@ -242,6 +254,6 @@ function secretEquals(got, want) {
 }
 
 module.exports = {
-  PROD, headers, sameOrigin, Limiter, loginByUser, loginByIp, pwChangeByUser,
+  PROD, headers, sameOrigin, Limiter, loginByDevice, loginByUser, loginByIp, pwChangeByUser, deviceKey,
   revalidate, sendError, cleanName, secretEquals, MAX_SESSION_MS,
 };

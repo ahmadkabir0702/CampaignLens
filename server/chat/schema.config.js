@@ -209,7 +209,13 @@ const schema = {
   historyTurnsVerbatim: 3,
   historyTurnsCompressed: 5,
   sessionTurnCap: 12,
-  rateLimit: { perHour: 30, perDay: 200 },
+  // Per login. Most logins are shared by a team of about five, so these
+  // are set for the team, not one person. Override without a deploy with
+  // ASK_LENS_PER_HOUR and ASK_LENS_PER_DAY.
+  rateLimit: {
+    perHour: Number(process.env.ASK_LENS_PER_HOUR) || 60,
+    perDay: Number(process.env.ASK_LENS_PER_DAY) || 300,
+  },
   snapshotRanges: [0],
 };
 

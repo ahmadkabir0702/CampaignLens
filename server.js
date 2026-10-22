@@ -305,7 +305,8 @@ app.post('/change-password', async (req, res) => {
 
   const fail = (m) => res.type('html').send(renderChangePw(req, m));
 
-  if (SEC.pwChangeByUser.blocked(user)) {
+  const device = SEC.deviceKey(req, user);
+  if (SEC.pwChangeByUser.blocked(device)) {
     return fail('Too many wrong attempts. Wait 15 minutes and try again.');
   }
   if (next !== confirm) return fail('The two new passwords do not match.');
@@ -318,11 +319,11 @@ app.post('/change-password', async (req, res) => {
       `select password_hash from app_users where username = $1 and is_active = true`, [user]);
     if (!rows.length) return res.redirect('/logout');
     if (!await bcrypt.compare(current, rows[0].password_hash)) {
-      SEC.pwChangeByUser.hit(user);
+      SEC.pwChangeByUser.hit(device);
       console.warn(`[change-password] wrong current password for ${user}`);
       return fail('That is not the current password.');
     }
-    SEC.pwChangeByUser.reset(user);
+    SEC.pwChangeByUser.reset(device);
     const hash = await bcrypt.hash(next, 12);
     const { rows: upd } = await query(
       `update app_users
