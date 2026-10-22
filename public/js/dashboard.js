@@ -273,6 +273,7 @@ async function loadBrands() {
     CURRENT_IS_INTERNAL = !!isInternal;
     FEATURES = Object.assign({ askLens: true, addCreative: true, pretest: true, media: true, creators: true, sov: true, signoff: true, repurpose: true }, features || {});
     applyFeatures();
+    if (typeof Campaigns !== 'undefined') Campaigns.init();
     const sel = document.getElementById('brand-switcher');
     if (!sel) return;
     sel.innerHTML = brands
@@ -2898,12 +2899,10 @@ function openAddCreativeModal() {
   const campaigns = CAMPAIGNS.length > 0
     ? CAMPAIGNS
     : HUB_OPTIONS.campaigns.filter(c => c && c !== 'Unknown');
-  campaignSelect.innerHTML = '<option value="" disabled selected>Select Campaign</option>';
-  if (campaigns.length === 0) {
-    campaignSelect.innerHTML += '<option value="Cool Fresh">Cool Fresh</option>';
-  } else {
-    campaigns.forEach(c => { campaignSelect.innerHTML += `<option value="${escapeHtml(c)}">${escapeHtml(c)}</option>`; });
-  }
+  campaignSelect.innerHTML = `<option value="" disabled selected>${campaigns.length ? 'Select Campaign'
+    : (FEATURES.manageCampaigns ? 'No campaigns yet: add one below' : 'No campaigns yet: ask Mindshare to add one')}</option>`;
+  campaigns.forEach(c => { campaignSelect.innerHTML += `<option value="${escapeHtml(c)}">${escapeHtml(c)}</option>`; });
+  if (typeof Campaigns !== 'undefined') Campaigns.inlineClose();
   const orgIdSelect = document.getElementById('ac-original-id');
   orgIdSelect.innerHTML = '<option value="" disabled selected>Select Original Creative ID</option>';
   if (typeof enhanceSelectsIn === 'function') enhanceSelectsIn('addCreativeModal');

@@ -13,6 +13,7 @@
   <link rel="stylesheet" href="/css/signoff.css">
   <link rel="stylesheet" href="/css/repurpose.css">
   <link rel="stylesheet" href="/css/admin.css">
+  <link rel="stylesheet" href="/css/campaigns.css">
 <style id="ac-plat-style">
   .plat-rows { margin-bottom: 10px; }
   .plat-row { display: flex; align-items: center; gap: 10px; margin-bottom: 8px; }
@@ -215,6 +216,15 @@
              <select id="ac-campaign" class="modal-input" required>
                <option value="" disabled selected>Select Campaign</option>
              </select>
+             <!-- Unilever and Mindshare can add a campaign without leaving the form. -->
+             <button type="button" class="cp-inline-link" id="ac-new-campaign" hidden onclick="Campaigns.inlineOpen()">Add a new campaign</button>
+             <div class="cp-inline" id="ac-new-campaign-box" hidden>
+               <input type="text" id="ac-new-campaign-name" class="modal-input" maxlength="120" placeholder="Campaign name, e.g. Lifebuoy Back to School 2026"
+                      onkeydown="if(event.key==='Enter'){event.preventDefault();Campaigns.inlineAdd()}if(event.key==='Escape')Campaigns.inlineClose()">
+               <button type="button" class="btn-primary" onclick="Campaigns.inlineAdd()">Add</button>
+               <button type="button" class="btn-outline" onclick="Campaigns.inlineClose()">Cancel</button>
+               <div class="cp-inline-err" id="ac-new-campaign-err" hidden></div>
+             </div>
            </div>
 
            <div class="ac-field">
@@ -366,6 +376,11 @@
             <div class="pt" id="pt-meta" data-press onclick="setPlatform('meta',this)">Meta</div>
             <div class="pt" id="pt-tt" data-press onclick="setPlatform('tiktok',this)">TikTok</div>
           </div>
+
+          <button class="filters-btn" id="campaigns-btn" data-press onclick="Campaigns.open()" hidden>
+            <svg viewBox="0 0 24 24"><path d="M4 6h16M4 12h16M4 18h10"/><path d="M18 16v4M16 18h4"/></svg>
+            Campaigns
+          </button>
 
           <div class="filters-wrap">
             <button class="filters-btn" id="filters-btn" data-press onclick="toggleFilters(event)">
@@ -624,6 +639,7 @@ window.addEventListener('load', () => setTimeout(syncFilterPills, 400));
   <script src="/js/signoff.js"></script>
   <script src="/js/repurpose.js"></script>
   <script src="/js/admin.js"></script>
+  <script src="/js/campaigns.js"></script>
   <script src="/js/dropdowns.js"></script>
   <script src="/js/pretest.js"></script>
   <script src="/js/sov.js"></script>

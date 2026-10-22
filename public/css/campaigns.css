@@ -1,0 +1,40 @@
+/* Campaigns window (from the Creative Hub) and the add-campaign field in
+   the Add creative form. Same modal, inputs and buttons as the rest. */
+
+.cp-box{max-width:620px;width:100%;max-height:min(760px,90vh);display:flex;flex-direction:column;overflow:hidden}
+.cp-head{display:flex;align-items:flex-start;justify-content:space-between;gap:12px}
+.cp-head .modal-desc{margin-bottom:14px}
+.cp-add{display:flex;gap:8px;margin-bottom:10px}
+.cp-add .modal-input{flex:1;min-width:0;width:auto}
+.cp-add .btn-primary{height:38px;white-space:nowrap}
+.cp-err{background:var(--neg-bg);color:var(--neg);border-radius:var(--r-btn);padding:8px 12px;font:400 13px/19px var(--font);margin-bottom:10px}
+.cp-err[hidden]{display:none}
+
+.cp-list{overflow-y:auto;margin:0 -24px;padding:0 24px;border-top:1px solid var(--line-soft)}
+.cp-list-hidden{border-top:0}
+.cp-row{display:flex;align-items:center;gap:12px;padding:11px 0;border-bottom:1px solid var(--line-soft);flex-wrap:wrap}
+.cp-row.is-hidden .cp-name{color:var(--ink-400)}
+.cp-row.is-edit .modal-input{flex:1;min-width:0;width:auto;margin:0}
+.cp-row.is-edit .btn-primary,.cp-row.is-edit .btn-outline{height:36px}
+.cp-main{flex:1;min-width:0}
+.cp-name{font:500 14px/20px var(--font);color:var(--ink-900);overflow-wrap:anywhere}
+.cp-meta{font:400 12px/17px var(--font);color:var(--ink-400);margin-top:1px}
+.cp-legacy{color:var(--warn)}
+.cp-acts{display:flex;gap:2px;flex:none}
+.cp-act{border:0;background:none;cursor:pointer;padding:6px 9px;border-radius:7px;font:500 12.5px var(--font);color:var(--primary)}
+.cp-act:hover{background:var(--sel)}
+.cp-note{flex-basis:100%;font:400 12px var(--font);color:var(--ink-400)}
+.cp-empty{padding:22px 0;text-align:center;font:400 13.5px var(--font);color:var(--ink-400)}
+.cp-toggle{align-self:flex-start;border:0;background:none;cursor:pointer;padding:10px 0 2px;font:500 12.5px var(--font);color:var(--primary)}
+.cp-foot{font:400 12px/17px var(--font);color:var(--ink-400);padding-top:12px}
+
+/* In the Add creative form */
+.cp-inline-link{border:0;background:none;padding:6px 0 0;cursor:pointer;font:500 12.5px var(--font);color:var(--primary)}
+.cp-inline-link:hover{text-decoration:underline}
+.cp-inline-link[hidden],.cp-inline[hidden],.cp-inline-err[hidden]{display:none}
+.cp-inline{display:flex;flex-wrap:wrap;gap:8px;margin-top:8px}
+.cp-inline .modal-input{flex:1 1 220px;min-width:0;width:auto;margin:0}
+.cp-inline .btn-primary,.cp-inline .btn-outline{height:38px}
+.cp-inline-err{flex-basis:100%;font:400 12.5px var(--font);color:var(--neg)}
+
+@media (max-width:640px){.cp-add{flex-direction:column}.cp-acts{flex-basis:100%}}

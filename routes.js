@@ -14,7 +14,7 @@ const path = require('path');
 const os = require('os');
 const fs = require('fs');
 const bcrypt = require('bcryptjs');
-const { query, brandsForUser, assertBrandAllowed } = require('./db');
+const { pool, query, brandsForUser, assertBrandAllowed } = require('./db');
 const { loadFeatures, ALL_ON } = require('./server/features');
 const { checkLinks } = require('./link-check');
 const { checkContent } = require('./content-check');
@@ -198,20 +198,140 @@ module.exports = function mountRoutes(app, deps = {}) {
     }
   });
 
+  // Which optional columns campaigns has (038 adds who created it and when).
+  let campaignCols = null;
+  async function campaignHas(col) {
+    if (!campaignCols) {
+      const { rows } = await query(
+        `select column_name from information_schema.columns
+          where table_schema = current_schema() and table_name = 'campaigns'`);
+      campaignCols = new Set(rows.map(r => r.column_name));
+    }
+    return campaignCols.has(col);
+  }
+  const httpErr = (status, message) => Object.assign(new Error(message), { status });
+
+  // Add a campaign to a brand. Unilever, Mindshare and the admin.
+  // A name that already exists in any capitalisation is reused (and shown
+  // again if it was hidden), so the list does not fill with near-copies.
   app.post('/api/campaigns', async (req, res) => {
     try {
       const brand = resolveBrand(req);
-      // Adding campaigns is a Unilever or Mindshare job.
       if (!canManage(req)) return notPermitted(res);
       const name = cleanName(req.body.name, { label: 'Campaign name' });
-      await query(
-        `insert into campaigns (brand_id, name) values ($1,$2)
-         on conflict (brand_id, name) do update set is_active = true`,
-        [brand, name]
-      );
-      res.json({ success: true, name });
+      const { rows: same } = await query(
+        `select id, name, is_active from campaigns where brand_id = $1 and lower(name) = lower($2)`, [brand, name]);
+      if (same.length) {
+        if (same[0].is_active === false) await query(`update campaigns set is_active = true where id = $1`, [same[0].id]);
+        return res.json({ success: true, id: same[0].id, name: same[0].name, existed: true });
+      }
+      // A name only creatives carry (from before the campaigns list) is
+      // adopted with the spelling already in use.
+      const { rows: used } = await query(
+        `select campaign from creatives where brand_id = $1 and lower(campaign) = lower($2) limit 1`, [brand, name]);
+      const finalName = used.length ? used[0].campaign : name;
+      const withBy = await campaignHas('created_by');
+      const { rows } = await query(
+        withBy
+          ? `insert into campaigns (brand_id, name, created_by) values ($1, $2, $3) returning id`
+          : `insert into campaigns (brand_id, name) values ($1, $2) returning id`,
+        withBy ? [brand, finalName, req.session.user] : [brand, finalName]);
+      console.log(`[campaigns] ${req.session.user} added "${finalName}" to ${brand}`);
+      res.json({ success: true, id: rows[0].id, name: finalName });
     } catch (err) {
-      sendError(res, 'api', err);
+      sendError(res, 'campaigns', err);
+    }
+  });
+
+  // The brand's campaigns for the Campaigns window: each with how many
+  // creatives use it, whether it is hidden, and who added it.
+  app.get('/api/campaigns/manage', async (req, res) => {
+    try {
+      const brand = resolveBrand(req);
+      if (!canManage(req)) return notPermitted(res);
+      const by = await campaignHas('created_by'), at = await campaignHas('created_at');
+      const { rows } = await query(
+        `with used as (
+           select campaign as name, count(*)::int as creatives
+             from creatives where brand_id = $1 and campaign is not null and campaign <> ''
+            group by campaign)
+         select c.id, c.name, c.is_active is not false as is_active,
+                coalesce(u.creatives, 0) as creatives,
+                ${by ? 'c.created_by' : 'null::text as created_by'},
+                ${at ? 'c.created_at' : 'null::timestamptz as created_at'},
+                (select count(*)::int from sign_offs s where s.campaign_id = c.id and s.status = 'approved') as signed_off
+           from campaigns c left join used u on u.name = c.name
+          where c.brand_id = $1
+         union all
+         select null, u.name, true, u.creatives, null, null, 0
+           from used u
+          where not exists (select 1 from campaigns c where c.brand_id = $1 and c.name = u.name)
+         order by 3 desc, 2`, [brand]);
+      res.json({ brand, campaigns: rows });
+    } catch (err) {
+      if (err.code === '42P01') {
+        // sign_offs missing (035 not run): same list without the sign-off count.
+        try {
+          const brand = resolveBrand(req);
+          const { rows } = await query(
+            `select c.id, c.name, c.is_active is not false as is_active, 0 as creatives,
+                    null as created_by, null as created_at, 0 as signed_off
+               from campaigns c where c.brand_id = $1 order by 3 desc, 2`, [brand]);
+          return res.json({ brand, campaigns: rows });
+        } catch (e) { return sendError(res, 'campaigns', e); }
+      }
+      sendError(res, 'campaigns', err);
+    }
+  });
+
+  // Rename a campaign, or hide it from the pickers (and show it again).
+  // A rename carries over to every creative and sign-off that uses the old
+  // name, in one transaction, so nothing is left under the old spelling.
+  app.put('/api/campaigns/:id', async (req, res) => {
+    let brand;
+    try { brand = resolveBrand(req); } catch (err) { return sendError(res, 'campaigns', err); }
+    if (!canManage(req)) return notPermitted(res);
+    const client = await pool.connect();
+    try {
+      const id = Number(req.params.id);
+      if (!Number.isInteger(id) || id <= 0) throw httpErr(400, 'Not a campaign.');
+      await client.query('begin');
+      const { rows } = await client.query(
+        `select id, name from campaigns where id = $1 and brand_id = $2 for update`, [id, brand]);
+      if (!rows.length) throw httpErr(404, 'Campaign not found for this brand.');
+      const old = rows[0].name;
+      let name = old;
+      if (req.body.name !== undefined) {
+        name = cleanName(req.body.name, { label: 'Campaign name' });
+        if (name !== old) {
+          const { rows: clash } = await client.query(
+            `select 1 from campaigns where brand_id = $1 and lower(name) = lower($2) and id <> $3`, [brand, name, id]);
+          if (clash.length) throw httpErr(409, 'Another campaign already has that name.');
+          await client.query(`update campaigns set name = $2 where id = $1`, [id, name]);
+          await client.query(`update creatives set campaign = $3 where brand_id = $1 and campaign = $2`, [brand, old, name]);
+          await client.query(`savepoint so`);
+          try {
+            await client.query(
+              `update sign_offs set campaign_name = $3
+                where brand_id = $1 and (campaign_id = $4 or campaign_name = $2)`, [brand, old, name, id]);
+          } catch (e) {
+            if (e.code !== '42P01' && e.code !== '42703') throw e;
+            await client.query(`rollback to savepoint so`);
+          }
+        }
+      }
+      if (req.body.is_active !== undefined) {
+        await client.query(`update campaigns set is_active = $2 where id = $1`, [id, req.body.is_active === true]);
+      }
+      await client.query('commit');
+      console.log(`[campaigns] ${req.session.user} changed "${old}" in ${brand}`
+        + (name !== old ? ` to "${name}"` : '') + (req.body.is_active !== undefined ? (req.body.is_active ? ', shown' : ', hidden') : ''));
+      res.json({ success: true, id, name });
+    } catch (err) {
+      try { await client.query('rollback'); } catch (e) { /* not in a transaction */ }
+      sendError(res, 'campaigns', err);
+    } finally {
+      client.release();
     }
   });
 
@@ -349,9 +469,10 @@ app.get('/api/brands', async (req, res) => {
         // What this account may use. The server refuses these endpoints
         // regardless; this is so the UI does not offer a button that
         // would only return 403.
-        // admin is not an account flag: it follows the role, and the
-        // admin routes check the role themselves.
-        features: { ...(req.session.features || ALL_ON), admin: req.session.role === 'admin' }
+        // admin and manageCampaigns are not account flags: they follow the
+        // role and side, and their routes check them again.
+        features: { ...(req.session.features || ALL_ON), admin: req.session.role === 'admin',
+                    manageCampaigns: canManage(req) }
       });
     } catch (err) {
       sendError(res, 'api', err);
