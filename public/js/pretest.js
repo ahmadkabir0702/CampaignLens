@@ -623,20 +623,46 @@
       fd.append('file', file, file.name);
       const xhr = new XMLHttpRequest();
       state.xhr = xhr;
+      let host = '';
+      try { host = new URL(form.url).host; } catch (e) { /* shown as unknown */ }
+      // If the browser's security policy blocks the upload it only looks
+      // like a dropped connection, so listen for the policy's own event.
+      let blocked = null;
+      const onBlock = (ev) => { if (String(ev.blockedURI || '').includes(host)) blocked = ev.violatedDirective || 'security policy'; };
+      document.addEventListener('securitypolicyviolation', onBlock);
+      const done = () => document.removeEventListener('securitypolicyviolation', onBlock);
+      const report = (msg) => {
+        try {
+          fetch('/api/client-error', { method: 'POST', headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ where: 'pretest-upload', message: msg }) }).catch(() => {});
+        } catch (e) { /* never a second error */ }
+      };
       xhr.open('POST', form.url);
       xhr.upload.onprogress = e => { if (e.lengthComputable) onProgress(e.loaded / e.total * 100); };
       xhr.onload = () => {
-        state.xhr = null;
+        state.xhr = null; done();
         if (xhr.status >= 200 && xhr.status < 300) resolve();
         else {
           const expired = /expired|Policy/i.test(xhr.responseText || '');
           const err = new Error(expired ? 'upload window expired' : `the upload failed (HTTP ${xhr.status})`);
           err.expired = expired || xhr.status === 403;
+          if (!err.expired) report(`HTTP ${xhr.status} from ${host}: ${String(xhr.responseText || '').slice(0, 300)}`);
           reject(err);
         }
       };
-      xhr.onerror = () => { state.xhr = null; reject(new Error('the connection dropped during the upload')); };
-      xhr.onabort = () => { state.xhr = null; const e = new Error('the upload was stopped'); e.aborted = true; reject(e); };
+      xhr.onerror = () => {
+        state.xhr = null;
+        // The policy event can arrive just after the error; give it a moment.
+        setTimeout(() => {
+          done();
+          const msg = blocked
+            ? `the browser blocked the upload to ${host || 'the scoring service'} (${blocked})`
+            : `the connection to ${host || 'the scoring service'} dropped during the upload`;
+          report(`${msg}; online=${navigator.onLine}; size=${file.size}`);
+          reject(new Error(msg));
+        }, 50);
+      };
+      xhr.onabort = () => { state.xhr = null; done(); const e = new Error('the upload was stopped'); e.aborted = true; reject(e); };
       xhr.send(fd);
     });
   }

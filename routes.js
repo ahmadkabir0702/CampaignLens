@@ -1002,6 +1002,24 @@ app.get('/api/brands', async (req, res) => {
   });
 
   // -------------------------------------------------------------------
+  //  A failure the browser saw that the server never would (an upload
+  //  straight to another service). Kept with the server errors for the
+  //  admin page. Short, and limited per login.
+  // -------------------------------------------------------------------
+  const clientErrors = new SEC.Limiter({ max: 20, windowMs: 60 * 60 * 1000 });
+  app.post('/api/client-error', (req, res) => {
+    const user = req.session.user;
+    if (clientErrors.blocked(user)) return res.status(429).end();
+    clientErrors.hit(user);
+    const where = String((req.body || {}).where || 'browser').replace(/[^a-z0-9_-]/gi, '').slice(0, 40) || 'browser';
+    const message = String((req.body || {}).message || '').slice(0, 500);
+    if (!message) return res.status(400).end();
+    console.warn(`[client:${where}] ${user}: ${message}`);
+    require('./server/ops').logError(`browser:${where}`, new Error(message), req);
+    res.status(204).end();
+  });
+
+  // -------------------------------------------------------------------
   //  How fresh the brand's data is, for the stamp under each page title.
   //  Paid: the latest day of delivery on file. Organic: the last time any
   //  post's numbers were captured. Either can be missing on a new brand.
