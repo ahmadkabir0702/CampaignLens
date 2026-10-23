@@ -1033,8 +1033,8 @@ function renderKPIs(sum) {
 
   KPI_HEADS.top = 'Best rated this month';
   KPI_HEADS.weak = weakIsLive
-    ? 'Weakest creatives currently running'
-    : 'Weakest on their organic numbers — nothing is boosted';
+    ? 'Rated Poor and currently running'
+    : 'Rated Poor on their organic numbers. Nothing is boosted';
 
   const top = KPI_LISTS.top[0];
   const worst = KPI_LISTS.weak[0];
@@ -1087,10 +1087,12 @@ function renderKPIs(sum) {
          { filter: 'FATIGUING', color: fatiguing ? 'var(--neg)' : undefined }) +
     namedTile('Top creative this month', top,
               top ? (top.d.campaign || '') : '',
-              'Nothing published this month has a rating yet', 'top') +
+              sum.monthRated ? 'Nothing published this month is rated above Poor'
+                : 'Nothing published this month has a rating yet', 'top') +
     namedTile(weakIsLive ? 'Weakest live creative' : 'Weakest creative', worst,
               worst ? (worst.d.campaign || '') : '',
-              'Nothing has a rating yet', 'weak');
+              !sum.rated ? 'Nothing has a rating yet'
+                : weakIsLive ? 'Nothing running is rated Poor' : 'Nothing is rated Poor', 'weak');
 
   // A list left open while the data reloads would show stale rows.
   closeKpiList();
