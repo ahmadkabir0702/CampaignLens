@@ -268,7 +268,7 @@ module.exports = function mountAdmin(app) {
         if (e.code === '42P01' || e.code === '42703') return empty;
         throw e;
       });
-      const [paid, organic, jobs, errors, migrations, bars] = await Promise.all([
+      const [paid, organic, jobs, errors, migrations, bars, runs, sync] = await Promise.all([
         soft(query(`select brand_id, max(date)::text as last_day from creative_metrics_unified group by brand_id`), []),
         soft(query(`select c.brand_id, max(h.captured_at) as last_at
                       from organic_perf_history h join creatives c on c.creative_id = h.creative_id
@@ -277,12 +277,32 @@ module.exports = function mountAdmin(app) {
         ops.recentErrors(50),
         ops.migrations(),
         soft(query(`select year, set_at, set_by, note from cqr_bar_years order by year desc limit 1`), []),
+        // The n8n sync: when each brand last ran, and what it could not read.
+        soft(query(`select distinct on (brand_id) brand_id, ran_at, status
+                      from sync_runs order by brand_id, ran_at desc`), []),
+        // Brand-level refusals only (a token, a permission, a whole API call).
+        // Problems with one post are shown to coordinators on that post.
+        soft(query(`select brand_id, platform, source, creative_id, error, occurrences, last_seen
+                      from sync_errors
+                     where resolved_at is null and source in ('step', 'run')
+                     order by last_seen desc limit 50`), []),
       ]);
       const { rows: brands } = await query(`select brand_id, name from brands where is_active order by name`);
       const P = new Map(paid.map((r) => [r.brand_id, r.last_day]));
       const O = new Map(organic.map((r) => [r.brand_id, r.last_at]));
+      const R = new Map(runs.map((r) => [r.brand_id, r]));
+      const names = new Map(brands.map((b) => [b.brand_id, b.name]));
       res.json({
-        data: brands.map((b) => ({ brand_id: b.brand_id, name: b.name, paid_through: P.get(b.brand_id) || null, organic_at: O.get(b.brand_id) || null })),
+        data: brands.map((b) => ({
+          brand_id: b.brand_id, name: b.name, paid_through: P.get(b.brand_id) || null, organic_at: O.get(b.brand_id) || null,
+          synced_at: (R.get(b.brand_id) || {}).ran_at || null, sync_status: (R.get(b.brand_id) || {}).status || null,
+        })),
+        sync_problems: sync.map((e) => ({
+          brand: names.get(e.brand_id) || e.brand_id, platform: e.platform,
+          // STEP:<brand>:<step> for a step, RUN:<brand> for the whole run.
+          step: e.source === 'run' ? 'run' : String(e.creative_id || '').split(':').pop(),
+          error: e.error, occurrences: e.occurrences, last_seen: e.last_seen,
+        })),
         jobs,
         errors,
         migrations_missing: migrations.filter((m) => !m.applied_at).map((m) => m.name),

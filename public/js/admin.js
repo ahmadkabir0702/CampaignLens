@@ -37,7 +37,13 @@
     if (!v) return 'Never';
     const ms = Date.now() - new Date(v).getTime();
     const d = Math.floor(ms / 86400000);
-    if (d < 1) { const h = Math.floor(ms / 3600000); return h < 1 ? 'Just now' : `${h}h ago`; }
+    if (d < 1) {
+      const h = Math.floor(ms / 3600000);
+      if (h >= 1) return `${h}h ago`;
+      // The sync runs every 30 minutes, so minutes matter here.
+      const m = Math.floor(ms / 60000);
+      return m < 2 ? 'Just now' : `${m} min ago`;
+    }
     return d < 30 ? `${d}d ago` : day(v);
   };
   const roleKey = (r) => (r === 'admin' || r === 'media_head' || r === 'influencer_coordinator' ? r : 'standard');
@@ -318,6 +324,10 @@
   // ---------------------------------------------------------------------
   //  Data and errors
   // ---------------------------------------------------------------------
+  const STEP = {
+    run: 'The whole sync', tt_token: 'TikTok sign-in', tt_videos: 'TikTok post numbers',
+    fb_page_token: 'Facebook Page access', ig_media: 'Instagram posts',
+  };
   function healthHTML() {
     const h = S.health;
     if (!h) return loading();
@@ -329,8 +339,10 @@
         : `Last run ${esc(ago(job.last_ok_at).toLowerCase())}, took ${Math.round((job.last_ms || 0) / 1000)}s`;
     return `<div class="ad-two-col">
       <div class="ad-card"><table class="ad-table">
-        <thead><tr><th>Brand</th><th>Paid data to</th><th>Organic updated</th></tr></thead>
+        <thead><tr><th>Brand</th><th>Last sync</th><th>Paid data to</th><th>Organic updated</th></tr></thead>
         <tbody>${h.data.map((b) => `<tr><td class="ad-user">${esc(b.name)}</td>
+          <td>${!b.synced_at ? '<span class="ad-muted">Not synced</span>'
+            : b.sync_status === 'error' ? `<span class="ad-bad">Failed ${esc(ago(b.synced_at).toLowerCase())}</span>` : esc(ago(b.synced_at))}</td>
           <td class="${stale(b.paid_through) ? 'ad-warn' : ''}">${b.paid_through ? esc(day(b.paid_through)) : '<span class="ad-muted">No paid data</span>'}</td>
           <td>${b.organic_at ? esc(ago(b.organic_at)) : '<span class="ad-muted">None</span>'}</td></tr>`).join('')}</tbody></table></div>
       <div class="ad-stack">
@@ -343,6 +355,12 @@
             : h.migrations_missing.length ? `<div class="ad-warn">Not recorded: ${h.migrations_missing.map(esc).join(', ')}</div><div class="ad-muted">Run the file in Supabase. If it has been run already, record it: insert into schema_migrations (name) values ('the file name');</div>`
             : '<span class="ad-ok">Every file is recorded.</span>'}</div></div>
       </div></div>
+      <div class="ad-card"><div class="ad-pad ad-pad-b"><h3 class="ad-h">Sync problems</h3>
+        <p class="ad-muted">What the 30-minute sync could not read for a whole brand. A problem clears itself after a sync where it does not happen again.</p></div>
+        ${(h.sync_problems || []).length ? `<table class="ad-table"><thead><tr><th>Last seen</th><th>Brand</th><th>What could not be read</th><th>Why</th><th class="n">Times</th></tr></thead>
+        <tbody>${h.sync_problems.map((e) => `<tr><td class="ad-nowrap">${esc(ago(e.last_seen))}</td><td class="ad-user">${esc(e.brand)}</td>
+          <td class="ad-nowrap">${esc(STEP[e.step] || e.step)}</td><td class="ad-msg">${esc(e.error)}</td><td class="n">${e.occurrences}</td></tr>`).join('')}</tbody></table>`
+        : '<p class="ad-pad ad-muted">No open sync problems.</p>'}</div>
       <div class="ad-card"><div class="ad-pad ad-pad-b"><h3 class="ad-h">Errors</h3></div>
         ${h.errors.length ? `<table class="ad-table"><thead><tr><th>Last seen</th><th>Where</th><th>What</th><th class="n">Times</th><th>Login</th></tr></thead>
         <tbody>${h.errors.map((e) => `<tr><td class="ad-nowrap">${esc(ago(e.last_at))}</td><td><div class="ad-user">${esc(e.tag)}</div><div class="ad-muted">${esc(e.path || '')}</div></td>
