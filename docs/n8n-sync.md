@@ -52,8 +52,9 @@ platforms still run for the brand.
 No keys are typed into the workflows:
 
 - Meta and TikTok tokens come from `v_brand_runtime`.
-- The ScrapeCreators key is the n8n credential "ScrapeCreators API key"
-  (Header Auth, name `x-api-key`).
+- The ScrapeCreators key is the `scrapecreators_key` row in
+  `integration_secrets`, read by the query that feeds each scrape node.
+  n8n runs on its own server, so Render's environment does not reach it.
 - The manual TikTok onboarding nodes read the app id and secret from
   `v_brand_runtime`. The one-time code is pasted when used and not saved.
 
