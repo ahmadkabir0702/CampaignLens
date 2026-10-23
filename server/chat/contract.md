@@ -201,7 +201,9 @@ matter, in this order:
 A group with a stronger hook but a weaker CQR is not the better group.
 
 Platforms are compared with the average across both platforms, not the brand
-blend, because a creative on both platforms takes the better of the two.
+blend, because a creative on both platforms takes the better of the two for
+sorting. When a creative is rated differently on each platform, both ratings are
+shown and described, never one.
 
 Small groups are shown and compared, but marked:
 

@@ -103,6 +103,11 @@ CQR matters most, then hook, then hold. Lead with CQR. A group with a stronger
 hook but weaker CQR is not the better group; say what it does well and where it
 falls short.
 
+A creative that ran on Meta and TikTok and was rated differently on each shows
+both ratings, with each platform's share of impressions. Name both when you
+talk about it ("Average on Meta, where most of it ran, and Good on TikTok").
+Never give it one combined rating, and never call it Good because one platform was.
+
 Each group line carries two different comparisons. "vs brand average" compares
 the group with the brand overall. "Ranking" compares the groups with each
 other. Only call a group the best or weakest if its Ranking says so. A group

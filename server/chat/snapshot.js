@@ -13,7 +13,6 @@
 const crypto = require('crypto');
 const S = require('./schema.config');
 const { getPool } = require('./db');
-const { combineGrades, weightedRate } = require('../cqr-combine');
 
 // Bump this whenever the digest format or the records shape changes.
 // Stored snapshots with a different schema version rebuild on next use.
@@ -32,8 +31,8 @@ const { combineGrades, weightedRate } = require('../cqr-combine');
 // Bumped to 11: fatigue uses the same rule as the rest of the app
 // (assessFade), and the lifetime rating is no longer described as the
 // best day.
-// Bumped to 12: a creative on Meta and TikTok is rated by combining the
-// two grades by impressions, not by taking the better one.
+// Bumped to 12: a creative on Meta and TikTok rated differently on each is
+// described with both ratings, never one.
 const SNAPSHOT_SCHEMA_VERSION = 12;
 
 const T = S.tables, C = S.creative, P = S.paidView, O = S.organicView, OR = S.organicRawCols;
@@ -67,6 +66,11 @@ function displayLabel(id, hook) {
 // The best GRADE across platforms. A state is not a rating, so it cannot
 // win this comparison and cannot be the answer: with no grade anywhere the
 // creative is unrated, which the caller renders as such.
+function bestCqr(list) {
+  const graded = list.filter((c) => S.cqrGrades.includes(c));
+  if (graded.length) return graded.sort((a, b) => S.cqrRank[a] - S.cqrRank[b])[0];
+  return list.filter(Boolean)[0] || null;   // a state, or nothing at all
+}
 function rankCmp(a, b) {
   const c = (S.cqrRank[a.cqr] ?? 9) - (S.cqrRank[b.cqr] ?? 9); if (c) return c;
   const h = num(b.hook_rate) - num(a.hook_rate); if (h) return h;
@@ -229,9 +233,8 @@ function mergePaid(meta, tt) {
   const primary = meta || tt;
   return {
     platforms: both.map((x) => x.platform),
-    // Combined by impressions, the same as the Creative Hub (cqr-combine.js).
-    cqr: combineGrades(both),
-    hook_rate: r1(weightedRate(both, 'hook_rate')), hold_rate: r1(weightedRate(both, 'hold_rate')),
+    cqr: bestCqr(pick('cqr')),
+    hook_rate: r1(avg(pick('hook_rate'))), hold_rate: r1(Math.max(...pick('hold_rate').map(num))),
     hook_q: primary.hook_q || '', hold_q: primary.hold_q || '',
     vtr: r1(avg(pick('vtr'))), avg_watch_time: r1(avg(pick('avg_watch_time'))),
     spend: pick('spend').reduce((s, v) => s + num(v), 0),
@@ -317,7 +320,7 @@ function creativeLine(c) {
     c.narrative_structure && `structure: ${V.label('narrative_structure', c.narrative_structure)}`,
   ].filter(Boolean).join(', ');
   const bits = [
-    c.id, c.cqr,
+    c.id, cqrWords(c),
     `hook ${fmtPct(c.hook_rate)}${c.hook_q ? ' ' + c.hook_q : ''}`,
     `hold ${fmtPct(c.hold_rate)}${c.hold_q ? ' ' + c.hold_q : ''}`,
     `ret ${ret}`,
@@ -340,9 +343,21 @@ function creativeLine(c) {
   return lines.join('\n');
 }
 
+// A creative rated differently on Meta and TikTok is described with both
+// ratings and each platform's share of delivery, so answers name both
+// rather than one combined grade.
+function cqrWords(c) {
+  const pp = c.per_platform ? Object.entries(c.per_platform) : [];
+  if (pp.length < 2 || new Set(pp.map(([, p]) => p.cqr)).size < 2) return c.cqr;
+  const total = pp.reduce((s, [, p]) => s + num(p.impressions), 0) || 1;
+  return pp.sort((a, b) => num(b[1].impressions) - num(a[1].impressions))
+    .map(([plat, p]) => `${S.platformLabels[plat] || plat} ${p.cqr} (${Math.round(num(p.impressions) / total * 100)}% of impressions)`)
+    .join(' / ');
+}
+
 function compactLine(c) {
   const attrs = [V.label('hook_device', c.hook_device), V.label('content_intent', c.content_intent)].filter(Boolean).join(', ');
-  return `${c.id} | ${c.cqr} | h${fmtPct(c.hook_rate)} | ${fmtPct(c.hold_rate)} | ${(c.platforms || []).map((x) => V.label('platform', x)).join('+')} | ${V.label('type', c.type) || ''} | ${attrs} | ${c.is_active ? 'A' : 'S'}`;
+  return `${c.id} | ${cqrWords(c)} | h${fmtPct(c.hook_rate)} | ${fmtPct(c.hold_rate)} | ${(c.platforms || []).map((x) => V.label('platform', x)).join('+')} | ${V.label('type', c.type) || ''} | ${attrs} | ${c.is_active ? 'A' : 'S'}`;
 }
 
 /** Renders the analytics object. No computation happens here. */

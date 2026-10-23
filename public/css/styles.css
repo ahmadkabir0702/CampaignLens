@@ -1414,6 +1414,7 @@ select:focus,.search-input:focus,.modal-input:focus{outline:none;border-color:va
   font:400 13px var(--font); letter-spacing:0;
   color:var(--ink-500); text-transform:none; margin-right:6px;
 }
+.cr-paid-plat { font:400 12.5px var(--font); color:var(--ink-500); margin-right:-14px; }
 
 .cr-plat-grid { display:grid; grid-template-columns:repeat(3,1fr); gap:12px; }
 .cr-plat-col { border:1px solid var(--line-200); border-radius:var(--r-md); padding:12px; }
@@ -1950,6 +1951,8 @@ select:focus,.search-input:focus,.modal-input:focus{outline:none;border-color:va
   padding:4px 9px;border-radius:var(--r-pill);
   flex:0 0 auto;
 }
+/* A paid rating's share of the creative's paid impressions. */
+.dsum-plat-share{margin-left:auto;font:400 11.5px/1 var(--font);color:var(--ink-400);white-space:nowrap}
 /* A state is not a rating, so it gets no pill and none of the rating colours. */
 .dsum-plat-none{
   background:transparent;color:var(--ink-400);font-weight:400;
