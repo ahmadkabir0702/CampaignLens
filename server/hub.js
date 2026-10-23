@@ -239,21 +239,29 @@ function summarize(data, now = new Date()) {
   const newest = (a, b) => String(b.d.date || '').localeCompare(String(a.d.date || ''));
   // "This month" is the current calendar month by publish date.
   const thisMonth = now.toISOString().slice(0, 7);
-  const top = rated
-    .filter(r => (r.d.date || '').startsWith(thisMonth))
+  // The two lists never share a creative: the top list is Average or
+  // better, the weak list is Poor only. Ranking everything instead put an
+  // Average creative on both tiles when only two were running.
+  const monthRated = rated.filter(r => (r.d.date || '').startsWith(thisMonth));
+  const top = monthRated
+    .filter(r => r.grade !== 'Poor')
     .sort((a, b) => rk(a) - rk(b) || (b.d.reach || 0) - (a.d.reach || 0))
     .slice(0, 5);
-  // Worst first, then most recent, deliberately not by lifetime spend.
+  // Poor only, most recent first, deliberately not by lifetime spend.
   // What is running on paid money comes first; with nothing boosted the
-  // tile falls back to the weakest organically rated creative.
-  const live = rated
-    .filter(r => r.src === 'paid' && r.d.boostState === 'running')
-    .sort((a, b) => rk(b) - rk(a) || newest(a, b));
+  // tile falls back to organic ratings.
+  const live = rated.filter(r => r.src === 'paid' && r.d.boostState === 'running');
   const weakIsLive = live.length > 0;
-  const weak = weakIsLive ? live.slice(0, 5)
-    : rated.filter(r => r.src === 'organic').sort((a, b) => rk(b) - rk(a) || newest(a, b)).slice(0, 5);
+  const weak = (weakIsLive ? live : rated.filter(r => r.src === 'organic'))
+    .filter(r => r.grade === 'Poor')
+    .sort(newest)
+    .slice(0, 5);
 
   s.weakIsLive = weakIsLive;
+  // For the empty tiles: "nothing rated yet" and "nothing rated Poor" are
+  // different news.
+  s.rated = rated.length;
+  s.monthRated = monthRated.length;
   // The creative itself rides along, so a row in the drawer opens without
   // waiting on another request.
   s.top = top.map(r => ({ id: r.d.id, grade: r.grade, src: r.src }));
