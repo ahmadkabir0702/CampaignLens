@@ -34,21 +34,18 @@ them, but they should stop being created.
 
 ---
 
-## 2. Boosted posts are being filtered out of the organic pull
+## 2. Boosted posts and the organic pull (settled)
 
-**Evidence.** On Sunsilk, every Instagram post missing from
-`organic_perf` had Ad Status "Boosted" in the source sheet. The
-correlation was exact.
+Organic numbers stop updating once spend on that platform is behind the
+post, because the counts would then include paid delivery. The last
+reading before the boost is kept. Per platform, not per post:
 
-**Why it matters.** Boosting a post does not replace its organic
-performance, it adds paid delivery alongside it. Filtering boosted posts
-out means the posts the brand believed in most are the ones with no
-organic record, which is backwards. It also makes the organic standing
-percentile wrong, because the strongest posts are missing from the
-comparison set.
+- TikTok stops when the post has TikTok spend (`v_boost_status.on_tt_paid`).
+- Instagram and Facebook are one placement set: Meta spend on either
+  (`on_meta_paid`) stops both.
+- A post boosted on Meta keeps updating on TikTok, and the other way round.
 
-**Change.** Remove the Ad Status condition from the organic branch. Pull
-every post regardless of whether it has been boosted.
+See `docs/n8n-sync.md` for the full rules.
 
 ---
 
