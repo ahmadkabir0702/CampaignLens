@@ -460,8 +460,14 @@ function crRenderDetail(name) {
         </div>`;
     }).join('');
 
-    // Paid only as the rating it earned, never what was behind it.
-    const paid = isGrade(a.cqr) ? `
+    // Paid only as the rating it earned, never what was behind it. Rated
+    // differently on Meta and TikTok: both, never one combined figure.
+    const split = (a.paidRatings || []).filter(r => isGrade(r.cqr));
+    const paid = split.length > 1 && new Set(split.map(r => r.cqr)).size > 1 ? `
+      <div class="cr-paid-strip"><span class="cr-paid-label">Paid rating</span>
+        ${split.map(r => `<span class="cr-paid-plat">${r.platform === 'meta' ? 'Meta' : 'TikTok'}</span>
+        <span class="kpi-pill ${cqrClass(r.cqr)}">${r.cqr}</span>`).join('')}</div>`
+      : isGrade(a.cqr) ? `
       <div class="cr-paid-strip"><span class="cr-paid-label">Paid rating</span>
         <span class="kpi-pill ${cqrClass(a.cqr)}">${a.cqr}</span></div>` : '';
 
