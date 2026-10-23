@@ -13,6 +13,7 @@
 const crypto = require('crypto');
 const S = require('./schema.config');
 const { getPool } = require('./db');
+const { combineGrades, weightedRate } = require('../cqr-combine');
 
 // Bump this whenever the digest format or the records shape changes.
 // Stored snapshots with a different schema version rebuild on next use.
@@ -31,7 +32,9 @@ const { getPool } = require('./db');
 // Bumped to 11: fatigue uses the same rule as the rest of the app
 // (assessFade), and the lifetime rating is no longer described as the
 // best day.
-const SNAPSHOT_SCHEMA_VERSION = 11;
+// Bumped to 12: a creative on Meta and TikTok is rated by combining the
+// two grades by impressions, not by taking the better one.
+const SNAPSHOT_SCHEMA_VERSION = 12;
 
 const T = S.tables, C = S.creative, P = S.paidView, O = S.organicView, OR = S.organicRawCols;
 const OB = S.organicBest, B = S.boost, TH = S.thresholds, CR = S.creator;
@@ -64,11 +67,6 @@ function displayLabel(id, hook) {
 // The best GRADE across platforms. A state is not a rating, so it cannot
 // win this comparison and cannot be the answer: with no grade anywhere the
 // creative is unrated, which the caller renders as such.
-function bestCqr(list) {
-  const graded = list.filter((c) => S.cqrGrades.includes(c));
-  if (graded.length) return graded.sort((a, b) => S.cqrRank[a] - S.cqrRank[b])[0];
-  return list.filter(Boolean)[0] || null;   // a state, or nothing at all
-}
 function rankCmp(a, b) {
   const c = (S.cqrRank[a.cqr] ?? 9) - (S.cqrRank[b.cqr] ?? 9); if (c) return c;
   const h = num(b.hook_rate) - num(a.hook_rate); if (h) return h;
@@ -231,8 +229,9 @@ function mergePaid(meta, tt) {
   const primary = meta || tt;
   return {
     platforms: both.map((x) => x.platform),
-    cqr: bestCqr(pick('cqr')),
-    hook_rate: r1(avg(pick('hook_rate'))), hold_rate: r1(Math.max(...pick('hold_rate').map(num))),
+    // Combined by impressions, the same as the Creative Hub (cqr-combine.js).
+    cqr: combineGrades(both),
+    hook_rate: r1(weightedRate(both, 'hook_rate')), hold_rate: r1(weightedRate(both, 'hold_rate')),
     hook_q: primary.hook_q || '', hold_q: primary.hold_q || '',
     vtr: r1(avg(pick('vtr'))), avg_watch_time: r1(avg(pick('avg_watch_time'))),
     spend: pick('spend').reduce((s, v) => s + num(v), 0),

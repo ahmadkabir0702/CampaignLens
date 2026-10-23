@@ -268,7 +268,7 @@ module.exports = function mountAdmin(app) {
         if (e.code === '42P01' || e.code === '42703') return empty;
         throw e;
       });
-      const [paid, organic, jobs, errors, migrations] = await Promise.all([
+      const [paid, organic, jobs, errors, migrations, bars] = await Promise.all([
         soft(query(`select brand_id, max(date)::text as last_day from creative_metrics_unified group by brand_id`), []),
         soft(query(`select c.brand_id, max(h.captured_at) as last_at
                       from organic_perf_history h join creatives c on c.creative_id = h.creative_id
@@ -276,6 +276,7 @@ module.exports = function mountAdmin(app) {
         soft(query(`select name, last_day, last_ok_at, last_try_at, last_error, last_ms from app_jobs`), []),
         ops.recentErrors(50),
         ops.migrations(),
+        soft(query(`select year, set_at, set_by, note from cqr_bar_years order by year desc limit 1`), []),
       ]);
       const { rows: brands } = await query(`select brand_id, name from brands where is_active order by name`);
       const P = new Map(paid.map((r) => [r.brand_id, r.last_day]));
@@ -286,6 +287,7 @@ module.exports = function mountAdmin(app) {
         errors,
         migrations_missing: migrations.filter((m) => !m.applied_at).map((m) => m.name),
         migrations_recorded: migrations.filter((m) => m.applied_at).length,
+        bars: bars[0] || null,
       });
     } catch (err) { sendError(res, 'admin', err); }
   });
