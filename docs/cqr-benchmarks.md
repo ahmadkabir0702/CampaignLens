@@ -51,7 +51,7 @@ The Meta hook is 3-second views per impression. The TikTok hook is 2-second view
 - **Vaseline** has its own paid hook and hold and its own organic retention, all higher than the global ones.
 - **Sunsilk** gets the same benchmarks as Vaseline if migration 024 is run.
 - **Vaseline and Sunsilk paid bars** are reset by migration 026. Their Brand Say bars are the global ones times 1.2: higher than other brands, but reachable. Their Others Say content uses the global creator bars. Their organic bars are not changed. Re-run 026 after re-running 025.
-- **Knorr** has its own organic retention bands. Good starts at 3% for videos under 15 seconds, which looks like seconds of watch time entered as percentages. Confirm the numbers before relying on Knorr's organic grades.
+- **Knorr** is rated on the global organic bands since migration 040 (23 Oct 2026). Its own bands looked like seconds of watch time entered as percentages (Good from 3% under 15 seconds, rising with length) and were retired to `cqr_thresholds_retired`.
 - **Every other brand** is rated on the global benchmarks.
 
 ## Photo and carousel benchmarks
