@@ -19,7 +19,7 @@ Paid grades are worked out as follows:
 - **Average:** anything else.
 - **Low Delivery:** under 10,000 impressions, so no grade is given.
 
-**A creative on both Meta and TikTok** is graded on each platform against that platform's bars, then the two grades are combined by impressions (Good 3, Average 2, Poor 1; Good from 2.5, Average from 1.5). The platform that carried most of the delivery decides most of the rating. A platform with Low Delivery does not count. Until October 2026 the better of the two grades was shown. Code: `server/cqr-combine.js`, used by the Creative Hub and Ask Lens.
+**A creative on both Meta and TikTok** is graded on each platform against that platform's bars. When the two ratings differ, both are shown wherever a paid rating appears (the creative panel, Creators, Ask Lens), with each platform's share of impressions, and never one combined rating. Decided October 2026. The hub's "best rated" sort and the summary counts still use the better of the two.
 
 ## Global video benchmarks
 

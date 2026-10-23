@@ -1352,6 +1352,9 @@ function detailSummaryHTML(d) {
     .map(pl => ({ label: pl.label, v: (d[pl.key] || {}).cqr || null }));
   const paid = isGrade(d.cqr) ? d.cqr : null;
   const paidNote = !paid && d.cqr && d.cqr !== 'Invalid' && d.cqr !== 'Not Rated' ? d.cqr : null;
+  // Ran on Meta and TikTok and rated differently on each: both ratings,
+  // biggest platform first, never one combined figure.
+  const paidSplit = paidSplitHTML(d);
 
   let status, statusCls, statusSub = '';
   if (ps.running.length) {
@@ -1378,13 +1381,31 @@ function detailSummaryHTML(d) {
                        : `<span class="dsum-plat-v dsum-plat-none">${o.v ? stateShort(o.v) : '—'}</span>`}</span>`
         ).join('')}</div>` : `<div class="dsum-val dsum-quiet">Not rated</div>`}
     </div>
-    ${cell('Paid CQR', paid || (paidNote ? stateShort(paidNote) : (d.boostState === 'never' ? 'No spend yet' : 'Not rated')),
+    ${paidSplit ? `<div class="dsum-cell"><div class="dsum-label">Paid CQR</div>${paidSplit}</div>`
+      : cell('Paid CQR', paid || (paidNote ? stateShort(paidNote) : (d.boostState === 'never' ? 'No spend yet' : 'Not rated')),
            paid ? 'dsum-' + cqrClass(paid) : 'dsum-quiet')}
     ${cell('Pre-test Score', d.bsScore === null || d.bsScore === undefined ? 'Not scored' : d.bsScore,
            d.bsScore === null || d.bsScore === undefined ? 'dsum-quiet' : '',
            d.bsRating || (d.bsScore === null || d.bsScore === undefined ? '' : 'of 100'))}
     ${cell('Paid status', status, statusCls, statusSub)}
   </div>`;
+}
+
+/**
+ * A creative that ran on Meta and TikTok and was rated differently on
+ * each: one line per platform, the platform with more impressions first,
+ * with its share of the delivery. Null when there is one rating to show.
+ */
+const PAID_LABEL = { meta: 'Meta', tiktok: 'TikTok' };
+function paidSplitHTML(d) {
+  const rs = (d.paidRatings || []).filter(r => r && r.cqr);
+  if (rs.length < 2 || new Set(rs.map(r => r.cqr)).size < 2) return null;
+  const total = rs.reduce((s, r) => s + (r.impressions || 0), 0) || 1;
+  return `<div class="dsum-plats">${rs.map(r => `<span class="dsum-plat" title="${Math.round((r.impressions || 0) / total * 100)}% of paid impressions">
+      <span class="dsum-plat-k">${escapeHtml(PAID_LABEL[r.platform] || r.platform)}</span>
+      <span class="dsum-plat-share">${Math.round((r.impressions || 0) / total * 100)}% of impr.</span>${
+      isGrade(r.cqr) ? `<span class="dsum-plat-v ${cqrClass(r.cqr)}">${escapeHtml(r.cqr)}</span>`
+                     : `<span class="dsum-plat-v dsum-plat-none">${escapeHtml(stateShort(r.cqr))}</span>`}</span>`).join('')}</div>`;
 }
 
 /** "Instagram, Facebook and TikTok" rather than a comma-joined list. */

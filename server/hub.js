@@ -32,6 +32,7 @@ function platformView(list, platform) {
     if (d.platform !== 'both' || !d[key]) return d;
     const out = { ...d };
     for (const f of PAID_FIELDS) out[f] = d[key][f];
+    out.paidRatings = (d.paidRatings || []).filter(r => r.platform === platform);
     return out;
   });
 }
