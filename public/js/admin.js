@@ -335,6 +335,9 @@
           <td>${b.organic_at ? esc(ago(b.organic_at)) : '<span class="ad-muted">None</span>'}</td></tr>`).join('')}</tbody></table></div>
       <div class="ad-stack">
         <div class="ad-card ad-pad"><h3 class="ad-h">Nightly refresh</h3><div class="ad-text">${jobLine}</div></div>
+        <div class="ad-card ad-pad"><h3 class="ad-h">CQR benchmarks</h3><div class="ad-text">${h.bars
+          ? `${esc(h.bars.year)} benchmarks, fixed for the year. Next reset: January ${Number(h.bars.year) + 1}.`
+          : '<span class="ad-warn">Not recorded yet. Run 039_cqr_bars_by_year.sql.</span>'}</div></div>
         <div class="ad-card ad-pad"><h3 class="ad-h">Database changes</h3><div class="ad-text">${h.migrations_recorded} recorded.
           ${!h.migrations_recorded ? '<div class="ad-warn">None recorded yet. Run 037_ops_tables.sql in Supabase once; it records the files already run.</div>'
             : h.migrations_missing.length ? `<div class="ad-warn">Not recorded: ${h.migrations_missing.map(esc).join(', ')}</div><div class="ad-muted">Run the file in Supabase. If it has been run already, record it: insert into schema_migrations (name) values ('the file name');</div>`

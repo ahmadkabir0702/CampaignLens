@@ -19,6 +19,8 @@ Paid grades are worked out as follows:
 - **Average:** anything else.
 - **Low Delivery:** under 10,000 impressions, so no grade is given.
 
+**A creative on both Meta and TikTok** is graded on each platform against that platform's bars, then the two grades are combined by impressions (Good 3, Average 2, Poor 1; Good from 2.5, Average from 1.5). The platform that carried most of the delivery decides most of the rating. A platform with Low Delivery does not count. Until October 2026 the better of the two grades was shown. Code: `server/cqr-combine.js`, used by the Creative Hub and Ask Lens.
+
 ## Global video benchmarks
 
 The Good marks were kept where they were. Poor now starts at about 70% of Good, so there is a real Average band.
@@ -73,6 +75,24 @@ These are starting values for Sri Lanka. A row for Carousel wins over the row fo
 | Others Say | Facebook | views | both | 0.5 | 2 |
 | Others Say | TikTok | followers | both | 0.5 | 2 |
 | Others Say | TikTok | views | both | 2 | 5 |
+
+## Benchmarks are fixed for the year
+
+Decided October 2026. The bars stay the same for a whole calendar year and are reset once, in January, from the previous year's results. Within a year a rise in the share of Good creatives is real improvement, not the bars moving.
+
+- The bars in force since migrations 023 to 028 are the **2026 bars** (migration 039).
+- `cqr_bar_years` records which year's bars are in force; `cqr_bars_archive` keeps a copy of every bar for each year, so years can be compared and any year restored.
+- `refresh_cqr_os_benchmarks()` (the creator bars) does nothing outside the reset, so a scheduled call cannot move the bars mid-year. The rebuild itself is `refresh_cqr_os_benchmarks_now()`.
+- The Admin page, under Data and errors, shows the year in force.
+
+**The January reset**, in one transaction:
+1. `set local cqr.annual_reset = 'on';`
+2. Re-run the paid calibration (025) on the previous year's creatives, with a minimum of 30 creatives per bar instead of 8. Where a group has fewer, Brand Say and Others Say are pooled; if still under 30, the bar stays as it was.
+3. Re-run 026 (Vaseline and Sunsilk at 1.2 times the global bars).
+4. `select refresh_cqr_os_benchmarks();` for the creator bars.
+5. Add the new year to `cqr_bar_years`, copy its bars into `cqr_bars_archive`, and record the rating moves in `cqr_history` as `rule change`.
+
+A file for this (040) is written in January from the year's data and checked before it is run. Changing a single bar mid-year (below) is still possible; record why in `cqr_bar_years.note`.
 
 ## Changing a benchmark
 

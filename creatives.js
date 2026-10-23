@@ -10,6 +10,7 @@
 //    { brand: {id, name}, creatives: [...], account: [...], campaigns: [...] }
 // =====================================================================
 const { query } = require('./db');
+const { combineGrades, weightedRate } = require('./server/cqr-combine');
 // The card shows how far through the validation window a new post is, so
 // it needs the same figure the rating uses. Imported rather than repeated,
 // because two copies of a window would drift and the card would then
@@ -289,13 +290,11 @@ async function buildPayload(brandId) {
     const both = [m, t].filter(Boolean);
     const platform = both.length > 1 ? 'both' : (both[0] ? both[0].platform : 'both');
     const avg = f => both.length ? both.reduce((s, x) => s + x[f], 0) / both.length : 0;
-    const cqrRank = { Good: 0, Average: 1, Poor: 2 };
     // The paid rating is built on video watch rates (hook and hold), so a
     // photo or carousel is not given one: it would read Poor for having
-    // no video, which says nothing about the post.
-    const bestPaidCqr = isStatic ? 'Invalid' : (both
-      .map(x => x.cqr)
-      .sort((a, b) => (cqrRank[a] ?? 9) - (cqrRank[b] ?? 9))[0] || 'Invalid');
+    // no video, which says nothing about the post. On two platforms the
+    // grades are combined by impressions (server/cqr-combine.js).
+    const bestPaidCqr = isStatic ? 'Invalid' : (combineGrades(both) || 'Invalid');
 
     const isBoosted = !!boostBy[id];
 
@@ -326,8 +325,9 @@ async function buildPayload(brandId) {
       spend: both.reduce((s, x) => s + x.spend, 0),
       reach: both.reduce((s, x) => Math.max(s, x.reach), 0),
       impressions: both.reduce((s, x) => s + x.impressions, 0),
-      hookRate: r1(avg('hookRate')),
-      holdRate: both.length ? Math.max(...both.map(x => x.holdRate)) : 0,
+      // Weighted by each platform's impressions, like the rating.
+      hookRate: r1(weightedRate(both, 'hookRate')),
+      holdRate: r1(weightedRate(both, 'holdRate')),
       hookQual: (m || t || {}).hookQual || '',
       holdQual: (m || t || {}).holdQual || '',
       vtr: r1(avg('vtr')),
