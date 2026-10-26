@@ -54,6 +54,16 @@ The Meta hook is 3-second views per impression. The TikTok hook is 2-second view
 - **Knorr** is rated on the global organic bands since migration 040 (23 Oct 2026). Its own bands looked like seconds of watch time entered as percentages (Good from 3% under 15 seconds, rising with length) and were retired to `cqr_thresholds_retired`.
 - **Every other brand** is rated on the global benchmarks.
 
+## No bar is harder than the brand's own results
+
+Decided 26 October 2026: a bar may be easy, but never too hard. Migration 041 caps every brand's bars at what its own rated creatives reach:
+
+- **Paid video** (hook, and hold for each video length) and **organic Brand Say** (retention for each video length): Good can need no more than the brand's own median, and Poor can start no higher than its own bottom quarter. Needs 8 rated creatives in the group; with fewer, the bar is left as it is.
+- **Creator posts (Others Say)**: the same, at the percentiles the creator bars already use (Good from the median). Needs 5 rated posts.
+- A bar is only ever lowered. Where a brand's bar is already easier, including any premium bar that its content clears, it is kept.
+
+A brand that needs a lower bar gets its own rows for that group, one per video length, set to the lower of its bar and the cap. The rows it had go to `cqr_thresholds_retired`. Creator caps are brand rows in `cqr_os_benchmarks` with basis `capped (041)`. Run `server/041_preview.sql` first: it shows each brand's ratings now and after, and changes nothing.
+
 ## Photo and carousel benchmarks
 
 These are starting values for Sri Lanka. A row for Carousel wins over the row for both formats. Check them against real results once a few weeks of posts are in.
@@ -90,7 +100,8 @@ Decided October 2026. The bars stay the same for a whole calendar year and are r
 2. Re-run the paid calibration (025) on the previous year's creatives, with a minimum of 30 creatives per bar instead of 8. Where a group has fewer, Brand Say and Others Say are pooled; if still under 30, the bar stays as it was.
 3. Re-run 026 (Vaseline and Sunsilk at 1.2 times the global bars).
 4. `select refresh_cqr_os_benchmarks();` for the creator bars.
-5. Add the new year to `cqr_bar_years`, copy its bars into `cqr_bars_archive`, and record the rating moves in `cqr_history` as `rule change`.
+5. Re-run 041, so no new bar is harder than the brand's own results.
+6. Add the new year to `cqr_bar_years`, copy its bars into `cqr_bars_archive`, and record the rating moves in `cqr_history` as `rule change`.
 
 A file for this (040) is written in January from the year's data and checked before it is run. Changing a single bar mid-year (below) is still possible; record why in `cqr_bar_years.note`.
 
