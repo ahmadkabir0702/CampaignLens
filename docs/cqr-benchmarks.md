@@ -56,13 +56,15 @@ The Meta hook is 3-second views per impression. The TikTok hook is 2-second view
 
 ## No bar is harder than the brand's own results
 
-Decided 26 October 2026: a bar may be easy, but never too hard. Migration 041 caps every brand's bars at what its own rated creatives reach:
+Decided 26 October 2026: a bar may be easy, but never too hard. Migration 041 checks every brand's bars against its own rated creatives, on each bar: paid hook, paid hold, organic Brand Say retention, and the creator bar.
 
-- **Paid video** (hook, and hold for each video length) and **organic Brand Say** (retention for each video length): Good can need no more than the brand's own median, and Poor can start no higher than its own bottom quarter. Needs 8 rated creatives in the group; with fewer, the bar is left as it is.
-- **Creator posts (Others Say)**: the same, at the percentiles the creator bars already use (Good from the median). Needs 5 rated posts.
-- A bar is only ever lowered. Where a brand's bar is already easier, including any premium bar that its content clears, it is kept.
+- **Good:** at least half the brand's creatives must clear the Good line. If fewer do, the brand's bar is scaled down until half do.
+- **Poor:** no more than a quarter may fall below the Poor line. If more do, it is scaled down until a quarter do. Poor always drops at least as much as Good, so the Average band keeps its shape.
+- Hold and retention depend on video length, so each creative is compared with the bar for its own length, and the brand's creatives of all lengths are pooled. Needs 8 rated creatives (5 creator posts); with fewer, the bar is left as it is.
+- A bar is only ever lowered. Where a brand's bar is already easier, including a premium bar its content clears, it is kept.
+- Paid Good still needs both hook and hold to be Good, so a brand's paid Good share can sit below half.
 
-A brand that needs a lower bar gets its own rows for that group, one per video length, set to the lower of its bar and the cap. The rows it had go to `cqr_thresholds_retired`. Creator caps are brand rows in `cqr_os_benchmarks` with basis `capped (041)`. Run `server/041_preview.sql` first: it shows each brand's ratings now and after, and changes nothing.
+A brand that needs a lower bar gets its own rows for that group, one per video length, scaled down by the same factor. The rows it had go to `cqr_thresholds_retired`. Creator caps are brand rows in `cqr_os_benchmarks` with basis `capped (041)`. Run `server/041_preview.sql` first: it shows each brand's ratings now and after, and changes nothing.
 
 ## Photo and carousel benchmarks
 

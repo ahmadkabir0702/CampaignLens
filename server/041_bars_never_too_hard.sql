@@ -7,21 +7,24 @@
 --  Instagram: 0 of 11 Good), because the bar came from other brands or
 --  from starting values, not from what the brand's own content does.
 --
---  The rule, for every brand, worked out from its own rated creatives:
---    Paid video (hook, and hold for each video length) and organic
---    Brand Say retention (each video length):
---      Good can need no more than the brand's own median.
---      Poor can start no higher than the brand's own bottom quarter.
---      Needs 8 rated creatives in the group, otherwise left as it is.
---    Creator posts (Others Say, likes + 2 x comments per view):
---      the same, at the percentiles the creator bars already use
---      (Good from the median). Needs 5 rated posts.
+--  The rule, for every brand, worked out from its own rated creatives,
+--  on each bar (paid hook, paid hold, organic Brand Say retention, and
+--  the creator bar for Others Say posts):
+--    Good: at least half the brand's creatives must clear the Good line.
+--          If fewer do, the brand's bar is scaled down until half do.
+--    Poor: no more than a quarter may fall below the Poor line. If more
+--          do, it is scaled down until a quarter do. Poor always drops at
+--          least as much as Good, so the Average band keeps its shape.
+--  Hold and retention depend on video length, so each creative is
+--  compared with the bar for its own length and the brand's creatives of
+--  all lengths are pooled. Needs 8 rated creatives (5 creator posts),
+--  otherwise the bar is left as it is.
 --  A bar is only ever lowered. Where the brand's bar is already easier
 --  than this, it is kept, so nothing here makes any rating worse.
 --
 --  How it is stored: a brand that needs a lower bar on a group gets its
 --  own rows for that group (one per video length, same lengths as the
---  global rows), set to the lower of its current bar and the cap. Rows it
+--  global rows), scaled down by the same factor. Rows it
 --  had before go to cqr_thresholds_retired. Creator bars get a brand row
 --  in cqr_os_benchmarks with basis 'capped (041)'.
 --
@@ -50,111 +53,113 @@ create temp table _r_before as
     from v_organic_scored s join creatives c on c.creative_id = s.creative_id;
 
 -- ---------------------------------------------------------------------
--- The caps, from each brand's own rated creatives
+-- How far each brand's bars need to come down: every rated value as a
+-- share of the bar for its own length, pooled across lengths
 -- ---------------------------------------------------------------------
-drop table if exists _gbands;
-create temp table _gbands as
-  select platform as grp, metric, min_duration, max_duration
-    from cqr_thresholds
-   where brand_id is null
-     and metric in ('hook_rate', 'hold_rate', 'retention_rate')
-     and platform in ('meta_paid_bs', 'meta_paid_os', 'tt_paid_bs', 'tt_paid_os',
-                      'ig_organic', 'fb_organic', 'tt_organic');
-
-drop table if exists _vals;
-create temp table _vals as
-  -- paid hook and hold
-  select p.brand_id, b.grp, b.metric, b.min_duration, b.max_duration,
-         case when b.metric = 'hook_rate' then p.hook else p.hold end as v
-    from (
-      select v.brand_id, 'meta_paid_' || case when c.type = 'Others Say' then 'os' else 'bs' end as grp,
-             v.hook_rate::numeric as hook, v.hold_rate::numeric as hold, v.duration_s::numeric as dur, v.cqr
-        from v_paid_meta_creative v join creatives c on c.creative_id = v.creative_id
-      union all
-      select v.brand_id, 'tt_paid_' || case when c.type = 'Others Say' then 'os' else 'bs' end,
-             v.hook_rate::numeric, v.hold_rate::numeric, v.duration_s::numeric, v.cqr
-        from v_paid_tiktok_creative v join creatives c on c.creative_id = v.creative_id
-    ) p
-    join _gbands b on b.grp = p.grp
-     and (b.metric = 'hook_rate'
-          or (b.metric = 'hold_rate' and p.dur >= coalesce(b.min_duration, 0)
-              and (b.max_duration is null or p.dur < b.max_duration)))
-   where p.cqr in ('Good', 'Average', 'Poor')
+drop table if exists _factors;
+create temp table _factors as
+with
+paid as (
+  select v.brand_id, 'meta_paid_' || case when c.type = 'Others Say' then 'os' else 'bs' end as grp,
+         v.hook_rate::numeric as hook, v.hold_rate::numeric as hold, v.duration_s::numeric as dur
+    from v_paid_meta_creative v join creatives c on c.creative_id = v.creative_id
+   where v.cqr in ('Good', 'Average', 'Poor')
   union all
-  -- organic Brand Say retention
-  select c.brand_id, g.grp, g.metric, g.min_duration, g.max_duration,
-         (o.avg_watch_time / c.duration_s * 100)::numeric
+  select v.brand_id, 'tt_paid_' || case when c.type = 'Others Say' then 'os' else 'bs' end,
+         v.hook_rate::numeric, v.hold_rate::numeric, v.duration_s::numeric
+    from v_paid_tiktok_creative v join creatives c on c.creative_id = v.creative_id
+   where v.cqr in ('Good', 'Average', 'Poor')
+),
+paid_b as (
+  select p.*, hk.poor_lt as hk_p, hk.good_gte as hk_g, hd.poor_lt as hd_p, hd.good_gte as hd_g
+    from paid p
+    left join lateral thr(p.brand_id, p.grp, 'hook_rate') as hk(poor_lt, good_gte) on true
+    left join lateral thr(p.brand_id, p.grp, 'hold_rate', p.dur) as hd(poor_lt, good_gte) on true
+),
+bs as (
+  select c.brand_id, o.platform || '_organic' as grp,
+         (o.avg_watch_time / c.duration_s * 100)::numeric as ret,
+         t.poor_lt as p, t.good_gte as g
     from v_organic_scored s
     join creatives c on c.creative_id = s.creative_id
     join organic_perf o on o.creative_id = s.creative_id and o.platform = s.platform
-    join _gbands g on g.grp = o.platform || '_organic' and g.metric = 'retention_rate'
-     and c.duration_s >= coalesce(g.min_duration, 0)
-     and (g.max_duration is null or c.duration_s < g.max_duration)
+    left join lateral thr(c.brand_id, o.platform || '_organic', 'retention_rate', c.duration_s::numeric) as t(poor_lt, good_gte) on true
    where c.type = 'Brand Say' and c.duration_s > 0 and o.avg_watch_time > 0
-     and o.avg_watch_time <= c.duration_s
-     and s.cqr in ('Good', 'Average', 'Poor');
+     and s.cqr in ('Good', 'Average', 'Poor')
+),
+os as (
+  select c.brand_id, o.platform as grp,
+         ((coalesce(o.likes, 0) + 2 * coalesce(o.comments, 0))::numeric / o.views * 100) as epv,
+         b.poor_below as p, b.good_from as g
+    from v_organic_scored s
+    join creatives c on c.creative_id = s.creative_id
+    join organic_perf o on o.creative_id = s.creative_id and o.platform = s.platform
+    left join lateral (select ob.poor_below, ob.good_from from cqr_os_benchmarks ob
+                        where ob.platform = o.platform and (ob.brand_id = c.brand_id or ob.brand_id is null)
+                        order by ob.brand_id nulls last limit 1) b on true
+   where c.type = 'Others Say' and o.views > 0 and o.likes is not null
+     and s.cqr in ('Good', 'Average', 'Poor')
+),
+ratios as (
+  select brand_id, grp, 'hook_rate'::text as metric, hook / hk_g as rg, hook / hk_p as rp, 8 as min_n
+    from paid_b where hook > 0 and hk_g > 0 and hk_p > 0
+  union all
+  select brand_id, grp, 'hold_rate', hold / hd_g, hold / hd_p, 8
+    from paid_b where hold > 0 and hd_g > 0 and hd_p > 0
+  union all
+  select brand_id, grp, 'retention_rate', ret / g, ret / p, 8
+    from bs where ret > 0 and ret <= 100 and g > 0 and p > 0
+  union all
+  select brand_id, grp, 'creator', epv / g, epv / p, 5
+    from os where epv > 0 and g > 0 and p > 0
+)
+select brand_id, grp, metric, count(*) as n,
+       least(1, percentile_cont(0.50) within group (order by rg))::numeric as fg,
+       least(1, percentile_cont(0.25) within group (order by rp),
+                percentile_cont(0.50) within group (order by rg))::numeric as fp
+  from ratios
+ group by brand_id, grp, metric, min_n
+having count(*) >= min_n;
 
-drop table if exists _caps;
-create temp table _caps as
-  select brand_id, grp, metric, min_duration, max_duration, count(*) as n,
-         percentile_cont(0.25) within group (order by v)::numeric as cap_poor,
-         percentile_cont(0.50) within group (order by v)::numeric as cap_good
-    from _vals where v > 0
-   group by 1, 2, 3, 4, 5
-  having count(*) >= 8;
+delete from _factors where fg >= 1 and fp >= 1;
 
 -- ---------------------------------------------------------------------
--- New bars for every brand, group and metric that a cap lowers
+-- Paid and Brand Say organic: the brand's own rows for each lowered
+-- group, one per global video length band, scaled down
 -- ---------------------------------------------------------------------
 drop table if exists _new_rows;
 create temp table _new_rows as
-with brands_grp as (
-  select distinct brand_id, grp, metric from _caps
-),
-per_band as (
-  -- every global length band of the group, with the brand's bar in force now
-  select bg.brand_id, g.grp, g.metric, g.min_duration, g.max_duration,
-         cur.poor_lt as cur_poor, cur.good_gte as cur_good,
-         cp.cap_poor, cp.cap_good
-    from brands_grp bg
-    join _gbands g on g.grp = bg.grp and g.metric = bg.metric
+with per_band as (
+  select f.brand_id, g.platform as grp, g.metric, g.min_duration, g.max_duration, f.fg, f.fp,
+         cur.poor_lt as cur_poor, cur.good_gte as cur_good
+    from _factors f
+    join cqr_thresholds g on g.brand_id is null and g.platform = f.grp and g.metric = f.metric
     cross join lateral (
       select case when g.max_duration is null then coalesce(g.min_duration, 0) + 1
                   else (coalesce(g.min_duration, 0) + g.max_duration) / 2.0 end as rep
     ) r
     left join lateral (
       select t.poor_lt, t.good_gte
-        from thr(bg.brand_id, g.grp, g.metric, r.rep) as t(poor_lt, good_gte)
+        from thr(f.brand_id, g.platform, g.metric, r.rep) as t(poor_lt, good_gte)
        where g.metric <> 'hook_rate'
       union all
       select t.poor_lt, t.good_gte
-        from thr(bg.brand_id, g.grp, g.metric) as t(poor_lt, good_gte)
+        from thr(f.brand_id, g.platform, g.metric) as t(poor_lt, good_gte)
        where g.metric = 'hook_rate'
        limit 1
     ) cur on true
-    left join lateral (
-      select x.cap_poor, x.cap_good from _caps x
-       where x.brand_id = bg.brand_id and x.grp = g.grp and x.metric = g.metric
-         and (g.metric = 'hook_rate'
-              or (x.min_duration is not distinct from g.min_duration
-                  and x.max_duration is not distinct from g.max_duration))
-       limit 1
-    ) cp on true
+   where f.metric in ('hook_rate', 'hold_rate', 'retention_rate')
 ),
-decided as (
+scaled as (
   select pb.*,
-         case when pb.cap_good < pb.cur_good then round(floor(pb.cap_good * 10) / 10, 1) else pb.cur_good end as new_good,
-         case when pb.cap_poor < pb.cur_poor then round(floor(pb.cap_poor * 10) / 10, 1) else pb.cur_poor end as new_poor0
+         case when pb.fg < 1 then round(floor(pb.cur_good * pb.fg * 10) / 10, 1) else pb.cur_good end as new_good,
+         case when pb.fp < 1 then round(floor(pb.cur_poor * pb.fp * 10) / 10, 1) else pb.cur_poor end as new_poor0
     from per_band pb
+   where pb.cur_good is not null and pb.cur_poor is not null
 )
-select d.brand_id, d.grp, d.metric, d.min_duration, d.max_duration,
-       d.cur_poor, d.cur_good,
-       least(d.new_poor0, d.new_good) as new_poor, d.new_good
-  from decided d
- where d.cur_good is not null
-   and (d.brand_id, d.grp, d.metric) in (
-     select brand_id, grp, metric from decided
-      where cap_good < cur_good or cap_poor < cur_poor);
+select brand_id, grp, metric, min_duration, max_duration, fg, fp, cur_poor, cur_good,
+       least(new_poor0, new_good) as new_poor, new_good
+  from scaled;
 
 -- Retire the brand's own rows for those groups, then write the new set.
 with gone as (
@@ -172,40 +177,21 @@ select brand_id, grp, metric, min_duration, max_duration, new_poor, new_good
   from _new_rows;
 
 -- ---------------------------------------------------------------------
--- Creator bars (Others Say)
+-- Creator bars (Others Say): a brand row in cqr_os_benchmarks
 -- ---------------------------------------------------------------------
 drop table if exists _os_new;
 create temp table _os_new as
-with os as (
-  select c.brand_id, o.platform,
-         ((coalesce(o.likes, 0) + 2 * coalesce(o.comments, 0))::numeric / o.views * 100) as epv
-    from v_organic_scored s
-    join creatives c on c.creative_id = s.creative_id
-    join organic_perf o on o.creative_id = s.creative_id and o.platform = s.platform
-   where c.type = 'Others Say' and o.views > 0 and o.likes is not null
-     and s.cqr in ('Good', 'Average', 'Poor')
-),
-caps as (
-  select o.brand_id, o.platform, g.poor_pct, g.good_pct, count(*) as n,
-         percentile_cont(g.poor_pct) within group (order by o.epv)::numeric as cap_poor,
-         percentile_cont(g.good_pct) within group (order by o.epv)::numeric as cap_good
-    from os o join cqr_os_benchmarks g on g.platform = o.platform and g.brand_id is null
-   group by o.brand_id, o.platform, g.poor_pct, g.good_pct
-  having count(*) >= 5
-),
-cur as (
-  select k.*, b.poor_below as cur_poor, b.good_from as cur_good
-    from caps k
-    left join lateral (select ob.poor_below, ob.good_from from cqr_os_benchmarks ob
-                        where ob.platform = k.platform and (ob.brand_id = k.brand_id or ob.brand_id is null)
-                        order by ob.brand_id nulls last limit 1) b on true
-)
-select brand_id, platform, poor_pct, good_pct, n, cur_poor, cur_good,
-       least(case when cap_poor < cur_poor then round(floor(cap_poor * 100) / 100, 2) else cur_poor end,
-             case when cap_good < cur_good then round(floor(cap_good * 100) / 100, 2) else cur_good end) as new_poor,
-       case when cap_good < cur_good then round(floor(cap_good * 100) / 100, 2) else cur_good end as new_good
-  from cur
- where cap_good < cur_good or cap_poor < cur_poor;
+select f.brand_id, f.grp as platform, f.n, g.poor_pct, g.good_pct,
+       cur.poor_below as cur_poor, cur.good_from as cur_good,
+       least(case when f.fp < 1 then round(floor(cur.poor_below * f.fp * 100) / 100, 2) else cur.poor_below end,
+             case when f.fg < 1 then round(floor(cur.good_from  * f.fg * 100) / 100, 2) else cur.good_from end) as new_poor,
+       case when f.fg < 1 then round(floor(cur.good_from * f.fg * 100) / 100, 2) else cur.good_from end as new_good
+  from _factors f
+  join cqr_os_benchmarks g on g.platform = f.grp and g.brand_id is null
+  cross join lateral (select ob.poor_below, ob.good_from from cqr_os_benchmarks ob
+                       where ob.platform = f.grp and (ob.brand_id = f.brand_id or ob.brand_id is null)
+                       order by ob.brand_id nulls last limit 1) cur
+ where f.metric = 'creator';
 
 delete from cqr_os_benchmarks b using _os_new n
  where b.brand_id = n.brand_id and b.platform = n.platform;
@@ -230,7 +216,7 @@ select 2026, 'cqr_os_benchmarks', to_jsonb(b)
  where exists (select 1 from cqr_bar_years where year = 2026);
 
 update cqr_bar_years
-   set note = coalesce(note, '') || ' One-off fix 26 Oct 2026: no brand bar harder than the brand''s own median for Good or bottom quarter for Poor (041).'
+   set note = coalesce(note, '') || ' One-off fix 26 Oct 2026: no brand bar harder than half its creatives reaching Good and a quarter falling Poor (041).'
  where year = 2026 and coalesce(note, '') not like '%(041)%';
 
 -- ---------------------------------------------------------------------
