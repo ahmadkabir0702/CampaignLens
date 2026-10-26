@@ -16,8 +16,9 @@ Two workflows in n8n, outside this repo:
 | Others Say, not collab | Instagram, Facebook, TikTok | 48 hours | at most every 12 hours (paid scraper) |
 
 A post that has never been read gets one first reading even when it is
-outside its window, so a post added late still gets numbers. For Brand
-Say this applies to posts added in the last 30 days.
+outside its window, so a post added late still gets numbers, however
+late it was added (since 26 Oct 2026; before that, Brand Say posts added
+more than 30 days earlier were skipped).
 
 ## Boosted posts
 
@@ -30,6 +31,21 @@ boost is kept.
 
 A post with spend on a platform before its first reading there gets no
 organic numbers on that platform, because any reading would include paid.
+
+## Matching ads to creatives
+
+Every ad is written to `paid_meta` and `paid_tiktok`, with or without a
+creative. The database works out the creative from the ad name
+(`match_creative_id`, migration 043): the longest creative ID of that brand
+found anywhere in the name, otherwise the ID without its brand prefix equal
+to the part after the last `|` (old names such as `000|Prathiba`). A creative
+added later claims the ads that ran before it was entered. An ad that still
+matches nothing keeps no creative and counts only towards the brand.
+
+Links that cannot be read: Facebook `share/r/` and `fb.watch` links carry no
+video id, so use the `facebook.com/reel/<id>` or `/videos/<id>` link. Brand Say
+reads only the brand's own accounts, so a post on a creator's account is
+Others Say.
 
 ## What is logged
 
