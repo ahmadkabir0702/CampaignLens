@@ -2001,51 +2001,69 @@ select:focus,.search-input:focus,.modal-input:focus{outline:none;border-color:va
   transition:left var(--t-base) var(--ease-move),width var(--t-base) var(--ease-move)}
 .glide>button{position:relative;z-index:1}
 
-/* ---------- Visible polish (Oct 2026) --------------------------------
-   The quiet layer (press states, window-in, glide pills) was already
-   here; this is the layer people see. Cards rise in with a stagger when
-   a brand or filter paints, KPI tiles follow, thumbnails ease larger
-   under the cursor, bars grow instead of appearing, and every success
-   draws a tick. All of it rides the motion tokens, so reduced motion
-   turns the lot off. */
-@keyframes rise-in{from{opacity:0;transform:translateY(10px)}}
-.card-in{animation:rise-in var(--t-slow) var(--ease-out) both;
-  animation-delay:calc(min(var(--i,0),11) * 26ms)}
-#kpi-row .kpi{animation:rise-in var(--t-slow) var(--ease-out) both}
-#kpi-row .kpi:nth-child(2){animation-delay:30ms}
-#kpi-row .kpi:nth-child(3){animation-delay:60ms}
-#kpi-row .kpi:nth-child(4){animation-delay:90ms}
-#kpi-row .kpi:nth-child(5){animation-delay:120ms}
-#kpi-row .kpi:nth-child(6){animation-delay:150ms}
-#kpi-row .kpi:nth-child(n+7){animation-delay:180ms}
+/* ---------- App-wide motion (Oct 2026) -----------------------------
+   One layer for every section. js/polish.js decides WHEN (a section
+   opens, the brand or view changes, items are appended); these rules
+   decide HOW, the same everywhere. Press feedback, modals, dropdowns,
+   toasts and skeletons above already apply app-wide. Everything rides
+   the motion tokens, so reduced motion turns it off. */
 
-/* The hover answers before the click: the card lifts and its still
-   leans in. Press feedback (is-pressed) still wins while held. */
-.card:hover{transform:translateY(-2px)}
-.card-thumb img{transition:transform var(--t-slow) var(--ease-out)}
-.card:hover .card-thumb img{transform:scale(1.045)}
+/* Arrivals: cards, tiles and panels in any section. */
+@keyframes pl-rise{from{opacity:0;transform:translateY(10px)}}
+.pl-in{animation:pl-rise var(--t-slow) var(--ease-out) both;
+  animation-delay:calc(var(--pl-i,0) * 26ms)}
 
-/* Meters grow from zero instead of appearing at length. */
-.mini-bar-fill{transform-origin:left center;animation:grow-x var(--t-slow) var(--ease-move) both}
+/* Bars grow from zero. */
+@keyframes pl-grow-x{from{transform:scaleX(0)}}
+@keyframes pl-grow-y{from{transform:scaleY(0)}}
+.pl-grow-x{transform-origin:left center;animation:pl-grow-x var(--t-slow) var(--ease-move) both;animation-delay:80ms}
+.pl-grow-y{transform-origin:center bottom;animation:pl-grow-y var(--t-slow) var(--ease-move) both;animation-delay:80ms}
 
-/* Solid buttons lift a little under the cursor. */
-.modal-confirm,.card-more-btn{
+/* Anything you can open lifts under the cursor, in every section. The
+   press (is-pressed, from motion.js) still wins while held. */
+:is(.card,.sg-card,.rp-card,.cr-card,.cp-row,.kpi-click,.sov-card[data-press],.ad-card[data-press],.bs-card[data-press],.al-history-item)
+  {transition:transform var(--t-fast) var(--ease-out),box-shadow var(--t-fast) var(--ease-out),background-color var(--t-fast) var(--ease-out)}
+:is(.card,.sg-card,.rp-card,.cr-card,.kpi-click,.sov-card[data-press],.ad-card[data-press],.bs-card[data-press]):hover
+  {transform:translateY(-2px);box-shadow:var(--shadow-card),0 0 0 1px var(--line)}
+:is(.card,.sg-card,.rp-card,.cr-card,.kpi-click,.sov-card,.ad-card,.bs-card)[data-press].is-pressed
+  {transform:translateY(-1px) scale(.988)}
+/* A thumbnail leans in with its card. */
+:is(.card-thumb,.rp-thumb) img{transition:transform var(--t-slow) var(--ease-out)}
+:is(.card,.rp-card):hover :is(.card-thumb,.rp-thumb) img{transform:scale(1.045)}
+
+/* One button language. Solid buttons lift with an Ocean shadow; outline
+   buttons tint; every button sinks a touch when pressed. */
+:is(.btn-primary,.modal-confirm,.view-btn.primary,.btn-outline.primary,.al-btn-send,.card-more-btn,.cr-more-btn,.bs-pdf-btn){
   transition:filter var(--t-fast) var(--ease-out),transform var(--t-fast) var(--ease-out),
-             box-shadow var(--t-fast) var(--ease-out)}
-.modal-confirm:hover,.card-more-btn:hover{
-  transform:translateY(-1px);box-shadow:0 8px 18px -8px rgba(15,110,140,.45)}
-.modal-confirm:active,.card-more-btn:active{transform:translateY(0);box-shadow:none}
+             box-shadow var(--t-fast) var(--ease-out),background-color var(--t-fast) var(--ease-out),color var(--t-fast) var(--ease-out)}
+:is(.btn-primary,.modal-confirm,.view-btn.primary,.btn-outline.primary,.al-btn-send):not(:disabled):hover{
+  transform:translateY(-1px);box-shadow:0 8px 18px -8px rgba(15,110,140,.5)}
+:is(.card-more-btn,.cr-more-btn,.bs-pdf-btn,.btn-outline,.view-btn,.modal-btn):not(:disabled):hover{
+  transform:translateY(-1px)}
+:is(.btn-primary,.modal-confirm,.view-btn,.btn-outline,.modal-btn,.al-btn-send,.card-more-btn,.cr-more-btn,.bs-pdf-btn,.load-retry,.cp-act,.sg-back,.sg-addnote,.sg-danger):not(:disabled):active{
+  transform:translateY(0) scale(.97);box-shadow:none;transition-duration:60ms}
 
-/* The tick that draws itself: in the toast and on a confirm button. */
+/* Success: the toast draws a tick; so does the button that caused it,
+   if it is still on screen. */
 .tick{width:15px;height:15px;margin-right:9px;vertical-align:-2.5px}
-.tick path{stroke-dasharray:20;stroke-dashoffset:20;
-  animation:tick-draw .38s var(--ease-move) .05s forwards}
+.tick path{stroke-dasharray:20;stroke-dashoffset:20;animation:tick-draw .38s var(--ease-move) .05s forwards}
 @keyframes tick-draw{to{stroke-dashoffset:0}}
-.modal-confirm .tick{margin:0;width:17px;height:17px;vertical-align:middle}
+.pl-done{position:relative;color:transparent!important}
+.pl-done>*{visibility:hidden}
+.pl-done::after{
+  content:"";position:absolute;left:50%;top:50%;width:18px;height:18px;margin:-9px 0 0 -9px;
+  background:var(--pl-tick,currentColor);
+  -webkit-mask:url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16' fill='none' stroke='%23000' stroke-width='2.2' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='M3 8.5l3.5 3.5L13 4.5'/%3E%3C/svg%3E") center/contain no-repeat;
+          mask:url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16' fill='none' stroke='%23000' stroke-width='2.2' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='M3 8.5l3.5 3.5L13 4.5'/%3E%3C/svg%3E") center/contain no-repeat;
+  animation:pl-tick-in .36s var(--ease-move) both;
+}
+@keyframes pl-tick-in{from{clip-path:inset(0 100% 0 0);transform:scale(.8)}to{clip-path:inset(0 0 0 0);transform:none}}
 
 @media (prefers-reduced-motion:reduce){
-  .card-in,#kpi-row .kpi,.mini-bar-fill{animation:none}
+  .pl-in,.pl-grow-x,.pl-grow-y{animation:none}
   .tick path{animation:none;stroke-dashoffset:0}
-  .card:hover{transform:none}
-  .card:hover .card-thumb img{transform:none}
+  .pl-done::after{animation:none}
+  :is(.card,.sg-card,.rp-card,.cr-card,.kpi-click,.sov-card,.ad-card,.bs-card):hover{transform:none}
+  :is(.card,.rp-card):hover :is(.card-thumb,.rp-thumb) img{transform:none}
+  :is(.btn-primary,.modal-confirm,.view-btn,.btn-outline,.modal-btn,.al-btn-send,.card-more-btn,.cr-more-btn,.bs-pdf-btn):hover{transform:none}
 }
