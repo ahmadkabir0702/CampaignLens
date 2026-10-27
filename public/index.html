@@ -193,6 +193,30 @@
 <!-- END PRE-TEST -->
 
   <!-- Add Creative Modal -->
+<!-- Add or fix a creative's links after it was added. -->
+<div id="linksModal" class="modal-overlay" onclick="if(event.target===this)closeLinksModal()">
+  <div class="modal-box" style="width:460px" role="dialog" aria-labelledby="lk-title">
+    <h3 class="modal-title" id="lk-title">Links</h3>
+    <p class="modal-desc" id="lk-desc">Add the post on each platform it went up on.</p>
+    <form id="linksForm" onsubmit="saveLinks(event)" novalidate>
+      <label class="field-label" for="lk-ig">Instagram</label>
+      <input type="text" id="lk-ig" class="modal-input plat-input" placeholder="Not posted on Instagram" oninput="lkClearErr('ig')">
+      <div class="plat-err" id="lk-ig-err"></div>
+      <label class="field-label" for="lk-tt">TikTok</label>
+      <input type="text" id="lk-tt" class="modal-input plat-input" placeholder="Not posted on TikTok" oninput="lkClearErr('tt')">
+      <div class="plat-err" id="lk-tt-err"></div>
+      <label class="field-label" for="lk-fb">Facebook</label>
+      <input type="text" id="lk-fb" class="modal-input plat-input" placeholder="Not posted on Facebook" oninput="lkClearErr('fb')">
+      <div class="plat-err" id="lk-fb-err"></div>
+      <p class="lk-note" id="lk-note">Copy each link from the browser's address bar. Facebook share and fb.watch links cannot be read.</p>
+      <div class="modal-actions">
+        <button type="button" class="modal-btn modal-cancel" onclick="closeLinksModal()">Cancel</button>
+        <button type="submit" class="modal-btn modal-confirm" id="lk-save">Save links</button>
+      </div>
+    </form>
+  </div>
+</div>
+
  <div id="addCreativeModal" class="modal-overlay">
     <div class="modal-box" style="width: 450px;">
        <h3 class="modal-title">Add New Creative</h3>

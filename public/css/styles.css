@@ -2067,3 +2067,8 @@ select:focus,.search-input:focus,.modal-input:focus{outline:none;border-color:va
   :is(.card,.rp-card):hover :is(.card-thumb,.rp-thumb) img{transform:none}
   :is(.btn-primary,.modal-confirm,.view-btn,.btn-outline,.modal-btn,.al-btn-send,.card-more-btn,.cr-more-btn,.bs-pdf-btn):hover{transform:none}
 }
+
+/* Links form (add or fix a creative's links later). */
+#linksForm .field-label{margin-top:12px}
+#linksForm .field-label:first-child{margin-top:0}
+.lk-note{margin-top:14px;font-size:12.5px;line-height:18px;color:var(--ink-500)}

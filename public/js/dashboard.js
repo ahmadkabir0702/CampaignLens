@@ -2707,6 +2707,13 @@ function renderDetail(d) {
   if (!links.length && d.originalUrl) {
     linkBtns += `<button class="view-btn primary" onclick="window.open(${jsq(safeUrl(d.originalUrl))},'_blank','noopener')">Open the original</button>`;
   }
+  // Links can be added after the creative was, for a platform it went up on
+  // later or one that was missed.
+  if (FEATURES.addCreative) {
+    const missing = PLATFORM_LINKS.filter(p => !d[p.key]).length;
+    linkBtns += `<button class="view-btn" data-press onclick="openLinksModal(${jsq(d.id)})">${
+      missing ? (missing === 3 ? 'Add links' : 'Add a link') : 'Edit links'}</button>`;
+  }
   linkBtns += '</div>';
 
   const previewLink = links.length ? links[0] : null;
@@ -2914,6 +2921,89 @@ async function confirmAction() {
     toast("Couldn't update it: " + err.message, 'error');
   } finally {
     btn.innerText = origText; btn.disabled = false;
+  }
+}
+
+// ---------------------------------------------------------------------
+//  Add or fix links after a creative was added
+// ---------------------------------------------------------------------
+let linksFor = null;
+const LK_KEYS = { ig: 'igLink', tt: 'ttLink', fb: 'fbLink' };
+
+function openLinksModal(creativeId) {
+  const d = findCreative(creativeId);
+  if (!d) return;
+  linksFor = creativeId;
+  for (const [f, key] of Object.entries(LK_KEYS)) {
+    const input = document.getElementById(`lk-${f}`);
+    input.value = d[key] || '';
+    lkClearErr(f);
+  }
+  document.getElementById('lk-title').textContent = `Links for ${d.short || d.id}`;
+  const missing = Object.values(LK_KEYS).filter(k => !d[k]).length;
+  document.getElementById('lk-desc').textContent = missing
+    ? 'Add the post on each platform it went up on. New links are read on the next sync.'
+    : 'Change a link only if it points at the wrong post. The old readings for it are cleared.';
+  document.getElementById('linksModal').style.display = 'flex';
+  const first = Object.keys(LK_KEYS).find(f => !d[LK_KEYS[f]]) || 'ig';
+  setTimeout(() => document.getElementById(`lk-${first}`).focus(), 60);
+}
+
+function closeLinksModal() {
+  document.getElementById('linksModal').style.display = 'none';
+  linksFor = null;
+}
+
+function lkSetErr(f, msg) {
+  const el = document.getElementById(`lk-${f}-err`);
+  const input = document.getElementById(`lk-${f}`);
+  if (el) { el.textContent = msg || ''; el.style.display = msg ? 'block' : 'none'; }
+  if (input) input.classList.toggle('plat-input-bad', !!msg);
+}
+function lkClearErr(f) { lkSetErr(f, ''); }
+
+async function saveLinks(e) {
+  e.preventDefault();
+  const d = findCreative(linksFor);
+  if (!d) return closeLinksModal();
+  const body = { creative_id: d.id };
+  let any = false;
+  for (const [f, key] of Object.entries(LK_KEYS)) {
+    const v = document.getElementById(`lk-${f}`).value.trim();
+    if (v !== (d[key] || '')) { body[f] = v; any = true; }
+    // Instant format check; duplicates and short links are the server's.
+    if (v && v !== (d[key] || '') && window.CLLinks) {
+      const r = window.CLLinks.validate(f, v, { source: d.source || undefined });
+      if (!r.ok && !r.needsResolve) { lkSetErr(f, r.error); return; }
+    }
+  }
+  if (!any) return closeLinksModal();
+
+  const btn = document.getElementById('lk-save');
+  const label = btn.textContent;
+  btn.disabled = true; btn.textContent = 'Checking…';
+  try {
+    const res = await fetch('/api/creative-links', {
+      method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body),
+    });
+    const out = await res.json().catch(() => ({}));
+    if (!res.ok) {
+      if (out.fieldErrors) Object.entries(out.fieldErrors).forEach(([f, m]) => lkSetErr(f, m));
+      else toast(out.error || 'Could not save the links.', 'error');
+      return;
+    }
+    for (const [f, url] of Object.entries(out.links || {})) d[LK_KEYS[f]] = url;
+    HUB_CACHE.clear();
+    closeLinksModal();
+    renderDetail(d);
+    const names = (out.changed || []).map(f => ({ ig: 'Instagram', tt: 'TikTok', fb: 'Facebook' })[f]);
+    toast(names.length
+      ? `${names.join(' and ')} link saved. Numbers come in on the next sync.`
+      : 'Nothing changed.');
+  } catch (err) {
+    toast("Couldn't save the links: " + err.message, 'error');
+  } finally {
+    btn.disabled = false; btn.textContent = label;
   }
 }
 

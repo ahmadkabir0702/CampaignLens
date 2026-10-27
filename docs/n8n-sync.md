@@ -31,6 +31,23 @@ boost is kept.
 A post with spend on a platform before its first reading there gets no
 organic numbers on that platform, because any reading would include paid.
 
+## Adding a link later
+
+A link missed when the creative was added, or a platform the post went up on
+later, is added from the creative panel (Add a link / Edit links, which calls
+`POST /api/creative-links`). The same checks as adding a creative apply. The
+new link is picked up on the next sync and then follows the normal windows:
+
+- Brand Say: read every sync until 30 days after the post date. A link added
+  after that still gets one first reading if the creative itself was added in
+  the last 30 days.
+- Others Say: one first reading whatever its age, then refreshed for 48 hours
+  from the post time (Instagram collab: 7 days).
+
+Changing a link that was already set (Unilever, Mindshare and admin only)
+clears that platform's readings and read markers, so the new post is read from
+scratch.
+
 ## What is logged
 
 `sync_errors` holds what is broken right now. A clean read closes it.

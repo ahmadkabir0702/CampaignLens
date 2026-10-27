@@ -901,6 +901,123 @@ app.get('/api/brands', async (req, res) => {
     }
   });
 
+  // ---------------------------------------------------------------------
+  //  Add or fix a creative's links after it was added
+  //
+  //  A post often goes up on Instagram first and TikTok or Facebook a day
+  //  or two later, or a link was simply missed. Until now the only fix was
+  //  the database. The same checks as adding a creative apply: the link
+  //  must be one the sync can read, and the post cannot already belong to
+  //  another creative.
+  //
+  //  Anyone who can add creatives can fill a missing link. Changing a link
+  //  that is already set is Unilever, Mindshare and admin only, since the
+  //  readings on file came from the old post: they are cleared so the new
+  //  post is read from scratch, not mixed with the old one.
+  // ---------------------------------------------------------------------
+  let creativeCols = null;
+  async function creativeColumns() {
+    if (creativeCols) return creativeCols;
+    const { rows } = await query(
+      `select column_name, is_generated from information_schema.columns
+        where table_schema = 'public' and table_name = 'creatives'`);
+    creativeCols = new Map(rows.map(r => [r.column_name, r.is_generated]));
+    return creativeCols;
+  }
+
+  app.post('/api/creative-links', async (req, res) => {
+    let brand;
+    try { brand = resolveBrand(req); }
+    catch (err) { return res.status(403).json({ error: err.message }); }
+
+    const id = String(req.body.creative_id || '');
+    if (!/^[A-Za-z0-9_.-]{1,80}$/.test(id)) return res.status(400).json({ error: 'creative_id is not valid.' });
+
+    const { rows } = await query(
+      `select creative_id, type, source, content_type, ig_link, fb_link, tt_link
+         from creatives where creative_id = $1 and brand_id = $2`, [id, brand]);
+    if (!rows.length) return res.status(404).json({ error: 'Creative not found for this brand.' });
+    const c = rows[0];
+
+    const FIELD_COL = { ig: 'ig_link', fb: 'fb_link', tt: 'tt_link' };
+    const wanted = {};
+    for (const f of Object.keys(FIELD_COL)) {
+      if (!(f in req.body)) continue;
+      const v = String(req.body[f] || '').trim();
+      const cur = c[FIELD_COL[f]] || '';
+      if (v === cur) continue;
+      if (!v) {
+        if (!cur) continue;
+        return res.status(400).json({ error: 'Fix the highlighted links.',
+          fieldErrors: { [f]: 'A link cannot be removed here. Ask a Campaign Lens admin if the post was taken down.' } });
+      }
+      wanted[f] = v;
+    }
+    if (!Object.keys(wanted).length) return res.json({ success: true, changed: [] });
+
+    const fieldErrors = {};
+    for (const f of Object.keys(wanted)) {
+      if (c[FIELD_COL[f]] && !canManage(req)) {
+        fieldErrors[f] = 'Only Unilever, Mindshare or an admin can change a link that is already set.';
+      }
+    }
+    if (Object.keys(fieldErrors).length) return res.status(400).json({ error: 'Fix the highlighted links.', fieldErrors });
+
+    const format = { Video: 'video', Photo: 'photo', Carousel: 'carousel' }[c.content_type] || null;
+    let lc;
+    try {
+      lc = await checkLinks(app, query, wanted, { excludeId: id, source: c.source || undefined, format });
+    } catch (err) {
+      console.error('[creative-links] link check failed:', err.message);
+      return res.status(500).json({ error: 'Could not verify the links. Try again.' });
+    }
+    if (!lc.ok) {
+      for (const [k, v] of Object.entries(lc.fields)) if (!v.ok) fieldErrors[k] = v.error;
+      return res.status(400).json({ error: 'Fix the highlighted links.', fieldErrors });
+    }
+
+    const cols = await creativeColumns();
+    const has = (col) => cols.has(col);
+    const settable = (col) => cols.has(col) && cols.get(col) !== 'ALWAYS';
+    const sets = [], args = [id, brand];
+    const add = (sql, val) => { args.push(val); sets.push(sql.replace('?', '$' + args.length)); };
+    const changed = [];
+
+    for (const f of Object.keys(lc.links)) {
+      const replacing = !!c[FIELD_COL[f]];
+      add(`${FIELD_COL[f]} = ?`, lc.links[f]);
+      changed.push(f);
+      // Whatever was read from, or worked out about, the old link no longer
+      // applies. A missing link had nothing to clear, but resetting is harmless.
+      if (f === 'ig') {
+        if (settable('ig_shortcode')) sets.push('ig_shortcode = null');
+        if (has('ig_last_scraped_at')) sets.push('ig_last_scraped_at = null');
+        if (has('tracking_mode') && c.type === 'Others Say') sets.push('tracking_mode = null');
+        if (has('collab_probe_attempts')) sets.push('collab_probe_attempts = 0');
+        if (has('collab_last_read_at')) sets.push('collab_last_read_at = null');
+      } else if (f === 'tt') {
+        if (settable('tiktok_item_id')) sets.push('tiktok_item_id = null');
+        if (has('tt_last_scraped_at')) sets.push('tt_last_scraped_at = null');
+      } else if (f === 'fb') {
+        if (has('fb_last_scraped_at')) sets.push('fb_last_scraped_at = null');
+      }
+      if (replacing) changed[changed.length - 1] = f + ':replaced';
+    }
+
+    try {
+      await query(`update creatives set ${sets.join(', ')} where creative_id = $1 and brand_id = $2`, args);
+      // A replaced link's readings belong to the old post.
+      const replaced = changed.filter(x => x.endsWith(':replaced')).map(x => x.split(':')[0]);
+      if (replaced.length) {
+        await query(`delete from organic_perf where creative_id = $1 and platform = any($2::text[])`, [id, replaced]);
+      }
+      console.log(`[creative-links] ${req.session && req.session.user} set ${changed.join(', ')} on ${id}`);
+      return res.json({ success: true, changed: changed.map(x => x.split(':')[0]), links: lc.links });
+    } catch (err) {
+      return sendError(res, 'creative-links', err);
+    }
+  });
+
   app.post('/api/regenerate-description', async (req, res) => {
     let brand;
     try { brand = resolveBrand(req); }
