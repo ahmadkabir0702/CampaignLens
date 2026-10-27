@@ -12,328 +12,223 @@
 :root{
   --navy:#0F6E8C;
   --ink-900:#111318;
-  --ink-700:#2E323A;
   --ink-600:#4B505B;
   --ink-400:#8A909B;
   --line:#E4E6EA;
   --white:#FFFFFF;
-  --canvas:#F3F4F6;
-  --pos:#1F8A5B;
   --neg:#C2414B;
   --neg-bg:#FBECEE;
-  --r:8px;
+  --r:9px;
   --font:'Onest',-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;
   --ease-out:cubic-bezier(.2,0,0,1);
   --ease-move:cubic-bezier(.32,.72,0,1);
 }
 *{box-sizing:border-box;margin:0;padding:0}
 html,body{height:100%}
-body{font:400 15px/22px var(--font);color:var(--ink-900);background:var(--white);-webkit-font-smoothing:antialiased}
-
-/* Full height, no page scroll — the form column scrolls on its own if needed. */
-.auth{display:grid;grid-template-columns:58fr 42fr;height:100vh;overflow:hidden}
-
-/* ------------------------------------------------------------------ */
-/*  Left: the scene. A quiet abstract of the tool itself — cards,      */
-/*  bars, a line finding its way up, two ratings — on the same canvas  */
-/*  grey the app uses. Everything animates once on load, then keeps    */
-/*  only a slow idle motion.                                           */
-/* ------------------------------------------------------------------ */
-.art{position:relative;background:var(--canvas);overflow:hidden}
-.art svg{position:absolute;inset:0;width:100%;height:100%;display:block}
-
-.card-g{opacity:0;animation:cardIn .8s var(--ease-out) both}
-.g-spark{animation-delay:.1s}
-.g-line{animation-delay:.24s}
-.g-bars{animation-delay:.38s}
-@keyframes cardIn{
-  from{opacity:0;transform:translateY(16px)}
-  to{opacity:1;transform:translateY(0)}
+body{
+  font:400 15px/22px var(--font);color:var(--ink-900);
+  background:#F6F8F9;-webkit-font-smoothing:antialiased;overflow:hidden;
 }
 
-/* The big lens behind the cards: the mark's arc draws itself in,
-   the rings fade up, and the satellite dot orbits the arc forever,
-   exactly like the dot in the logo. */
-.lens-arc{stroke-dasharray:920;stroke-dashoffset:920;animation:lensDraw 1.6s var(--ease-move) .15s both}
-@keyframes lensDraw{to{stroke-dashoffset:0}}
-.lens-soft{opacity:0;animation:fadeIn 1s var(--ease-out) .9s both}
-.lens-orbit{transform-box:view-box;transform-origin:660px 700px;animation:lensOrbit 26s linear infinite}
-@keyframes lensOrbit{to{transform:rotate(360deg)}}
-.lens-sat{opacity:0;animation:fadeIn .6s var(--ease-out) 1.5s both}
-
-/* Bars rise from the baseline, then breathe very slightly. */
-.bar{
-  transform-box:fill-box;transform-origin:50% 100%;
-  animation:barRise .8s var(--ease-move) both, barIdle 5.6s ease-in-out 1.6s infinite alternate;
-}
-.bar:nth-child(1){animation-delay:.55s,1.6s}
-.bar:nth-child(2){animation-delay:.62s,2.1s;animation-duration:.8s,6.4s}
-.bar:nth-child(3){animation-delay:.69s,1.8s;animation-duration:.8s,5.2s}
-.bar:nth-child(4){animation-delay:.76s,2.4s}
-.bar:nth-child(5){animation-delay:.83s,1.9s;animation-duration:.8s,6.1s}
-.bar:nth-child(6){animation-delay:.90s,2.2s;animation-duration:.8s,4.9s}
-.bar:nth-child(7){animation-delay:.97s,1.7s;animation-duration:.8s,5.8s}
-@keyframes barRise{from{transform:scaleY(0)}to{transform:scaleY(1)}}
-@keyframes barIdle{from{transform:scaleY(1)}to{transform:scaleY(.955)}}
-
-/* The line draws itself, its area fades in after it. */
-.trace{stroke-dasharray:520;stroke-dashoffset:520;animation:trace 1.5s var(--ease-move) .75s both}
-@keyframes trace{to{stroke-dashoffset:0}}
-.trace-fill{opacity:0;animation:fadeIn .9s var(--ease-out) 1.7s both}
-@keyframes fadeIn{to{opacity:1}}
-
-/* The live dot at the end of the line. */
-.dot-live{opacity:0;animation:fadeIn .4s var(--ease-out) 2s both}
-.ring{transform-box:fill-box;transform-origin:center;opacity:0;animation:ping 3s var(--ease-out) 2.2s infinite}
-.ring.r2{animation-delay:3.7s}
-@keyframes ping{
-  0%{opacity:.45;transform:scale(.3)}
-  70%{opacity:0;transform:scale(1)}
-  100%{opacity:0;transform:scale(1)}
-}
-
-/* Rating chips float in late, then bob. */
-.chip{opacity:0;animation:chipIn .7s var(--ease-out) both, chipBob 5s ease-in-out 2.6s infinite alternate}
-.chip.c1{animation-delay:1.9s,2.6s}
-.chip.c2{animation-delay:2.2s,3.4s;animation-duration:.7s,6s}
-@keyframes chipIn{from{opacity:0;transform:translateY(10px)}to{opacity:1;transform:translateY(0)}}
-@keyframes chipBob{from{transform:translateY(0)}to{transform:translateY(-6px)}}
+/* ------------------------------------------------------------------ */
+/*  Watercolour of the brand blues, always slowly moving.              */
+/* ------------------------------------------------------------------ */
+.wash{position:fixed;inset:0;overflow:hidden;pointer-events:none}
+.blob{position:absolute;border-radius:50%;filter:blur(90px);opacity:0;animation:blobIn 1.6s var(--ease-out) both, roam 36s ease-in-out infinite alternate}
+.blob.w1{width:720px;height:720px;left:-14%;top:-28%;background:#BFDDE8;animation-delay:.1s,0s}
+.blob.w2{width:640px;height:640px;right:-16%;top:4%;background:#D4E8EF;animation-delay:.25s,6s;animation-duration:1.6s,44s}
+.blob.w3{width:760px;height:760px;left:4%;bottom:-36%;background:#CCE2EB;animation-delay:.4s,12s;animation-duration:1.6s,52s}
+.blob.w4{width:420px;height:420px;right:6%;bottom:-14%;background:#A9D2E2;animation-delay:.55s,3s;animation-duration:1.6s,40s}
+@keyframes blobIn{to{opacity:.85}}
+@keyframes roam{from{transform:translate(0,0) scale(1)}to{transform:translate(70px,-50px) scale(1.12)}}
 
 /* ------------------------------------------------------------------ */
-/*  Right: the form, unchanged in structure, arriving line by line.    */
+/*  The aperture: the lens mark at room scale, centred on the card.    */
+/*  Fine rings, one drawn arc, and the satellite dot that never stops. */
 /* ------------------------------------------------------------------ */
-.side{display:flex;justify-content:center;overflow-y:auto;background:var(--white);padding:28px 40px}
-.col{width:100%;max-width:352px;text-align:center;margin:auto 0}
+.aperture{position:fixed;inset:0;display:grid;place-items:center;pointer-events:none}
+.aperture svg{width:min(130vmin,1240px);height:min(130vmin,1240px);overflow:visible}
 
-.col > *{animation:riseIn .55s var(--ease-out) both}
-.col > :nth-child(1){animation-delay:.05s}
-.col > :nth-child(2){animation-delay:.11s}
-.col > :nth-child(3){animation-delay:.17s}
-.col > :nth-child(4){animation-delay:.23s}
-.col > :nth-child(5){animation-delay:.29s}
-.col > :nth-child(6){animation-delay:.35s}
-.col > :nth-child(7){animation-delay:.41s}
-@keyframes riseIn{
-  from{opacity:0;transform:translateY(10px)}
-  to{opacity:1;transform:translateY(0)}
-}
+.ap-breathe{transform-origin:600px 600px;animation:breathe 14s ease-in-out infinite alternate}
+@keyframes breathe{from{transform:scale(1)}to{transform:scale(1.035)}}
 
-.logo{margin-bottom:34px;display:flex;justify-content:center;align-items:center;gap:13px}
-.logo .cl-mark{width:46px;height:46px;flex:none}
-.logo .cl-word{color:#0F6E8C}
-.logo > span{font:600 24px/52px var(--font);letter-spacing:-.02em;color:var(--ink-900)}
-/* The mark's satellite dot orbits, here and in the scene. */
-.cl-mark .sat{transform-origin:16px 16px;animation:orbit 16s linear infinite}
+.ap-ring{opacity:0;animation:apFade 1.4s var(--ease-out) both}
+.ap-ring.k1{animation-delay:.15s}
+.ap-ring.k2{animation-delay:.3s}
+.ap-ring.k3{animation-delay:.45s}
+@keyframes apFade{to{opacity:1}}
+
+.ap-arc{stroke-dasharray:2160;stroke-dashoffset:2160;animation:apDraw 2.2s var(--ease-move) .35s both}
+@keyframes apDraw{to{stroke-dashoffset:0}}
+
+.ap-orbit{transform-origin:600px 600px;animation:orbit 44s linear infinite}
 @keyframes orbit{to{transform:rotate(360deg)}}
+.ap-sat{opacity:0;animation:apFade .8s var(--ease-out) 2.3s both}
 
-h1{font:600 26px/32px var(--font);letter-spacing:-.025em;color:var(--ink-900);margin-bottom:6px}
-.sub{font-size:15px;line-height:22px;color:var(--ink-600);margin-bottom:24px}
+/* ------------------------------------------------------------------ */
+/*  Centre: brand, then the glass card.                                */
+/* ------------------------------------------------------------------ */
+.stage{position:relative;height:100vh;display:flex;flex-direction:column;align-items:center;justify-content:center;padding:28px;overflow-y:auto}
+
+.brand{display:flex;align-items:center;gap:13px;margin-bottom:11px;
+  opacity:0;animation:riseIn .7s var(--ease-out) .2s both}
+.brand .cl-mark{width:46px;height:46px;flex:none}
+.brand span{font:600 27px/1 var(--font);letter-spacing:-.02em;color:var(--ink-900)}
+.brand .cl-word{color:var(--navy)}
+.cl-mark .sat{transform-origin:16px 16px;animation:orbit 18s linear infinite}
+
+.tagline{font-size:15px;line-height:22px;color:var(--ink-600);margin-bottom:30px;
+  opacity:0;animation:riseIn .7s var(--ease-out) .32s both}
+@keyframes riseIn{from{opacity:0;transform:translateY(12px)}to{opacity:1;transform:translateY(0)}}
+
+.card{
+  width:100%;max-width:392px;border-radius:18px;padding:34px 34px 28px;text-align:left;
+  background:rgba(255,255,255,.72);
+  border:1px solid rgba(255,255,255,.9);
+  backdrop-filter:blur(26px) saturate(1.4);-webkit-backdrop-filter:blur(26px) saturate(1.4);
+  box-shadow:0 1px 0 rgba(255,255,255,.9) inset, 0 30px 80px -26px rgba(17,32,41,.28), 0 4px 14px -6px rgba(17,32,41,.08);
+  opacity:0;animation:cardIn .85s var(--ease-move) .45s both;
+}
+@keyframes cardIn{from{opacity:0;transform:translateY(22px) scale(.97)}to{opacity:1;transform:translateY(0) scale(1)}}
+
+h1{font:600 21px/28px var(--font);letter-spacing:-.015em;margin-bottom:2px}
+.sub{font-size:14px;line-height:20px;color:var(--ink-600);margin-bottom:22px}
 
 .err{
   display:block;background:var(--neg-bg);color:var(--neg);border-radius:var(--r);
-  padding:10px 14px;font-size:14px;line-height:20px;margin-bottom:18px;text-align:left;
+  padding:10px 14px;font-size:14px;line-height:20px;margin-bottom:16px;
 }
 
-.field{text-align:left;margin-bottom:14px}
-label{display:block;font-size:14px;line-height:20px;color:var(--ink-600);margin-bottom:6px}
+.field{margin-bottom:14px}
+label{display:block;font-size:13.5px;line-height:20px;color:var(--ink-600);margin-bottom:6px}
 input{
-  width:100%;height:46px;padding:0 14px;
-  background:var(--white);border:1px solid var(--line);border-radius:var(--r);
+  width:100%;height:46px;padding:0 14px;border-radius:var(--r);
+  background:rgba(255,255,255,.85);border:1px solid #DCE1E6;
   font:400 15px/46px var(--font);color:var(--ink-900);
-  transition:border-color .15s var(--ease-out),box-shadow .15s var(--ease-out);
+  transition:border-color .15s var(--ease-out),box-shadow .15s var(--ease-out),background .15s var(--ease-out);
 }
 input::placeholder{color:#B4B9C2}
-input:hover{border-color:#C2C2D2}
-input:focus{outline:none;border-color:var(--navy);box-shadow:0 0 0 3px rgba(15,110,140,.10)}
+input:hover{border-color:#C2C9D1}
+input:focus{outline:none;background:#fff;border-color:var(--navy);box-shadow:0 0 0 3px rgba(15,110,140,.12)}
 
 .btn{
-  width:100%;height:50px;margin-top:10px;
+  width:100%;height:48px;margin-top:8px;border:0;border-radius:var(--r);cursor:pointer;
   display:inline-flex;align-items:center;justify-content:center;gap:10px;
-  background:var(--navy);border:1px solid var(--navy);border-radius:var(--r);
-  font:500 15px/1 var(--font);color:#fff;cursor:pointer;
-  transition:filter .12s var(--ease-out),transform .12s var(--ease-out),box-shadow .12s var(--ease-out);
+  background:linear-gradient(180deg,#147FA0,#0E6683);
+  font:500 15px/1 var(--font);color:#fff;
+  box-shadow:0 1px 0 rgba(255,255,255,.25) inset, 0 10px 22px -10px rgba(10,70,92,.55);
+  transition:transform .13s var(--ease-out),filter .13s var(--ease-out),box-shadow .13s var(--ease-out);
 }
-.btn:hover{filter:brightness(1.08);transform:translateY(-1px);box-shadow:0 6px 16px -8px rgba(15,110,140,.5)}
-.btn:active{transform:translateY(0) scale(.99);box-shadow:none}
-.btn:focus-visible{outline:none;box-shadow:0 0 0 3px rgba(15,110,140,.2)}
-.btn svg{width:17px;height:17px;flex:none}
+.btn:hover{filter:brightness(1.07);transform:translateY(-1px);box-shadow:0 1px 0 rgba(255,255,255,.25) inset, 0 14px 26px -10px rgba(10,70,92,.6)}
+.btn:active{transform:translateY(0) scale(.99)}
+.btn:focus-visible{outline:none;box-shadow:0 0 0 3px rgba(15,110,140,.25)}
+.btn svg{width:16px;height:16px;flex:none}
 
-.legal{margin-top:18px;font-size:13px;line-height:19px;color:var(--ink-600)}
-.legal strong{font-weight:500;color:var(--ink-900)}
+.legal{margin-top:16px;font-size:12.5px;line-height:18px;color:var(--ink-400)}
+.legal strong{font-weight:500;color:var(--ink-600)}
 
 .access{
-  margin-top:28px;padding-top:20px;border-top:1px solid #EDEDF2;
-  font-size:13px;line-height:20px;color:var(--ink-600);
+  margin-top:26px;max-width:430px;text-align:center;
+  font-size:13px;line-height:20px;color:#6E747F;
+  opacity:0;animation:riseIn .7s var(--ease-out) .85s both;
 }
-.access a{color:var(--ink-900);text-decoration:none;border-bottom:1px solid var(--line)}
-.access a:hover{border-bottom-color:var(--ink-400)}
 
-/* Short viewports (laptops, 125–150% Windows scaling) */
 @media (max-height:760px){
-  .logo{margin-bottom:22px}
-  .logo > span{font-size:20px;line-height:42px}
-  .logo .cl-mark{width:38px;height:38px}
-  h1{font-size:23px;line-height:30px}
-  .sub{margin-bottom:18px}
-  .field{margin-bottom:11px}
+  .brand{margin-bottom:7px}
+  .tagline{margin-bottom:20px}
+  .card{padding:26px 28px 22px}
   input,.btn{height:42px}
   input{line-height:42px}
-  .legal{margin-top:14px;font-size:12px;line-height:18px}
-  .access{margin-top:20px;padding-top:16px;font-size:12px;line-height:18px}
-  .side{padding:20px 40px}
+  .access{margin-top:18px}
 }
-
-@media (max-width:900px){
-  .auth{grid-template-columns:1fr;height:auto;min-height:100vh;overflow:visible}
-  .art{height:240px}
-  .side{padding:36px 24px 48px;overflow:visible}
-  .col{margin:0 auto}
+@media (max-width:480px){
+  .card{padding:28px 24px 24px;border-radius:16px}
+  .brand span{font-size:23px}
+  .brand .cl-mark{width:40px;height:40px}
 }
-
 @media (prefers-reduced-motion:reduce){
   *{animation:none!important;transition:none!important}
-  .card-g,.trace-fill,.dot-live,.chip{opacity:1}
-  .trace{stroke-dashoffset:0}
-  .lens-arc{stroke-dashoffset:0}
-  .lens-soft,.lens-sat{opacity:1}
-  .ring{opacity:0}
+  .blob{opacity:.85}
+  .brand,.tagline,.card,.access,.ap-ring,.ap-sat{opacity:1}
+  .ap-arc{stroke-dashoffset:0}
 }
 </style>
 </head>
 <body>
 
-<div class="auth">
+<div class="wash" aria-hidden="true">
+  <div class="blob w1"></div>
+  <div class="blob w2"></div>
+  <div class="blob w3"></div>
+  <div class="blob w4"></div>
+</div>
 
-  <div class="art" aria-hidden="true">
-    <svg viewBox="0 -35 900 1000" preserveAspectRatio="xMidYMid slice" role="presentation" focusable="false">
-      <defs>
-        <pattern id="dots" width="28" height="28" patternUnits="userSpaceOnUse">
-          <circle cx="2" cy="2" r="1.1" fill="#E1E4E8"/>
-        </pattern>
-        <linearGradient id="areaFill" x1="0" y1="0" x2="0" y2="1">
-          <stop offset="0" stop-color="#0F6E8C" stop-opacity=".16"/>
-          <stop offset="1" stop-color="#0F6E8C" stop-opacity="0"/>
-        </linearGradient>
-        <linearGradient id="sparkFill" x1="0" y1="0" x2="0" y2="1">
-          <stop offset="0" stop-color="#3B8BA5" stop-opacity=".18"/>
-          <stop offset="1" stop-color="#3B8BA5" stop-opacity="0"/>
-        </linearGradient>
-        <filter id="cardShadow" x="-20%" y="-20%" width="140%" height="140%">
-          <feDropShadow dx="0" dy="6" stdDeviation="9" flood-color="#111318" flood-opacity=".08"/>
-        </filter>
-        <filter id="chipShadow" x="-40%" y="-40%" width="180%" height="180%">
-          <feDropShadow dx="0" dy="4" stdDeviation="6" flood-color="#111318" flood-opacity=".10"/>
-        </filter>
-      </defs>
-
-      <rect x="0" y="-40" width="900" height="1040" fill="url(#dots)"/>
-
-      <!-- The Campaign Lens mark, writ large behind the cards -->
-      <g>
-        <path class="lens-arc" d="M794.3,565.7 A190,190 0 1 0 794.3,834.3" fill="none" stroke="#0F6E8C" stroke-opacity=".18" stroke-width="11" stroke-linecap="round"/>
-        <circle class="lens-soft" cx="660" cy="700" r="88" fill="none" stroke="#0F6E8C" stroke-opacity=".16" stroke-width="8"/>
-        <circle class="lens-soft" cx="660" cy="700" r="22" fill="#0F6E8C" fill-opacity=".14"/>
-        <g class="lens-orbit">
-          <circle class="lens-sat" cx="850" cy="700" r="9" fill="#0F6E8C" fill-opacity=".6"/>
-        </g>
+<div class="aperture" aria-hidden="true">
+  <svg viewBox="0 0 1200 1200">
+    <defs>
+      <linearGradient id="arcGlow" x1="0" y1="0" x2="1" y2="1">
+        <stop offset="0" stop-color="#3B8BA5"/>
+        <stop offset="1" stop-color="#0F6E8C"/>
+      </linearGradient>
+      <radialGradient id="halo" cx=".5" cy=".5" r=".5">
+        <stop offset=".55" stop-color="#0F6E8C" stop-opacity="0"/>
+        <stop offset=".78" stop-color="#0F6E8C" stop-opacity=".06"/>
+        <stop offset=".86" stop-color="#0F6E8C" stop-opacity="0"/>
+      </radialGradient>
+    </defs>
+    <g class="ap-breathe">
+      <circle cx="600" cy="600" r="560" fill="url(#halo)"/>
+      <circle class="ap-ring k1" cx="600" cy="600" r="560" fill="none" stroke="#0F6E8C" stroke-opacity=".09" stroke-width="1.5"/>
+      <circle class="ap-ring k2" cx="600" cy="600" r="458" fill="none" stroke="#0F6E8C" stroke-opacity=".13" stroke-width="1.5"/>
+      <circle class="ap-ring k3" cx="600" cy="600" r="306" fill="none" stroke="#0F6E8C" stroke-opacity=".17" stroke-width="2"/>
+      <path class="ap-arc" d="M996,204 A560,560 0 1 0 996,996" fill="none" stroke="url(#arcGlow)" stroke-opacity=".5" stroke-width="3.5" stroke-linecap="round"/>
+      <g class="ap-orbit">
+        <circle class="ap-sat" cx="1160" cy="600" r="7" fill="#0F6E8C"/>
+        <circle class="ap-sat" cx="1160" cy="600" r="16" fill="#0F6E8C" opacity=".14"/>
       </g>
+    </g>
+  </svg>
+</div>
 
-      <!-- Sparkline card -->
-      <g class="card-g g-spark">
-        <rect x="150" y="150" width="210" height="122" rx="14" fill="#FFFFFF" stroke="#E4E6EA" filter="url(#cardShadow)"/>
-        <rect x="172" y="172" width="78" height="10" rx="5" fill="#EEF0F2"/>
-        <rect x="172" y="190" width="46" height="7" rx="3.5" fill="#F3F4F6"/>
-        <path class="trace-fill" d="M172,246 L198,236 L224,241 L250,224 L276,230 L302,212 L338,220 L338,254 L172,254 Z" fill="url(#sparkFill)"/>
-        <path d="M172,246 L198,236 L224,241 L250,224 L276,230 L302,212 L338,220" fill="none" stroke="#3B8BA5" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"/>
-      </g>
+<div class="stage">
 
-      <!-- Line chart card -->
-      <g class="card-g g-line">
-        <rect x="420" y="210" width="320" height="244" rx="14" fill="#FFFFFF" stroke="#E4E6EA" filter="url(#cardShadow)"/>
-        <rect x="444" y="234" width="96" height="10" rx="5" fill="#EEF0F2"/>
-        <rect x="444" y="252" width="58" height="7" rx="3.5" fill="#F3F4F6"/>
-        <line x1="444" y1="296" x2="716" y2="296" stroke="#EEF0F2"/>
-        <line x1="444" y1="348" x2="716" y2="348" stroke="#EEF0F2"/>
-        <line x1="444" y1="400" x2="716" y2="400" stroke="#EEF0F2"/>
-        <path class="trace-fill" d="M446,404 L492,366 L538,380 L584,318 L630,334 L676,296 L714,284 L714,424 L446,424 Z" fill="url(#areaFill)"/>
-        <path class="trace" d="M446,404 L492,366 L538,380 L584,318 L630,334 L676,296 L714,284" fill="none" stroke="#0F6E8C" stroke-width="2.6" stroke-linecap="round" stroke-linejoin="round"/>
-        <g class="dot-live">
-          <circle class="ring" cx="714" cy="284" r="22" fill="#0F6E8C"/>
-          <circle class="ring r2" cx="714" cy="284" r="22" fill="#0F6E8C"/>
-          <circle cx="714" cy="284" r="5.5" fill="#0F6E8C" stroke="#FFFFFF" stroke-width="2"/>
-        </g>
-      </g>
-
-      <!-- Bar chart card -->
-      <g class="card-g g-bars">
-        <rect x="170" y="430" width="400" height="336" rx="14" fill="#FFFFFF" stroke="#E4E6EA" filter="url(#cardShadow)"/>
-        <rect x="194" y="456" width="96" height="11" rx="5.5" fill="#EEF0F2"/>
-        <rect x="194" y="476" width="58" height="8" rx="4" fill="#F3F4F6"/>
-        <g>
-          <rect class="bar" x="204" y="606" width="34" height="120" rx="5" fill="#CFE3EA"/>
-          <rect class="bar" x="252" y="556" width="34" height="170" rx="5" fill="#CFE3EA"/>
-          <rect class="bar" x="300" y="631" width="34" height="95"  rx="5" fill="#CFE3EA"/>
-          <rect class="bar" x="348" y="521" width="34" height="205" rx="5" fill="#3B8BA5"/>
-          <rect class="bar" x="396" y="586" width="34" height="140" rx="5" fill="#CFE3EA"/>
-          <rect class="bar" x="444" y="491" width="34" height="235" rx="5" fill="#0F6E8C"/>
-          <rect class="bar" x="492" y="551" width="34" height="175" rx="5" fill="#CFE3EA"/>
-        </g>
-        <line x1="194" y1="727" x2="546" y2="727" stroke="#E4E6EA"/>
-      </g>
-
-      <!-- Rating chips -->
-      <g class="chip c1">
-        <rect x="664" y="190" width="96" height="36" rx="18" fill="#FFFFFF" stroke="#E4E6EA" filter="url(#chipShadow)"/>
-        <circle cx="684" cy="208" r="4.5" fill="#1F8A5B"/>
-        <text x="697" y="213" font-family="Onest,-apple-system,sans-serif" font-size="14" font-weight="500" fill="#2E323A">Good</text>
-      </g>
-      <g class="chip c2">
-        <rect x="524" y="748" width="128" height="36" rx="18" fill="#FFFFFF" stroke="#E4E6EA" filter="url(#chipShadow)"/>
-        <circle cx="544" cy="766" r="4.5" fill="#C2414B"/>
-        <text x="557" y="771" font-family="Onest,-apple-system,sans-serif" font-size="14" font-weight="500" fill="#2E323A">Fatiguing</text>
-      </g>
-    </svg>
+  <div class="brand">
+    <svg class="cl-mark" viewBox="0 0 32 32" aria-hidden="true" focusable="false"><defs><linearGradient id="cllgr" x1="0" y1="0" x2="1" y2="1"><stop offset="0" stop-color="#3B8BA5"/><stop offset="1" stop-color="#0A4F66"/></linearGradient><radialGradient id="cllgg" cx=".34" cy=".3" r=".85"><stop offset="0" stop-color="#FFFFFF"/><stop offset="1" stop-color="#D9EAF0"/></radialGradient></defs><circle cx="16" cy="16" r="13" fill="url(#cllgg)"/><path d="M25.2 6.8A13 13 0 1 0 25.2 25.2" fill="none" stroke="url(#cllgr)" stroke-width="2.6" stroke-linecap="round"/><circle cx="16" cy="16" r="6.2" fill="none" stroke="#0F6E8C" stroke-width="2"/><circle cx="16" cy="16" r="2.2" fill="#0F6E8C"/><circle class="sat" cx="27.4" cy="16" r="1.7" fill="#0F6E8C"/></svg>
+    <span>Campaign <span class="cl-word">Lens</span></span>
   </div>
+  <p class="tagline">Creative intelligence for Unilever Sri Lanka</p>
 
-  <div class="side">
-    <div class="col">
+  <div class="card">
+    <h1>Sign in</h1>
+    <p class="sub">Use the account for your category.</p>
 
-      <div class="logo">
-        <svg class="cl-mark" viewBox="0 0 32 32" aria-hidden="true" focusable="false"><defs><linearGradient id="cllgr" x1="0" y1="0" x2="1" y2="1"><stop offset="0" stop-color="#3B8BA5"/><stop offset="1" stop-color="#0A4F66"/></linearGradient><radialGradient id="cllgg" cx=".34" cy=".3" r=".85"><stop offset="0" stop-color="#FFFFFF"/><stop offset="1" stop-color="#D9EAF0"/></radialGradient></defs><circle cx="16" cy="16" r="13" fill="url(#cllgg)"/><path d="M25.2 6.8A13 13 0 1 0 25.2 25.2" fill="none" stroke="url(#cllgr)" stroke-width="2.6" stroke-linecap="round"/><circle cx="16" cy="16" r="6.2" fill="none" stroke="#0F6E8C" stroke-width="2"/><circle cx="16" cy="16" r="2.2" fill="#0F6E8C"/><circle class="sat" cx="27.4" cy="16" r="1.7" fill="#0F6E8C"/></svg>
-        <span>Campaign <span class="cl-word">Lens</span></span>
+    <!-- ERROR_BLOCK -->
+
+    <form method="POST" action="/login">
+      <div class="field">
+        <label for="username">Username</label>
+        <input id="username" type="text" name="username" autocomplete="username" required autofocus>
       </div>
+      <div class="field">
+        <label for="password">Password</label>
+        <input id="password" type="password" name="password" autocomplete="current-password" required>
+      </div>
+      <button class="btn" type="submit">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round">
+          <rect x="4" y="10" width="16" height="10" rx="2"/><path d="M8 10V7a4 4 0 018 0v3"/>
+        </svg>
+        Sign in
+      </button>
+    </form>
 
-      <h1>Sign in</h1>
-      <p class="sub">Unilever</p>
-
-      <!-- ERROR_BLOCK -->
-
-      <form method="POST" action="/login">
-        <div class="field">
-          <label for="username">Username</label>
-          <input id="username" type="text" name="username" autocomplete="username" required autofocus>
-        </div>
-        <div class="field">
-          <label for="password">Password</label>
-          <input id="password" type="password" name="password" autocomplete="current-password" required>
-        </div>
-        <button class="btn" type="submit">
-          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round">
-            <rect x="4" y="10" width="16" height="10" rx="2"/><path d="M8 10V7a4 4 0 018 0v3"/>
-          </svg>
-          Sign in
-        </button>
-      </form>
-
-      <p class="legal">By clicking <strong>'Sign in'</strong>, you acknowledge that information may be stored or retrieved on your browser, primarily through the use of cookies.</p>
-
-      <p class="access">
-        Accounts are created by the Campaign Lens team. To request access or reset a
-        password, contact your Campaign Lens administrator.
-      </p>
-
-    </div>
+    <p class="legal">By clicking <strong>'Sign in'</strong>, you acknowledge that information may be stored or retrieved on your browser, primarily through the use of cookies.</p>
   </div>
+
+  <p class="access">
+    Accounts are created by the Campaign Lens team. To request access or reset a
+    password, contact your Campaign Lens administrator.
+  </p>
+
 </div>
 
 </body>
