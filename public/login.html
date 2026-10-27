@@ -91,8 +91,7 @@ body{
 }
 @keyframes cardIn{from{opacity:0;transform:translateY(22px) scale(.97)}to{opacity:1;transform:translateY(0) scale(1)}}
 
-h1{font:600 21px/28px var(--font);letter-spacing:-.015em;margin-bottom:2px}
-.sub{font-size:14px;line-height:20px;color:var(--ink-600);margin-bottom:22px}
+h1{font:600 21px/28px var(--font);letter-spacing:-.015em;margin-bottom:18px}
 
 .err{
   display:block;background:var(--neg-bg);color:var(--neg);border-radius:var(--r);
@@ -124,8 +123,11 @@ input:focus{outline:none;background:#fff;border-color:var(--navy);box-shadow:0 0
 .btn:focus-visible{outline:none;box-shadow:0 0 0 3px rgba(15,110,140,.25)}
 .btn svg{width:16px;height:16px;flex:none}
 
-.legal{margin-top:16px;font-size:12.5px;line-height:18px;color:var(--ink-400)}
-.legal strong{font-weight:500;color:var(--ink-600)}
+.confidential{
+  margin-top:18px;padding-top:14px;border-top:1px solid #E7EAEE;
+  font-size:12.5px;line-height:18px;color:var(--ink-600);
+}
+.confidential strong{font-weight:600;color:var(--ink-900)}
 
 .access{
   margin-top:26px;max-width:430px;text-align:center;
@@ -200,7 +202,6 @@ input:focus{outline:none;background:#fff;border-color:var(--navy);box-shadow:0 0
 
   <div class="card">
     <h1>Sign in</h1>
-    <p class="sub">Use the account for your category.</p>
 
     <!-- ERROR_BLOCK -->
 
@@ -221,7 +222,7 @@ input:focus{outline:none;background:#fff;border-color:var(--navy);box-shadow:0 0
       </button>
     </form>
 
-    <p class="legal">By clicking <strong>'Sign in'</strong>, you acknowledge that information may be stored or retrieved on your browser, primarily through the use of cookies.</p>
+    <p class="confidential"><strong>Confidential.</strong> Campaign Lens and everything in it is for assigned users only. Do not share your sign-in details, and do not show, copy or send anything from this platform to anyone who has not been given access. Sign-ins are logged.</p>
   </div>
 
   <p class="access">
