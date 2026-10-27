@@ -44,9 +44,17 @@ new link is picked up on the next sync and then follows the normal windows:
 - Others Say: one first reading whatever its age, then refreshed for 48 hours
   from the post time (Instagram collab: 7 days).
 
-Changing a link that was already set (Unilever, Mindshare and admin only)
-clears that platform's readings and read markers, so the new post is read from
-scratch.
+Guardrails (enforced by the server):
+
+- A missing link can be added for 2 days after the creative was added. After
+  that, admin only.
+- A link that is already set can be changed by an admin only, with a reason.
+  That platform's readings and read markers are cleared so the new post is
+  read from scratch; the old readings are kept in the change record.
+- Links cannot be removed here.
+- Every add and change is recorded in `creative_link_changes` (migration 044):
+  who, when, old and new link, reason. Until that table exists, the server
+  refuses all link changes.
 
 ## What is logged
 

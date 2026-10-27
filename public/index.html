@@ -208,7 +208,12 @@
       <label class="field-label" for="lk-fb">Facebook</label>
       <input type="text" id="lk-fb" class="modal-input plat-input" placeholder="Not posted on Facebook" oninput="lkClearErr('fb')">
       <div class="plat-err" id="lk-fb-err"></div>
-      <p class="lk-note" id="lk-note">Copy each link from the browser's address bar. Facebook share and fb.watch links cannot be read.</p>
+      <div id="lk-reason-row" hidden>
+        <label class="field-label" for="lk-reason">Why is this link being changed?</label>
+        <input type="text" id="lk-reason" class="modal-input" maxlength="300" placeholder="e.g. wrong post pasted, the brand reposted it" oninput="lkClearErr('reason')">
+        <div class="plat-err" id="lk-reason-err"></div>
+      </div>
+      <p class="lk-note" id="lk-note"></p>
       <div class="modal-actions">
         <button type="button" class="modal-btn modal-cancel" onclick="closeLinksModal()">Cancel</button>
         <button type="submit" class="modal-btn modal-confirm" id="lk-save">Save links</button>

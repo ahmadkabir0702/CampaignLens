@@ -905,16 +905,21 @@ app.get('/api/brands', async (req, res) => {
   //  Add or fix a creative's links after it was added
   //
   //  A post often goes up on Instagram first and TikTok or Facebook a day
-  //  or two later, or a link was simply missed. Until now the only fix was
-  //  the database. The same checks as adding a creative apply: the link
-  //  must be one the sync can read, and the post cannot already belong to
-  //  another creative.
+  //  or two later, or a link was simply missed. The same checks as adding
+  //  a creative apply: the link must be one the sync can read, and the post
+  //  cannot already belong to another creative.
   //
-  //  Anyone who can add creatives can fill a missing link. Changing a link
-  //  that is already set is Unilever, Mindshare and admin only, since the
-  //  readings on file came from the old post: they are cleared so the new
-  //  post is read from scratch, not mixed with the old one.
+  //  Guardrails, so this cannot quietly rewrite data:
+  //    - A missing link can be added for LINK_ADD_DAYS after the creative was
+  //      added. After that, admin only.
+  //    - A link that is already set can be changed by an admin only, with a
+  //      reason. The old post's readings are cleared so the new post is read
+  //      from scratch, but they are kept in creative_link_changes first.
+  //    - Every add and change is recorded in creative_link_changes (044).
+  //      Without that table, nothing is changed.
+  //    - Links cannot be removed here.
   // ---------------------------------------------------------------------
+  const LINK_ADD_DAYS = 2;
   let creativeCols = null;
   async function creativeColumns() {
     if (creativeCols) return creativeCols;
@@ -929,39 +934,55 @@ app.get('/api/brands', async (req, res) => {
     let brand;
     try { brand = resolveBrand(req); }
     catch (err) { return res.status(403).json({ error: err.message }); }
+    const role = (req.session && req.session.role) || '';
+    const isAdmin = role === 'admin';
+    if (role === 'media_head') return notPermitted(res);
 
     const id = String(req.body.creative_id || '');
     if (!/^[A-Za-z0-9_.-]{1,80}$/.test(id)) return res.status(400).json({ error: 'creative_id is not valid.' });
 
+    const { rows: audit } = await query(`select to_regclass('public.creative_link_changes') as t`);
+    if (!audit[0].t) {
+      return res.status(503).json({ error: 'Link changes are switched off until migration 044 is run.' });
+    }
+
     const { rows } = await query(
-      `select creative_id, type, source, content_type, ig_link, fb_link, tt_link
+      `select creative_id, type, source, content_type, ig_link, fb_link, tt_link, created_at
          from creatives where creative_id = $1 and brand_id = $2`, [id, brand]);
     if (!rows.length) return res.status(404).json({ error: 'Creative not found for this brand.' });
     const c = rows[0];
 
     const FIELD_COL = { ig: 'ig_link', fb: 'fb_link', tt: 'tt_link' };
     const wanted = {};
+    const fieldErrors = {};
     for (const f of Object.keys(FIELD_COL)) {
       if (!(f in req.body)) continue;
       const v = String(req.body[f] || '').trim();
       const cur = c[FIELD_COL[f]] || '';
       if (v === cur) continue;
-      if (!v) {
-        if (!cur) continue;
-        return res.status(400).json({ error: 'Fix the highlighted links.',
-          fieldErrors: { [f]: 'A link cannot be removed here. Ask a Campaign Lens admin if the post was taken down.' } });
-      }
+      if (!v) { fieldErrors[f] = 'A link cannot be removed here. Ask a Campaign Lens admin if the post was taken down.'; continue; }
       wanted[f] = v;
     }
-    if (!Object.keys(wanted).length) return res.json({ success: true, changed: [] });
 
-    const fieldErrors = {};
+    const addedAt = c.created_at ? new Date(c.created_at) : null;
+    const until = addedAt ? new Date(addedAt.getTime() + LINK_ADD_DAYS * 86400000) : null;
+    const inWindow = until ? Date.now() <= until.getTime() : false;
+    const reason = String(req.body.reason || '').trim();
+
     for (const f of Object.keys(wanted)) {
-      if (c[FIELD_COL[f]] && !canManage(req)) {
-        fieldErrors[f] = 'Only Unilever, Mindshare or an admin can change a link that is already set.';
+      const replacing = !!c[FIELD_COL[f]];
+      if (replacing && !isAdmin) {
+        fieldErrors[f] = 'Only a Campaign Lens admin can change a link that is already set.';
+      } else if (!replacing && !isAdmin && !inWindow) {
+        fieldErrors[f] = `Links can be added for ${LINK_ADD_DAYS} days after the creative was added. Ask a Campaign Lens admin.`;
       }
     }
-    if (Object.keys(fieldErrors).length) return res.status(400).json({ error: 'Fix the highlighted links.', fieldErrors });
+    const replacingAny = Object.keys(wanted).some(f => c[FIELD_COL[f]]);
+    if (replacingAny && isAdmin && reason.length < 10) {
+      fieldErrors.reason = 'Say why the link is being changed (at least 10 characters).';
+    }
+    if (Object.keys(fieldErrors).length) return res.status(400).json({ error: 'Fix the highlighted fields.', fieldErrors });
+    if (!Object.keys(wanted).length) return res.json({ success: true, changed: [] });
 
     const format = { Video: 'video', Photo: 'photo', Carousel: 'carousel' }[c.content_type] || null;
     let lc;
@@ -973,7 +994,7 @@ app.get('/api/brands', async (req, res) => {
     }
     if (!lc.ok) {
       for (const [k, v] of Object.entries(lc.fields)) if (!v.ok) fieldErrors[k] = v.error;
-      return res.status(400).json({ error: 'Fix the highlighted links.', fieldErrors });
+      return res.status(400).json({ error: 'Fix the highlighted fields.', fieldErrors });
     }
 
     const cols = await creativeColumns();
@@ -981,14 +1002,12 @@ app.get('/api/brands', async (req, res) => {
     const settable = (col) => cols.has(col) && cols.get(col) !== 'ALWAYS';
     const sets = [], args = [id, brand];
     const add = (sql, val) => { args.push(val); sets.push(sql.replace('?', '$' + args.length)); };
-    const changed = [];
+    const changes = [];
 
     for (const f of Object.keys(lc.links)) {
-      const replacing = !!c[FIELD_COL[f]];
       add(`${FIELD_COL[f]} = ?`, lc.links[f]);
-      changed.push(f);
-      // Whatever was read from, or worked out about, the old link no longer
-      // applies. A missing link had nothing to clear, but resetting is harmless.
+      changes.push({ f, kind: c[FIELD_COL[f]] ? 'replaced' : 'added', old: c[FIELD_COL[f]] || null, url: lc.links[f] });
+      // Whatever was read from, or worked out about, the old link no longer applies.
       if (f === 'ig') {
         if (settable('ig_shortcode')) sets.push('ig_shortcode = null');
         if (has('ig_last_scraped_at')) sets.push('ig_last_scraped_at = null');
@@ -1001,20 +1020,40 @@ app.get('/api/brands', async (req, res) => {
       } else if (f === 'fb') {
         if (has('fb_last_scraped_at')) sets.push('fb_last_scraped_at = null');
       }
-      if (replacing) changed[changed.length - 1] = f + ':replaced';
     }
 
+    const who = (req.session && (req.session.displayName || req.session.user)) || 'unknown';
+    // One connection for the whole change, so the record, the cleared
+    // readings and the new link land together or not at all.
+    const db = await pool.connect();
     try {
-      await query(`update creatives set ${sets.join(', ')} where creative_id = $1 and brand_id = $2`, args);
-      // A replaced link's readings belong to the old post.
-      const replaced = changed.filter(x => x.endsWith(':replaced')).map(x => x.split(':')[0]);
-      if (replaced.length) {
-        await query(`delete from organic_perf where creative_id = $1 and platform = any($2::text[])`, [id, replaced]);
+      await db.query('begin');
+      for (const ch of changes) {
+        let old = null;
+        if (ch.kind === 'replaced') {
+          const { rows: r } = await db.query(
+            `select coalesce(jsonb_agg(to_jsonb(o)), '[]'::jsonb) as rows
+               from organic_perf o where o.creative_id = $1 and o.platform = $2`, [id, ch.f]);
+          old = r[0].rows;
+        }
+        await db.query(
+          `insert into creative_link_changes
+             (creative_id, brand_id, platform, kind, old_link, new_link, reason, changed_by, role, old_readings)
+           values ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10)`,
+          [id, brand, ch.f, ch.kind, ch.old, ch.url, reason || null, who, role || null, old]);
+        if (ch.kind === 'replaced') {
+          await db.query(`delete from organic_perf where creative_id = $1 and platform = $2`, [id, ch.f]);
+        }
       }
-      console.log(`[creative-links] ${req.session && req.session.user} set ${changed.join(', ')} on ${id}`);
-      return res.json({ success: true, changed: changed.map(x => x.split(':')[0]), links: lc.links });
+      await db.query(`update creatives set ${sets.join(', ')} where creative_id = $1 and brand_id = $2`, args);
+      await db.query('commit');
+      console.log(`[creative-links] ${who} ${changes.map(x => x.kind + ' ' + x.f).join(', ')} on ${id}`);
+      return res.json({ success: true, changed: changes.map(x => x.f), links: lc.links });
     } catch (err) {
+      try { await db.query('rollback'); } catch (e) { /* ignore */ }
       return sendError(res, 'creative-links', err);
+    } finally {
+      db.release();
     }
   });
 

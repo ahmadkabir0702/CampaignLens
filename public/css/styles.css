@@ -2072,3 +2072,5 @@ select:focus,.search-input:focus,.modal-input:focus{outline:none;border-color:va
 #linksForm .field-label{margin-top:12px}
 #linksForm .field-label:first-child{margin-top:0}
 .lk-note{margin-top:14px;font-size:12.5px;line-height:18px;color:var(--ink-500)}
+.modal-input.lk-locked{background:var(--canvas-2);color:var(--ink-500);cursor:not-allowed}
+#lk-reason-row{margin-top:4px}
