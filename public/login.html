@@ -34,13 +34,13 @@ body{
 /*  Watercolour of the brand blues, always slowly moving.              */
 /* ------------------------------------------------------------------ */
 .wash{position:fixed;inset:0;overflow:hidden;pointer-events:none}
-.blob{position:absolute;border-radius:50%;filter:blur(90px);opacity:0;animation:blobIn 1.6s var(--ease-out) both, roam 36s ease-in-out infinite alternate}
+.blob{position:absolute;border-radius:50%;filter:blur(90px);opacity:0;animation:blobIn 1.6s var(--ease-out) both, roam 19s ease-in-out infinite alternate}
 .blob.w1{width:720px;height:720px;left:-14%;top:-28%;background:#BFDDE8;animation-delay:.1s,0s}
-.blob.w2{width:640px;height:640px;right:-16%;top:4%;background:#D4E8EF;animation-delay:.25s,6s;animation-duration:1.6s,44s}
-.blob.w3{width:760px;height:760px;left:4%;bottom:-36%;background:#CCE2EB;animation-delay:.4s,12s;animation-duration:1.6s,52s}
-.blob.w4{width:420px;height:420px;right:6%;bottom:-14%;background:#A9D2E2;animation-delay:.55s,3s;animation-duration:1.6s,40s}
+.blob.w2{width:640px;height:640px;right:-16%;top:4%;background:#D4E8EF;animation-delay:.25s,4s;animation-duration:1.6s,23s}
+.blob.w3{width:760px;height:760px;left:4%;bottom:-36%;background:#CCE2EB;animation-delay:.4s,8s;animation-duration:1.6s,27s}
+.blob.w4{width:420px;height:420px;right:6%;bottom:-14%;background:#A9D2E2;animation-delay:.55s,2s;animation-duration:1.6s,21s}
 @keyframes blobIn{to{opacity:.85}}
-@keyframes roam{from{transform:translate(0,0) scale(1)}to{transform:translate(70px,-50px) scale(1.12)}}
+@keyframes roam{from{transform:translate(0,0) scale(1)}to{transform:translate(150px,-110px) scale(1.22)}}
 
 /* ------------------------------------------------------------------ */
 /*  The aperture: the lens mark at room scale, centred on the card.    */
@@ -50,7 +50,7 @@ body{
 .aperture svg{width:min(130vmin,1240px);height:min(130vmin,1240px);overflow:visible}
 
 .ap-breathe{transform-origin:600px 600px;animation:breathe 14s ease-in-out infinite alternate}
-@keyframes breathe{from{transform:scale(1)}to{transform:scale(1.035)}}
+@keyframes breathe{from{transform:scale(1)}to{transform:scale(1.05)}}
 
 .ap-ring{opacity:0;animation:apFade 1.4s var(--ease-out) both}
 .ap-ring.k1{animation-delay:.15s}
@@ -61,9 +61,20 @@ body{
 .ap-arc{stroke-dasharray:2160;stroke-dashoffset:2160;animation:apDraw 2.2s var(--ease-move) .35s both}
 @keyframes apDraw{to{stroke-dashoffset:0}}
 
-.ap-orbit{transform-origin:600px 600px;animation:orbit 44s linear infinite}
+.ap-orbit{transform-origin:600px 600px;animation:orbit 36s linear infinite}
+.ap-orbit.rev{animation:orbitRev 58s linear infinite}
 @keyframes orbit{to{transform:rotate(360deg)}}
+@keyframes orbitRev{to{transform:rotate(-360deg)}}
 .ap-sat{opacity:0;animation:apFade .8s var(--ease-out) 2.3s both}
+
+/* A pulse from the centre every few seconds, like the lens taking a reading. */
+.ap-pulse{transform-box:view-box;transform-origin:600px 600px;opacity:0;animation:pulse 7s var(--ease-out) 2.6s infinite}
+.ap-pulse.p2{animation-delay:6.1s}
+@keyframes pulse{
+  0%{opacity:.3;transform:scale(.99)}
+  55%{opacity:0;transform:scale(1.75)}
+  100%{opacity:0;transform:scale(1.75)}
+}
 
 /* ------------------------------------------------------------------ */
 /*  Centre: brand, then the glass card.                                */
@@ -153,6 +164,7 @@ input:focus{outline:none;background:#fff;border-color:var(--navy);box-shadow:0 0
   .blob{opacity:.85}
   .brand,.tagline,.card,.access,.ap-ring,.ap-sat{opacity:1}
   .ap-arc{stroke-dashoffset:0}
+  .ap-pulse{opacity:0}
 }
 </style>
 </head>
@@ -184,9 +196,14 @@ input:focus{outline:none;background:#fff;border-color:var(--navy);box-shadow:0 0
       <circle class="ap-ring k2" cx="600" cy="600" r="458" fill="none" stroke="#0F6E8C" stroke-opacity=".13" stroke-width="1.5"/>
       <circle class="ap-ring k3" cx="600" cy="600" r="306" fill="none" stroke="#0F6E8C" stroke-opacity=".17" stroke-width="2"/>
       <path class="ap-arc" d="M996,204 A560,560 0 1 0 996,996" fill="none" stroke="url(#arcGlow)" stroke-opacity=".5" stroke-width="3.5" stroke-linecap="round"/>
+      <g class="ap-pulse"><circle cx="600" cy="600" r="306" fill="none" stroke="#0F6E8C" stroke-width="2"/></g>
+      <g class="ap-pulse p2"><circle cx="600" cy="600" r="306" fill="none" stroke="#0F6E8C" stroke-width="2"/></g>
       <g class="ap-orbit">
-        <circle class="ap-sat" cx="1160" cy="600" r="7" fill="#0F6E8C"/>
-        <circle class="ap-sat" cx="1160" cy="600" r="16" fill="#0F6E8C" opacity=".14"/>
+        <circle class="ap-sat" cx="1058" cy="600" r="7" fill="#0F6E8C"/>
+        <circle class="ap-sat" cx="1058" cy="600" r="16" fill="#0F6E8C" opacity=".16"/>
+      </g>
+      <g class="ap-orbit rev">
+        <circle class="ap-sat" cx="294" cy="600" r="4.5" fill="#3B8BA5" opacity=".75"/>
       </g>
     </g>
   </svg>
