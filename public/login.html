@@ -16,148 +16,220 @@
   --ink-400:#8A909B;
   --line:#E4E6EA;
   --white:#FFFFFF;
-  --art-bg:#F1EEE9;
   --neg:#C2414B;
   --neg-bg:#FBECEE;
-  --r:8px;
+  --r:9px;
   --font:'Onest',-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;
-  --ease:cubic-bezier(.2,0,.2,1);
+  --ease-out:cubic-bezier(.2,0,0,1);
+  --ease-move:cubic-bezier(.32,.72,0,1);
 }
 *{box-sizing:border-box;margin:0;padding:0}
 html,body{height:100%}
-body{font:400 15px/22px var(--font);color:var(--ink-900);background:var(--white);-webkit-font-smoothing:antialiased}
+body{
+  font:400 15px/22px var(--font);color:var(--ink-900);
+  background:#F6F8F9;-webkit-font-smoothing:antialiased;overflow:hidden;
+}
 
-/* Full height, no page scroll — the form column scrolls on its own if needed. */
-.auth{display:grid;grid-template-columns:58fr 42fr;height:100vh;overflow:hidden}
+/* ------------------------------------------------------------------ */
+/*  Watercolour of the brand blues, always slowly moving.              */
+/* ------------------------------------------------------------------ */
+.wash{position:fixed;inset:0;overflow:hidden;pointer-events:none}
+.blob{position:absolute;border-radius:50%;filter:blur(90px);opacity:0;animation:blobIn 1.6s var(--ease-out) both, roam 36s ease-in-out infinite alternate}
+.blob.w1{width:720px;height:720px;left:-14%;top:-28%;background:#BFDDE8;animation-delay:.1s,0s}
+.blob.w2{width:640px;height:640px;right:-16%;top:4%;background:#D4E8EF;animation-delay:.25s,6s;animation-duration:1.6s,44s}
+.blob.w3{width:760px;height:760px;left:4%;bottom:-36%;background:#CCE2EB;animation-delay:.4s,12s;animation-duration:1.6s,52s}
+.blob.w4{width:420px;height:420px;right:6%;bottom:-14%;background:#A9D2E2;animation-delay:.55s,3s;animation-duration:1.6s,40s}
+@keyframes blobIn{to{opacity:.85}}
+@keyframes roam{from{transform:translate(0,0) scale(1)}to{transform:translate(70px,-50px) scale(1.12)}}
 
-.art{position:relative;background:var(--art-bg);overflow:hidden}
-.art img{width:100%;height:100%;object-fit:cover;object-position:center center;display:block}
+/* ------------------------------------------------------------------ */
+/*  The aperture: the lens mark at room scale, centred on the card.    */
+/*  Fine rings, one drawn arc, and the satellite dot that never stops. */
+/* ------------------------------------------------------------------ */
+.aperture{position:fixed;inset:0;display:grid;place-items:center;pointer-events:none}
+.aperture svg{width:min(130vmin,1240px);height:min(130vmin,1240px);overflow:visible}
 
-/* justify-content centres horizontally; margin:auto on .col centres vertically
-   but still allows scrolling instead of clipping the top on short screens. */
-.side{display:flex;justify-content:center;overflow-y:auto;background:var(--white);padding:28px 40px}
-.col{width:100%;max-width:352px;text-align:center;margin:auto 0}
+.ap-breathe{transform-origin:600px 600px;animation:breathe 14s ease-in-out infinite alternate}
+@keyframes breathe{from{transform:scale(1)}to{transform:scale(1.035)}}
 
-.logo{margin-bottom:30px;display:flex;justify-content:center}
-/* The mark and the product name. */
-.logo{align-items:center;gap:11px}
-.logo .cl-mark{width:34px;height:34px;flex:none}
-.logo .cl-word{color:#0F6E8C}
-.logo > span{font:600 19px/46px var(--font);letter-spacing:-.015em;color:var(--ink-900)}
+.ap-ring{opacity:0;animation:apFade 1.4s var(--ease-out) both}
+.ap-ring.k1{animation-delay:.15s}
+.ap-ring.k2{animation-delay:.3s}
+.ap-ring.k3{animation-delay:.45s}
+@keyframes apFade{to{opacity:1}}
 
-h1{font:600 26px/32px var(--font);letter-spacing:-.025em;color:var(--ink-900);margin-bottom:6px}
-.sub{font-size:15px;line-height:22px;color:var(--ink-600);margin-bottom:24px}
+.ap-arc{stroke-dasharray:2160;stroke-dashoffset:2160;animation:apDraw 2.2s var(--ease-move) .35s both}
+@keyframes apDraw{to{stroke-dashoffset:0}}
+
+.ap-orbit{transform-origin:600px 600px;animation:orbit 44s linear infinite}
+@keyframes orbit{to{transform:rotate(360deg)}}
+.ap-sat{opacity:0;animation:apFade .8s var(--ease-out) 2.3s both}
+
+/* ------------------------------------------------------------------ */
+/*  Centre: brand, then the glass card.                                */
+/* ------------------------------------------------------------------ */
+.stage{position:relative;height:100vh;display:flex;flex-direction:column;align-items:center;justify-content:center;padding:28px;overflow-y:auto}
+
+.brand{display:flex;align-items:center;gap:13px;margin-bottom:11px;
+  opacity:0;animation:riseIn .7s var(--ease-out) .2s both}
+.brand .cl-mark{width:46px;height:46px;flex:none}
+.brand span{font:600 27px/1 var(--font);letter-spacing:-.02em;color:var(--ink-900)}
+.brand .cl-word{color:var(--navy)}
+.cl-mark .sat{transform-origin:16px 16px;animation:orbit 18s linear infinite}
+
+.tagline{font-size:15px;line-height:22px;color:var(--ink-600);margin-bottom:30px;
+  opacity:0;animation:riseIn .7s var(--ease-out) .32s both}
+@keyframes riseIn{from{opacity:0;transform:translateY(12px)}to{opacity:1;transform:translateY(0)}}
+
+.card{
+  width:100%;max-width:392px;border-radius:18px;padding:34px 34px 28px;text-align:left;
+  background:rgba(255,255,255,.72);
+  border:1px solid rgba(255,255,255,.9);
+  backdrop-filter:blur(26px) saturate(1.4);-webkit-backdrop-filter:blur(26px) saturate(1.4);
+  box-shadow:0 1px 0 rgba(255,255,255,.9) inset, 0 30px 80px -26px rgba(17,32,41,.28), 0 4px 14px -6px rgba(17,32,41,.08);
+  opacity:0;animation:cardIn .85s var(--ease-move) .45s both;
+}
+@keyframes cardIn{from{opacity:0;transform:translateY(22px) scale(.97)}to{opacity:1;transform:translateY(0) scale(1)}}
+
+h1{font:600 21px/28px var(--font);letter-spacing:-.015em;margin-bottom:18px}
 
 .err{
   display:block;background:var(--neg-bg);color:var(--neg);border-radius:var(--r);
-  padding:10px 14px;font-size:14px;line-height:20px;margin-bottom:18px;text-align:left;
+  padding:10px 14px;font-size:14px;line-height:20px;margin-bottom:16px;
 }
 
-.field{text-align:left;margin-bottom:14px}
-label{display:block;font-size:14px;line-height:20px;color:var(--ink-600);margin-bottom:6px}
+.field{margin-bottom:14px}
+label{display:block;font-size:13.5px;line-height:20px;color:var(--ink-600);margin-bottom:6px}
 input{
-  width:100%;height:46px;padding:0 14px;
-  background:var(--white);border:1px solid var(--line);border-radius:var(--r);
+  width:100%;height:46px;padding:0 14px;border-radius:var(--r);
+  background:rgba(255,255,255,.85);border:1px solid #DCE1E6;
   font:400 15px/46px var(--font);color:var(--ink-900);
-  transition:border-color .15s var(--ease);
+  transition:border-color .15s var(--ease-out),box-shadow .15s var(--ease-out),background .15s var(--ease-out);
 }
 input::placeholder{color:#B4B9C2}
-input:hover{border-color:#C2C2D2}
-input:focus{outline:none;border-color:var(--navy);box-shadow:0 0 0 3px rgba(15,110,140,.10)}
+input:hover{border-color:#C2C9D1}
+input:focus{outline:none;background:#fff;border-color:var(--navy);box-shadow:0 0 0 3px rgba(15,110,140,.12)}
 
 .btn{
-  width:100%;height:50px;margin-top:10px;
+  width:100%;height:48px;margin-top:8px;border:0;border-radius:var(--r);cursor:pointer;
   display:inline-flex;align-items:center;justify-content:center;gap:10px;
-  background:var(--navy);border:1px solid var(--navy);border-radius:var(--r);
-  font:500 15px/1 var(--font);color:#fff;cursor:pointer;
-  transition:filter .12s var(--ease),transform .12s var(--ease);
+  background:linear-gradient(180deg,#147FA0,#0E6683);
+  font:500 15px/1 var(--font);color:#fff;
+  box-shadow:0 1px 0 rgba(255,255,255,.25) inset, 0 10px 22px -10px rgba(10,70,92,.55);
+  transition:transform .13s var(--ease-out),filter .13s var(--ease-out),box-shadow .13s var(--ease-out);
 }
-.btn:hover{filter:brightness(1.08)}
-.btn:active{transform:scale(.99)}
-.btn:focus-visible{outline:none;box-shadow:0 0 0 3px rgba(15,110,140,.2)}
-.btn svg{width:17px;height:17px;flex:none}
+.btn:hover{filter:brightness(1.07);transform:translateY(-1px);box-shadow:0 1px 0 rgba(255,255,255,.25) inset, 0 14px 26px -10px rgba(10,70,92,.6)}
+.btn:active{transform:translateY(0) scale(.99)}
+.btn:focus-visible{outline:none;box-shadow:0 0 0 3px rgba(15,110,140,.25)}
+.btn svg{width:16px;height:16px;flex:none}
 
-.legal{margin-top:18px;font-size:13px;line-height:19px;color:var(--ink-600)}
-.legal strong{font-weight:500;color:var(--ink-900)}
+.confidential{
+  margin-top:18px;padding-top:14px;border-top:1px solid #E7EAEE;
+  font-size:12.5px;line-height:18px;color:var(--ink-600);
+}
+.confidential strong{font-weight:600;color:var(--ink-900)}
 
 .access{
-  margin-top:28px;padding-top:20px;border-top:1px solid #EDEDF2;
-  font-size:13px;line-height:20px;color:var(--ink-600);
+  margin-top:26px;max-width:430px;text-align:center;
+  font-size:13px;line-height:20px;color:#6E747F;
+  opacity:0;animation:riseIn .7s var(--ease-out) .85s both;
 }
-.access a{color:var(--ink-900);text-decoration:none;border-bottom:1px solid var(--line)}
-.access a:hover{border-bottom-color:var(--ink-400)}
 
-/* Short viewports (laptops, 125–150% Windows scaling) */
 @media (max-height:760px){
-  .logo{margin-bottom:20px}
-  .logo > span{font-size:17px;line-height:38px}
-  .logo .cl-mark{width:30px;height:30px}
-  h1{font-size:23px;line-height:30px}
-  .sub{margin-bottom:18px}
-  .field{margin-bottom:11px}
+  .brand{margin-bottom:7px}
+  .tagline{margin-bottom:20px}
+  .card{padding:26px 28px 22px}
   input,.btn{height:42px}
   input{line-height:42px}
-  .legal{margin-top:14px;font-size:12px;line-height:18px}
-  .access{margin-top:20px;padding-top:16px;font-size:12px;line-height:18px}
-  .side{padding:20px 40px}
+  .access{margin-top:18px}
 }
-
-@media (max-width:900px){
-  .auth{grid-template-columns:1fr;height:auto;min-height:100vh;overflow:visible}
-  .art{height:210px}
-  .side{padding:36px 24px 48px;overflow:visible}
-  .col{margin:0 auto}
+@media (max-width:480px){
+  .card{padding:28px 24px 24px;border-radius:16px}
+  .brand span{font-size:23px}
+  .brand .cl-mark{width:40px;height:40px}
 }
-@media (prefers-reduced-motion:reduce){*{transition:none!important}}
+@media (prefers-reduced-motion:reduce){
+  *{animation:none!important;transition:none!important}
+  .blob{opacity:.85}
+  .brand,.tagline,.card,.access,.ap-ring,.ap-sat{opacity:1}
+  .ap-arc{stroke-dashoffset:0}
+}
 </style>
 </head>
 <body>
 
-<div class="auth">
+<div class="wash" aria-hidden="true">
+  <div class="blob w1"></div>
+  <div class="blob w2"></div>
+  <div class="blob w3"></div>
+  <div class="blob w4"></div>
+</div>
 
-  <div class="art">
-    <img src="/img/login-art.jpg" alt="">
+<div class="aperture" aria-hidden="true">
+  <svg viewBox="0 0 1200 1200">
+    <defs>
+      <linearGradient id="arcGlow" x1="0" y1="0" x2="1" y2="1">
+        <stop offset="0" stop-color="#3B8BA5"/>
+        <stop offset="1" stop-color="#0F6E8C"/>
+      </linearGradient>
+      <radialGradient id="halo" cx=".5" cy=".5" r=".5">
+        <stop offset=".55" stop-color="#0F6E8C" stop-opacity="0"/>
+        <stop offset=".78" stop-color="#0F6E8C" stop-opacity=".06"/>
+        <stop offset=".86" stop-color="#0F6E8C" stop-opacity="0"/>
+      </radialGradient>
+    </defs>
+    <g class="ap-breathe">
+      <circle cx="600" cy="600" r="560" fill="url(#halo)"/>
+      <circle class="ap-ring k1" cx="600" cy="600" r="560" fill="none" stroke="#0F6E8C" stroke-opacity=".09" stroke-width="1.5"/>
+      <circle class="ap-ring k2" cx="600" cy="600" r="458" fill="none" stroke="#0F6E8C" stroke-opacity=".13" stroke-width="1.5"/>
+      <circle class="ap-ring k3" cx="600" cy="600" r="306" fill="none" stroke="#0F6E8C" stroke-opacity=".17" stroke-width="2"/>
+      <path class="ap-arc" d="M996,204 A560,560 0 1 0 996,996" fill="none" stroke="url(#arcGlow)" stroke-opacity=".5" stroke-width="3.5" stroke-linecap="round"/>
+      <g class="ap-orbit">
+        <circle class="ap-sat" cx="1160" cy="600" r="7" fill="#0F6E8C"/>
+        <circle class="ap-sat" cx="1160" cy="600" r="16" fill="#0F6E8C" opacity=".14"/>
+      </g>
+    </g>
+  </svg>
+</div>
+
+<div class="stage">
+
+  <div class="brand">
+    <svg class="cl-mark" viewBox="0 0 32 32" aria-hidden="true" focusable="false"><defs><linearGradient id="cllgr" x1="0" y1="0" x2="1" y2="1"><stop offset="0" stop-color="#3B8BA5"/><stop offset="1" stop-color="#0A4F66"/></linearGradient><radialGradient id="cllgg" cx=".34" cy=".3" r=".85"><stop offset="0" stop-color="#FFFFFF"/><stop offset="1" stop-color="#D9EAF0"/></radialGradient></defs><circle cx="16" cy="16" r="13" fill="url(#cllgg)"/><path d="M25.2 6.8A13 13 0 1 0 25.2 25.2" fill="none" stroke="url(#cllgr)" stroke-width="2.6" stroke-linecap="round"/><circle cx="16" cy="16" r="6.2" fill="none" stroke="#0F6E8C" stroke-width="2"/><circle cx="16" cy="16" r="2.2" fill="#0F6E8C"/><circle class="sat" cx="27.4" cy="16" r="1.7" fill="#0F6E8C"/></svg>
+    <span>Campaign <span class="cl-word">Lens</span></span>
   </div>
+  <p class="tagline">Creative intelligence for Unilever Sri Lanka</p>
 
-  <div class="side">
-    <div class="col">
+  <div class="card">
+    <h1>Sign in</h1>
 
-      <div class="logo">
-        <svg class="cl-mark" viewBox="0 0 32 32" aria-hidden="true" focusable="false"><defs><linearGradient id="cllgr" x1="0" y1="0" x2="1" y2="1"><stop offset="0" stop-color="#3B8BA5"/><stop offset="1" stop-color="#0A4F66"/></linearGradient><radialGradient id="cllgg" cx=".34" cy=".3" r=".85"><stop offset="0" stop-color="#FFFFFF"/><stop offset="1" stop-color="#D9EAF0"/></radialGradient></defs><circle cx="16" cy="16" r="13" fill="url(#cllgg)"/><path d="M25.2 6.8A13 13 0 1 0 25.2 25.2" fill="none" stroke="url(#cllgr)" stroke-width="2.6" stroke-linecap="round"/><circle cx="16" cy="16" r="6.2" fill="none" stroke="#0F6E8C" stroke-width="2"/><circle cx="16" cy="16" r="2.2" fill="#0F6E8C"/><circle cx="27.4" cy="16" r="1.7" fill="#0F6E8C"/></svg>
-        <span>Campaign <span class="cl-word">Lens</span></span>
+    <!-- ERROR_BLOCK -->
+
+    <form method="POST" action="/login">
+      <div class="field">
+        <label for="username">Username</label>
+        <input id="username" type="text" name="username" autocomplete="username" required autofocus>
       </div>
+      <div class="field">
+        <label for="password">Password</label>
+        <input id="password" type="password" name="password" autocomplete="current-password" required>
+      </div>
+      <button class="btn" type="submit">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round">
+          <rect x="4" y="10" width="16" height="10" rx="2"/><path d="M8 10V7a4 4 0 018 0v3"/>
+        </svg>
+        Sign in
+      </button>
+    </form>
 
-      <h1>Sign in</h1>
-      <p class="sub">Unilever</p>
-
-      <!-- ERROR_BLOCK -->
-
-      <form method="POST" action="/login">
-        <div class="field">
-          <label for="username">Username</label>
-          <input id="username" type="text" name="username" autocomplete="username" required autofocus>
-        </div>
-        <div class="field">
-          <label for="password">Password</label>
-          <input id="password" type="password" name="password" autocomplete="current-password" required>
-        </div>
-        <button class="btn" type="submit">
-          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round">
-            <rect x="4" y="10" width="16" height="10" rx="2"/><path d="M8 10V7a4 4 0 018 0v3"/>
-          </svg>
-          Sign in
-        </button>
-      </form>
-
-      <p class="legal">By clicking <strong>'Sign in'</strong>, you acknowledge that information may be stored or retrieved on your browser, primarily through the use of cookies.</p>
-
-      <p class="access">
-        Accounts are created by the Campaign Lens team. To request access or reset a
-        password, contact your Campaign Lens administrator.
-      </p>
-
-    </div>
+    <p class="confidential"><strong>Confidential.</strong> Campaign Lens and everything in it is for assigned users only. Do not share your sign-in details, and do not show, copy or send anything from this platform to anyone who has not been given access. Sign-ins are logged.</p>
   </div>
+
+  <p class="access">
+    Accounts are created by the Campaign Lens team. To request access or reset a
+    password, contact your Campaign Lens administrator.
+  </p>
+
 </div>
 
 </body>
