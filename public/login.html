@@ -51,6 +51,16 @@ body{font:400 15px/22px var(--font);color:var(--ink-900);background:var(--white)
   to{opacity:1;transform:translateY(0)}
 }
 
+/* The big lens behind the cards: the mark's arc draws itself in,
+   the rings fade up, and the satellite dot orbits the arc forever,
+   exactly like the dot in the logo. */
+.lens-arc{stroke-dasharray:920;stroke-dashoffset:920;animation:lensDraw 1.6s var(--ease-move) .15s both}
+@keyframes lensDraw{to{stroke-dashoffset:0}}
+.lens-soft{opacity:0;animation:fadeIn 1s var(--ease-out) .9s both}
+.lens-orbit{transform-box:view-box;transform-origin:660px 700px;animation:lensOrbit 26s linear infinite}
+@keyframes lensOrbit{to{transform:rotate(360deg)}}
+.lens-sat{opacity:0;animation:fadeIn .6s var(--ease-out) 1.5s both}
+
 /* Bars rise from the baseline, then breathe very slightly. */
 .bar{
   transform-box:fill-box;transform-origin:50% 100%;
@@ -108,10 +118,13 @@ body{font:400 15px/22px var(--font);color:var(--ink-900);background:var(--white)
   to{opacity:1;transform:translateY(0)}
 }
 
-.logo{margin-bottom:30px;display:flex;justify-content:center;align-items:center;gap:11px}
-.logo .cl-mark{width:34px;height:34px;flex:none}
+.logo{margin-bottom:34px;display:flex;justify-content:center;align-items:center;gap:13px}
+.logo .cl-mark{width:46px;height:46px;flex:none}
 .logo .cl-word{color:#0F6E8C}
-.logo > span{font:600 19px/46px var(--font);letter-spacing:-.015em;color:var(--ink-900)}
+.logo > span{font:600 24px/52px var(--font);letter-spacing:-.02em;color:var(--ink-900)}
+/* The mark's satellite dot orbits, here and in the scene. */
+.cl-mark .sat{transform-origin:16px 16px;animation:orbit 16s linear infinite}
+@keyframes orbit{to{transform:rotate(360deg)}}
 
 h1{font:600 26px/32px var(--font);letter-spacing:-.025em;color:var(--ink-900);margin-bottom:6px}
 .sub{font-size:15px;line-height:22px;color:var(--ink-600);margin-bottom:24px}
@@ -157,9 +170,9 @@ input:focus{outline:none;border-color:var(--navy);box-shadow:0 0 0 3px rgba(15,1
 
 /* Short viewports (laptops, 125–150% Windows scaling) */
 @media (max-height:760px){
-  .logo{margin-bottom:20px}
-  .logo > span{font-size:17px;line-height:38px}
-  .logo .cl-mark{width:30px;height:30px}
+  .logo{margin-bottom:22px}
+  .logo > span{font-size:20px;line-height:42px}
+  .logo .cl-mark{width:38px;height:38px}
   h1{font-size:23px;line-height:30px}
   .sub{margin-bottom:18px}
   .field{margin-bottom:11px}
@@ -181,6 +194,8 @@ input:focus{outline:none;border-color:var(--navy);box-shadow:0 0 0 3px rgba(15,1
   *{animation:none!important;transition:none!important}
   .card-g,.trace-fill,.dot-live,.chip{opacity:1}
   .trace{stroke-dashoffset:0}
+  .lens-arc{stroke-dashoffset:0}
+  .lens-soft,.lens-sat{opacity:1}
   .ring{opacity:0}
 }
 </style>
@@ -211,7 +226,17 @@ input:focus{outline:none;border-color:var(--navy);box-shadow:0 0 0 3px rgba(15,1
         </filter>
       </defs>
 
-      <rect x="0" y="0" width="900" height="1000" fill="url(#dots)"/>
+      <rect x="0" y="-40" width="900" height="1040" fill="url(#dots)"/>
+
+      <!-- The Campaign Lens mark, writ large behind the cards -->
+      <g>
+        <path class="lens-arc" d="M794.3,565.7 A190,190 0 1 0 794.3,834.3" fill="none" stroke="#0F6E8C" stroke-opacity=".18" stroke-width="11" stroke-linecap="round"/>
+        <circle class="lens-soft" cx="660" cy="700" r="88" fill="none" stroke="#0F6E8C" stroke-opacity=".16" stroke-width="8"/>
+        <circle class="lens-soft" cx="660" cy="700" r="22" fill="#0F6E8C" fill-opacity=".14"/>
+        <g class="lens-orbit">
+          <circle class="lens-sat" cx="850" cy="700" r="9" fill="#0F6E8C" fill-opacity=".6"/>
+        </g>
+      </g>
 
       <!-- Sparkline card -->
       <g class="card-g g-spark">
@@ -274,7 +299,7 @@ input:focus{outline:none;border-color:var(--navy);box-shadow:0 0 0 3px rgba(15,1
     <div class="col">
 
       <div class="logo">
-        <svg class="cl-mark" viewBox="0 0 32 32" aria-hidden="true" focusable="false"><defs><linearGradient id="cllgr" x1="0" y1="0" x2="1" y2="1"><stop offset="0" stop-color="#3B8BA5"/><stop offset="1" stop-color="#0A4F66"/></linearGradient><radialGradient id="cllgg" cx=".34" cy=".3" r=".85"><stop offset="0" stop-color="#FFFFFF"/><stop offset="1" stop-color="#D9EAF0"/></radialGradient></defs><circle cx="16" cy="16" r="13" fill="url(#cllgg)"/><path d="M25.2 6.8A13 13 0 1 0 25.2 25.2" fill="none" stroke="url(#cllgr)" stroke-width="2.6" stroke-linecap="round"/><circle cx="16" cy="16" r="6.2" fill="none" stroke="#0F6E8C" stroke-width="2"/><circle cx="16" cy="16" r="2.2" fill="#0F6E8C"/><circle cx="27.4" cy="16" r="1.7" fill="#0F6E8C"/></svg>
+        <svg class="cl-mark" viewBox="0 0 32 32" aria-hidden="true" focusable="false"><defs><linearGradient id="cllgr" x1="0" y1="0" x2="1" y2="1"><stop offset="0" stop-color="#3B8BA5"/><stop offset="1" stop-color="#0A4F66"/></linearGradient><radialGradient id="cllgg" cx=".34" cy=".3" r=".85"><stop offset="0" stop-color="#FFFFFF"/><stop offset="1" stop-color="#D9EAF0"/></radialGradient></defs><circle cx="16" cy="16" r="13" fill="url(#cllgg)"/><path d="M25.2 6.8A13 13 0 1 0 25.2 25.2" fill="none" stroke="url(#cllgr)" stroke-width="2.6" stroke-linecap="round"/><circle cx="16" cy="16" r="6.2" fill="none" stroke="#0F6E8C" stroke-width="2"/><circle cx="16" cy="16" r="2.2" fill="#0F6E8C"/><circle class="sat" cx="27.4" cy="16" r="1.7" fill="#0F6E8C"/></svg>
         <span>Campaign <span class="cl-word">Lens</span></span>
       </div>
 
