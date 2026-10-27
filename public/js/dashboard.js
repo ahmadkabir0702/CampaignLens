@@ -184,6 +184,8 @@ function toast(message, tone) {
   el.setAttribute('role', err ? 'alert' : 'status');
   el.classList.toggle('is-error', err);
   el.textContent = String(message || '');
+  if (!err) el.insertAdjacentHTML('afterbegin',
+    '<svg class="tick" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M3 8.5l3.5 3.5L13 4.5"/></svg>');
   el.classList.remove('show');
   el.offsetHeight;
   el.classList.add('show');
@@ -1096,6 +1098,38 @@ function renderKPIs(sum) {
 
   // A list left open while the data reloads would show stale rows.
   closeKpiList();
+  countUpValues(row);
+}
+
+// Every number in a KPI tile counts up to its value when the row paints.
+// Only the digits move; prefixes, separators and suffixes stay as they
+// are, so "1.2M / 3.4M" and "72% / 28%" both work. Skipped under reduced
+// motion and for anything that is not a number.
+function countUpValues(scope) {
+  if (window.Motion && Motion.reduced()) return;
+  scope.querySelectorAll('.kpi-val').forEach(el => {
+    const text = el.textContent;
+    const re = /\d[\d,]*(?:\.\d+)?/g;
+    const nums = Array.from(text.matchAll(re));
+    if (!nums.length || nums.length > 6) return;
+    const parts = text.split(re);
+    const vals = nums.map(m => parseFloat(m[0].replace(/,/g, '')));
+    const decs = nums.map(m => (m[0].split('.')[1] || '').length);
+    const t0 = performance.now(), D = 620;
+    const frame = (now) => {
+      if (!el.isConnected) return;
+      const p = Math.min(1, (now - t0) / D);
+      const e = 1 - Math.pow(1 - p, 3);
+      let out = parts[0];
+      for (let i = 0; i < vals.length; i++) {
+        out += (vals[i] * e).toLocaleString('en-US',
+          { minimumFractionDigits: decs[i], maximumFractionDigits: decs[i] }) + parts[i + 1];
+      }
+      el.textContent = out;
+      if (p < 1) requestAnimationFrame(frame);
+    };
+    requestAnimationFrame(frame);
+  });
 }
 
 let kpiListOpen = null;
@@ -1494,6 +1528,12 @@ async function appendCards() {
     }
     const next = HUB.items.slice(CARD_SHOWN, CARD_SHOWN + CARD_PAGE);
     grid.insertAdjacentHTML('beforeend', next.map(cardHTML).join(''));
+    // Fresh cards rise in with a short stagger; cards already on screen
+    // are left alone.
+    for (let i = grid.children.length - next.length, j = 0; i < grid.children.length; i++, j++) {
+      grid.children[i].style.setProperty('--i', j);
+      grid.children[i].classList.add('card-in');
+    }
     CARD_SHOWN += next.length;
     paintMore();
     // Ahead of need, so scrolling rarely waits.
@@ -2905,6 +2945,8 @@ async function confirmAction() {
     // The server's copy changed, so pages kept from before would show the
     // old state, and the "not actioned" filter would still list it.
     HUB_CACHE.clear();
+    btn.innerHTML = '<svg class="tick" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M3 8.5l3.5 3.5L13 4.5"/></svg>';
+    await new Promise(r => setTimeout(r, 420));
     closeActionModal();
     renderDetail(creative);
     toast('Marked as actioned.');
