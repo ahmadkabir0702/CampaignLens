@@ -2707,6 +2707,22 @@ function renderDetail(d) {
   if (!links.length && d.originalUrl) {
     linkBtns += `<button class="view-btn primary" onclick="window.open(${jsq(safeUrl(d.originalUrl))},'_blank','noopener')">Open the original</button>`;
   }
+  // Links can be added after the creative was, for a platform it went up on
+  // later or one that was missed.
+  // Within LINK_ADD_DAYS of the creative being added, anyone who can add
+  // creatives can fill a missing link. After that, and for changing a link
+  // that is set, admin only. The server enforces the same rules.
+  {
+    const missing = PLATFORM_LINKS.filter(p => !d[p.key]).length;
+    const admin = CURRENT_ROLE === 'admin';
+    if (admin) {
+      linkBtns += `<button class="view-btn" data-press onclick="openLinksModal(${jsq(d.id)})">${
+        missing ? (missing === 3 ? 'Add links' : 'Add a link') : 'Edit links'}</button>`;
+    } else if (FEATURES.addCreative && missing && linkWindowOpen(d)) {
+      linkBtns += `<button class="view-btn" data-press onclick="openLinksModal(${jsq(d.id)})">${
+        missing === 3 ? 'Add links' : 'Add a link'}</button>`;
+    }
+  }
   linkBtns += '</div>';
 
   const previewLink = links.length ? links[0] : null;
@@ -2914,6 +2930,129 @@ async function confirmAction() {
     toast("Couldn't update it: " + err.message, 'error');
   } finally {
     btn.innerText = origText; btn.disabled = false;
+  }
+}
+
+// ---------------------------------------------------------------------
+//  Add or fix links after a creative was added
+// ---------------------------------------------------------------------
+let linksFor = null;
+const LK_KEYS = { ig: 'igLink', tt: 'ttLink', fb: 'fbLink' };
+const LINK_ADD_DAYS = 2;
+
+function linkDeadline(d) {
+  const t = d && d.addedAt ? Date.parse(d.addedAt) : NaN;
+  return isNaN(t) ? null : new Date(t + LINK_ADD_DAYS * 86400000);
+}
+function linkWindowOpen(d) {
+  const u = linkDeadline(d);
+  return !!u && Date.now() <= u.getTime();
+}
+
+function openLinksModal(creativeId) {
+  const d = findCreative(creativeId);
+  if (!d) return;
+  linksFor = creativeId;
+  const admin = CURRENT_ROLE === 'admin';
+  for (const [f, key] of Object.entries(LK_KEYS)) {
+    const input = document.getElementById(`lk-${f}`);
+    input.value = d[key] || '';
+    // A link already set can only be changed by an admin.
+    input.readOnly = !!d[key] && !admin;
+    input.classList.toggle('lk-locked', input.readOnly);
+    input.oninput = () => { lkClearErr(f); lkReasonCheck(d); };
+    lkClearErr(f);
+  }
+  document.getElementById('lk-reason').value = '';
+  lkClearErr('reason');
+  lkReasonCheck(d);
+
+  document.getElementById('lk-title').textContent = `Links for ${d.short || d.id}`;
+  const missing = Object.values(LK_KEYS).filter(k => !d[k]).length;
+  document.getElementById('lk-desc').textContent = missing
+    ? 'Add the post on each platform it went up on. New links are read on the next sync.'
+    : 'Change a link only if it points at the wrong post. Its readings are cleared and kept in the change record.';
+  const u = linkDeadline(d);
+  const when = u ? u.toLocaleString('en-GB', { day: 'numeric', month: 'short', hour: 'numeric', minute: '2-digit' }) : null;
+  document.getElementById('lk-note').textContent = admin
+    ? 'Admin: you can add links at any time and change links that are set. Every change is recorded.'
+    : `Links can be added until ${when}, ${LINK_ADD_DAYS} days after this creative was added. Links already set can only be changed by an admin. Facebook share and fb.watch links cannot be read; copy the link from the address bar.`;
+
+  document.getElementById('linksModal').style.display = 'flex';
+  const first = Object.keys(LK_KEYS).find(f => !d[LK_KEYS[f]]) || 'ig';
+  setTimeout(() => document.getElementById(`lk-${first}`).focus(), 60);
+}
+
+// The reason box appears as soon as a link that was set is edited.
+function lkReasonCheck(d) {
+  const changing = Object.entries(LK_KEYS).some(([f, key]) =>
+    d[key] && document.getElementById(`lk-${f}`).value.trim() !== d[key]);
+  document.getElementById('lk-reason-row').hidden = !changing;
+}
+
+function closeLinksModal() {
+  document.getElementById('linksModal').style.display = 'none';
+  linksFor = null;
+}
+
+function lkSetErr(f, msg) {
+  const el = document.getElementById(`lk-${f}-err`);
+  const input = document.getElementById(`lk-${f}`);
+  if (el) { el.textContent = msg || ''; el.style.display = msg ? 'block' : 'none'; }
+  if (input) input.classList.toggle('plat-input-bad', !!msg);
+}
+function lkClearErr(f) { lkSetErr(f, ''); }
+
+async function saveLinks(e) {
+  e.preventDefault();
+  const d = findCreative(linksFor);
+  if (!d) return closeLinksModal();
+  const body = { creative_id: d.id };
+  let any = false, replacing = false;
+  for (const [f, key] of Object.entries(LK_KEYS)) {
+    const v = document.getElementById(`lk-${f}`).value.trim();
+    if (v === (d[key] || '')) continue;
+    if (!v) { lkSetErr(f, 'A link cannot be removed here.'); return; }
+    // Instant format check; duplicates and short links are the server's.
+    if (window.CLLinks) {
+      const r = window.CLLinks.validate(f, v, { source: d.source || undefined });
+      if (!r.ok && !r.needsResolve) { lkSetErr(f, r.error); return; }
+    }
+    body[f] = v; any = true;
+    if (d[key]) replacing = true;
+  }
+  if (!any) return closeLinksModal();
+  if (replacing) {
+    const reason = document.getElementById('lk-reason').value.trim();
+    if (reason.length < 10) { lkSetErr('reason', 'Say why the link is being changed (at least 10 characters).'); return; }
+    body.reason = reason;
+  }
+
+  const btn = document.getElementById('lk-save');
+  const label = btn.textContent;
+  btn.disabled = true; btn.textContent = 'Checking…';
+  try {
+    const res = await fetch('/api/creative-links', {
+      method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body),
+    });
+    const out = await res.json().catch(() => ({}));
+    if (!res.ok) {
+      if (out.fieldErrors) Object.entries(out.fieldErrors).forEach(([f, m]) => lkSetErr(f, m));
+      else toast(out.error || 'Could not save the links.', 'error');
+      return;
+    }
+    for (const [f, url] of Object.entries(out.links || {})) d[LK_KEYS[f]] = url;
+    HUB_CACHE.clear();
+    closeLinksModal();
+    renderDetail(d);
+    const names = (out.changed || []).map(f => ({ ig: 'Instagram', tt: 'TikTok', fb: 'Facebook' })[f]);
+    toast(names.length
+      ? `${names.join(' and ')} link saved. Numbers come in on the next sync.`
+      : 'Nothing changed.');
+  } catch (err) {
+    toast("Couldn't save the links: " + err.message, 'error');
+  } finally {
+    btn.disabled = false; btn.textContent = label;
   }
 }
 

@@ -194,7 +194,7 @@ const FEATURE_GATES = [
     covers: p => p.startsWith('/api/chat/') },
   { flag: 'addCreative', label: 'Add creative',
     covers: p => p === '/api/add-creative' || p === '/api/check-links'
-      || p === '/api/regenerate-description' },
+      || p === '/api/regenerate-description' || p === '/api/creative-links' },
   { flag: 'pretest',     label: 'Pre-tests',
     covers: p => p.startsWith('/api/pretests') || p.startsWith('/api/pretest-scores/') },
   { flag: 'sov',         label: 'Share of voice',
