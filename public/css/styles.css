@@ -602,6 +602,8 @@ select:focus,.search-input:focus,.modal-input:focus{outline:none;border-color:va
 .creative-modal-overlay{z-index:100}
 #addCreativeModal{z-index:110}
 #actionModal{z-index:120}
+/* Opened from inside the creative panel, so it must sit above it. */
+#linksModal{z-index:120}
 .modal-box{
   background:var(--white);border:0;border-radius:var(--r-card);
   box-shadow:var(--shadow-pop);width:100%;max-width:420px;padding:24px;
