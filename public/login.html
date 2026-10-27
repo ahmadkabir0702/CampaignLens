@@ -12,16 +12,19 @@
 :root{
   --navy:#0F6E8C;
   --ink-900:#111318;
+  --ink-700:#2E323A;
   --ink-600:#4B505B;
   --ink-400:#8A909B;
   --line:#E4E6EA;
   --white:#FFFFFF;
-  --art-bg:#F1EEE9;
+  --canvas:#F3F4F6;
+  --pos:#1F8A5B;
   --neg:#C2414B;
   --neg-bg:#FBECEE;
   --r:8px;
   --font:'Onest',-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;
-  --ease:cubic-bezier(.2,0,.2,1);
+  --ease-out:cubic-bezier(.2,0,0,1);
+  --ease-move:cubic-bezier(.32,.72,0,1);
 }
 *{box-sizing:border-box;margin:0;padding:0}
 html,body{height:100%}
@@ -30,17 +33,82 @@ body{font:400 15px/22px var(--font);color:var(--ink-900);background:var(--white)
 /* Full height, no page scroll — the form column scrolls on its own if needed. */
 .auth{display:grid;grid-template-columns:58fr 42fr;height:100vh;overflow:hidden}
 
-.art{position:relative;background:var(--art-bg);overflow:hidden}
-.art img{width:100%;height:100%;object-fit:cover;object-position:center center;display:block}
+/* ------------------------------------------------------------------ */
+/*  Left: the scene. A quiet abstract of the tool itself — cards,      */
+/*  bars, a line finding its way up, two ratings — on the same canvas  */
+/*  grey the app uses. Everything animates once on load, then keeps    */
+/*  only a slow idle motion.                                           */
+/* ------------------------------------------------------------------ */
+.art{position:relative;background:var(--canvas);overflow:hidden}
+.art svg{position:absolute;inset:0;width:100%;height:100%;display:block}
 
-/* justify-content centres horizontally; margin:auto on .col centres vertically
-   but still allows scrolling instead of clipping the top on short screens. */
+.card-g{opacity:0;animation:cardIn .8s var(--ease-out) both}
+.g-spark{animation-delay:.1s}
+.g-line{animation-delay:.24s}
+.g-bars{animation-delay:.38s}
+@keyframes cardIn{
+  from{opacity:0;transform:translateY(16px)}
+  to{opacity:1;transform:translateY(0)}
+}
+
+/* Bars rise from the baseline, then breathe very slightly. */
+.bar{
+  transform-box:fill-box;transform-origin:50% 100%;
+  animation:barRise .8s var(--ease-move) both, barIdle 5.6s ease-in-out 1.6s infinite alternate;
+}
+.bar:nth-child(1){animation-delay:.55s,1.6s}
+.bar:nth-child(2){animation-delay:.62s,2.1s;animation-duration:.8s,6.4s}
+.bar:nth-child(3){animation-delay:.69s,1.8s;animation-duration:.8s,5.2s}
+.bar:nth-child(4){animation-delay:.76s,2.4s}
+.bar:nth-child(5){animation-delay:.83s,1.9s;animation-duration:.8s,6.1s}
+.bar:nth-child(6){animation-delay:.90s,2.2s;animation-duration:.8s,4.9s}
+.bar:nth-child(7){animation-delay:.97s,1.7s;animation-duration:.8s,5.8s}
+@keyframes barRise{from{transform:scaleY(0)}to{transform:scaleY(1)}}
+@keyframes barIdle{from{transform:scaleY(1)}to{transform:scaleY(.955)}}
+
+/* The line draws itself, its area fades in after it. */
+.trace{stroke-dasharray:520;stroke-dashoffset:520;animation:trace 1.5s var(--ease-move) .75s both}
+@keyframes trace{to{stroke-dashoffset:0}}
+.trace-fill{opacity:0;animation:fadeIn .9s var(--ease-out) 1.7s both}
+@keyframes fadeIn{to{opacity:1}}
+
+/* The live dot at the end of the line. */
+.dot-live{opacity:0;animation:fadeIn .4s var(--ease-out) 2s both}
+.ring{transform-box:fill-box;transform-origin:center;opacity:0;animation:ping 3s var(--ease-out) 2.2s infinite}
+.ring.r2{animation-delay:3.7s}
+@keyframes ping{
+  0%{opacity:.45;transform:scale(.3)}
+  70%{opacity:0;transform:scale(1)}
+  100%{opacity:0;transform:scale(1)}
+}
+
+/* Rating chips float in late, then bob. */
+.chip{opacity:0;animation:chipIn .7s var(--ease-out) both, chipBob 5s ease-in-out 2.6s infinite alternate}
+.chip.c1{animation-delay:1.9s,2.6s}
+.chip.c2{animation-delay:2.2s,3.4s;animation-duration:.7s,6s}
+@keyframes chipIn{from{opacity:0;transform:translateY(10px)}to{opacity:1;transform:translateY(0)}}
+@keyframes chipBob{from{transform:translateY(0)}to{transform:translateY(-6px)}}
+
+/* ------------------------------------------------------------------ */
+/*  Right: the form, unchanged in structure, arriving line by line.    */
+/* ------------------------------------------------------------------ */
 .side{display:flex;justify-content:center;overflow-y:auto;background:var(--white);padding:28px 40px}
 .col{width:100%;max-width:352px;text-align:center;margin:auto 0}
 
-.logo{margin-bottom:30px;display:flex;justify-content:center}
-/* The mark and the product name. */
-.logo{align-items:center;gap:11px}
+.col > *{animation:riseIn .55s var(--ease-out) both}
+.col > :nth-child(1){animation-delay:.05s}
+.col > :nth-child(2){animation-delay:.11s}
+.col > :nth-child(3){animation-delay:.17s}
+.col > :nth-child(4){animation-delay:.23s}
+.col > :nth-child(5){animation-delay:.29s}
+.col > :nth-child(6){animation-delay:.35s}
+.col > :nth-child(7){animation-delay:.41s}
+@keyframes riseIn{
+  from{opacity:0;transform:translateY(10px)}
+  to{opacity:1;transform:translateY(0)}
+}
+
+.logo{margin-bottom:30px;display:flex;justify-content:center;align-items:center;gap:11px}
 .logo .cl-mark{width:34px;height:34px;flex:none}
 .logo .cl-word{color:#0F6E8C}
 .logo > span{font:600 19px/46px var(--font);letter-spacing:-.015em;color:var(--ink-900)}
@@ -59,7 +127,7 @@ input{
   width:100%;height:46px;padding:0 14px;
   background:var(--white);border:1px solid var(--line);border-radius:var(--r);
   font:400 15px/46px var(--font);color:var(--ink-900);
-  transition:border-color .15s var(--ease);
+  transition:border-color .15s var(--ease-out),box-shadow .15s var(--ease-out);
 }
 input::placeholder{color:#B4B9C2}
 input:hover{border-color:#C2C2D2}
@@ -70,10 +138,10 @@ input:focus{outline:none;border-color:var(--navy);box-shadow:0 0 0 3px rgba(15,1
   display:inline-flex;align-items:center;justify-content:center;gap:10px;
   background:var(--navy);border:1px solid var(--navy);border-radius:var(--r);
   font:500 15px/1 var(--font);color:#fff;cursor:pointer;
-  transition:filter .12s var(--ease),transform .12s var(--ease);
+  transition:filter .12s var(--ease-out),transform .12s var(--ease-out),box-shadow .12s var(--ease-out);
 }
-.btn:hover{filter:brightness(1.08)}
-.btn:active{transform:scale(.99)}
+.btn:hover{filter:brightness(1.08);transform:translateY(-1px);box-shadow:0 6px 16px -8px rgba(15,110,140,.5)}
+.btn:active{transform:translateY(0) scale(.99);box-shadow:none}
 .btn:focus-visible{outline:none;box-shadow:0 0 0 3px rgba(15,110,140,.2)}
 .btn svg{width:17px;height:17px;flex:none}
 
@@ -104,19 +172,102 @@ input:focus{outline:none;border-color:var(--navy);box-shadow:0 0 0 3px rgba(15,1
 
 @media (max-width:900px){
   .auth{grid-template-columns:1fr;height:auto;min-height:100vh;overflow:visible}
-  .art{height:210px}
+  .art{height:240px}
   .side{padding:36px 24px 48px;overflow:visible}
   .col{margin:0 auto}
 }
-@media (prefers-reduced-motion:reduce){*{transition:none!important}}
+
+@media (prefers-reduced-motion:reduce){
+  *{animation:none!important;transition:none!important}
+  .card-g,.trace-fill,.dot-live,.chip{opacity:1}
+  .trace{stroke-dashoffset:0}
+  .ring{opacity:0}
+}
 </style>
 </head>
 <body>
 
 <div class="auth">
 
-  <div class="art">
-    <img src="/img/login-art.jpg" alt="">
+  <div class="art" aria-hidden="true">
+    <svg viewBox="0 -35 900 1000" preserveAspectRatio="xMidYMid slice" role="presentation" focusable="false">
+      <defs>
+        <pattern id="dots" width="28" height="28" patternUnits="userSpaceOnUse">
+          <circle cx="2" cy="2" r="1.1" fill="#E1E4E8"/>
+        </pattern>
+        <linearGradient id="areaFill" x1="0" y1="0" x2="0" y2="1">
+          <stop offset="0" stop-color="#0F6E8C" stop-opacity=".16"/>
+          <stop offset="1" stop-color="#0F6E8C" stop-opacity="0"/>
+        </linearGradient>
+        <linearGradient id="sparkFill" x1="0" y1="0" x2="0" y2="1">
+          <stop offset="0" stop-color="#3B8BA5" stop-opacity=".18"/>
+          <stop offset="1" stop-color="#3B8BA5" stop-opacity="0"/>
+        </linearGradient>
+        <filter id="cardShadow" x="-20%" y="-20%" width="140%" height="140%">
+          <feDropShadow dx="0" dy="6" stdDeviation="9" flood-color="#111318" flood-opacity=".08"/>
+        </filter>
+        <filter id="chipShadow" x="-40%" y="-40%" width="180%" height="180%">
+          <feDropShadow dx="0" dy="4" stdDeviation="6" flood-color="#111318" flood-opacity=".10"/>
+        </filter>
+      </defs>
+
+      <rect x="0" y="0" width="900" height="1000" fill="url(#dots)"/>
+
+      <!-- Sparkline card -->
+      <g class="card-g g-spark">
+        <rect x="150" y="150" width="210" height="122" rx="14" fill="#FFFFFF" stroke="#E4E6EA" filter="url(#cardShadow)"/>
+        <rect x="172" y="172" width="78" height="10" rx="5" fill="#EEF0F2"/>
+        <rect x="172" y="190" width="46" height="7" rx="3.5" fill="#F3F4F6"/>
+        <path class="trace-fill" d="M172,246 L198,236 L224,241 L250,224 L276,230 L302,212 L338,220 L338,254 L172,254 Z" fill="url(#sparkFill)"/>
+        <path d="M172,246 L198,236 L224,241 L250,224 L276,230 L302,212 L338,220" fill="none" stroke="#3B8BA5" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"/>
+      </g>
+
+      <!-- Line chart card -->
+      <g class="card-g g-line">
+        <rect x="420" y="210" width="320" height="244" rx="14" fill="#FFFFFF" stroke="#E4E6EA" filter="url(#cardShadow)"/>
+        <rect x="444" y="234" width="96" height="10" rx="5" fill="#EEF0F2"/>
+        <rect x="444" y="252" width="58" height="7" rx="3.5" fill="#F3F4F6"/>
+        <line x1="444" y1="296" x2="716" y2="296" stroke="#EEF0F2"/>
+        <line x1="444" y1="348" x2="716" y2="348" stroke="#EEF0F2"/>
+        <line x1="444" y1="400" x2="716" y2="400" stroke="#EEF0F2"/>
+        <path class="trace-fill" d="M446,404 L492,366 L538,380 L584,318 L630,334 L676,296 L714,284 L714,424 L446,424 Z" fill="url(#areaFill)"/>
+        <path class="trace" d="M446,404 L492,366 L538,380 L584,318 L630,334 L676,296 L714,284" fill="none" stroke="#0F6E8C" stroke-width="2.6" stroke-linecap="round" stroke-linejoin="round"/>
+        <g class="dot-live">
+          <circle class="ring" cx="714" cy="284" r="22" fill="#0F6E8C"/>
+          <circle class="ring r2" cx="714" cy="284" r="22" fill="#0F6E8C"/>
+          <circle cx="714" cy="284" r="5.5" fill="#0F6E8C" stroke="#FFFFFF" stroke-width="2"/>
+        </g>
+      </g>
+
+      <!-- Bar chart card -->
+      <g class="card-g g-bars">
+        <rect x="170" y="430" width="400" height="336" rx="14" fill="#FFFFFF" stroke="#E4E6EA" filter="url(#cardShadow)"/>
+        <rect x="194" y="456" width="96" height="11" rx="5.5" fill="#EEF0F2"/>
+        <rect x="194" y="476" width="58" height="8" rx="4" fill="#F3F4F6"/>
+        <g>
+          <rect class="bar" x="204" y="606" width="34" height="120" rx="5" fill="#CFE3EA"/>
+          <rect class="bar" x="252" y="556" width="34" height="170" rx="5" fill="#CFE3EA"/>
+          <rect class="bar" x="300" y="631" width="34" height="95"  rx="5" fill="#CFE3EA"/>
+          <rect class="bar" x="348" y="521" width="34" height="205" rx="5" fill="#3B8BA5"/>
+          <rect class="bar" x="396" y="586" width="34" height="140" rx="5" fill="#CFE3EA"/>
+          <rect class="bar" x="444" y="491" width="34" height="235" rx="5" fill="#0F6E8C"/>
+          <rect class="bar" x="492" y="551" width="34" height="175" rx="5" fill="#CFE3EA"/>
+        </g>
+        <line x1="194" y1="727" x2="546" y2="727" stroke="#E4E6EA"/>
+      </g>
+
+      <!-- Rating chips -->
+      <g class="chip c1">
+        <rect x="664" y="190" width="96" height="36" rx="18" fill="#FFFFFF" stroke="#E4E6EA" filter="url(#chipShadow)"/>
+        <circle cx="684" cy="208" r="4.5" fill="#1F8A5B"/>
+        <text x="697" y="213" font-family="Onest,-apple-system,sans-serif" font-size="14" font-weight="500" fill="#2E323A">Good</text>
+      </g>
+      <g class="chip c2">
+        <rect x="524" y="748" width="128" height="36" rx="18" fill="#FFFFFF" stroke="#E4E6EA" filter="url(#chipShadow)"/>
+        <circle cx="544" cy="766" r="4.5" fill="#C2414B"/>
+        <text x="557" y="771" font-family="Onest,-apple-system,sans-serif" font-size="14" font-weight="500" fill="#2E323A">Fatiguing</text>
+      </g>
+    </svg>
   </div>
 
   <div class="side">
