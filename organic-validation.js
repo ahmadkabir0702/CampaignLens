@@ -105,6 +105,10 @@ function ratingSignal(o, type, durationS) {
     if (o.likes === null || o.likes === undefined) return null;
     return ((Number(o.likes) + 2 * (num(o.comments) || 0)) / views) * 100;
   }
+  // Same guard as cqr_organic_label: a post with no views has no rating,
+  // whatever its average watch time says. Without this the panel graded a
+  // Facebook post with 0 views as Good while the stored label said No Views.
+  if (!num(o.views)) return null;
   const dur = Number(durationS);
   if (!isFinite(dur) || dur === 0) return null;
   if (o.avg_watch_time === null || o.avg_watch_time === undefined) return null;
