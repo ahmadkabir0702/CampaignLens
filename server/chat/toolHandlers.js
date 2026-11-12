@@ -33,12 +33,25 @@ function validMetric(m) {
   return m;
 }
 
+// Running = an active ad that delivered in the last two days. The ad status
+// on file is from the last day the ad delivered, so once an ad is paused it
+// stays ACTIVE for ever; the delivery check is what notices the pause.
+// Same rule as boostState in creatives.js.
+const DAILY_FOR = { v_paid_meta_creative: 'v_paid_meta_scored', v_paid_tiktok_creative: 'v_paid_tiktok_scored' };
+function runningExpr(view) {
+  const daily = DAILY_FOR[view];
+  if (!daily) return `${P.isActive}`;
+  return `(${P.isActive} and exists (select 1 from ${daily} d
+             where d.creative_id = ${view}.${P.creativeId} and d.brand_id = ${view}.${P.brand}
+               and d.date >= current_date - 2 and coalesce(d.impressions, 0) > 0))`;
+}
+
 /** Load and merge every boosted creative for a brand, with creative metadata. */
 async function loadMerged(pool, brand) {
-  const paidSel = `${P.creativeId} as id, ${P.spend} as spend, ${P.reach} as reach,
+  const paidSel = (view) => `${P.creativeId} as id, ${P.spend} as spend, ${P.reach} as reach,
     ${P.impressions} as impressions, ${P.hookRate} as hook_rate, ${P.holdRate} as hold_rate,
     ${P.hookQ} as hook_q, ${P.holdQ} as hold_q, ${P.vtr} as vtr,
-    ${P.avgWatchTime} as avg_watch_time, ${P.cqr} as cqr, ${P.isActive} as is_active,
+    ${P.avgWatchTime} as avg_watch_time, ${P.cqr} as cqr, ${runningExpr(view)} as is_active,
     ${P.durationS} as duration_s,
     ${P.w25} as w25, ${P.w50} as w50, ${P.w75} as w75, ${P.w100} as w100,
     ${P.verdict} as verdict, ${P.working} as working, ${P.notWorking} as not_working,
@@ -59,8 +72,8 @@ async function loadMerged(pool, brand) {
        from ${T.creatives} c
        left join ${T.creators} cr on cr.${CR.id} = c.${C.creatorId}
        where c.${C.brand} = $1`, [brand]),
-    pool.query(`select ${paidSel} from ${T.paidMeta} where ${P.brand} = $1 and ${P.creativeId} is not null`, [brand]),
-    pool.query(`select ${paidSel} from ${T.paidTiktok} where ${P.brand} = $1 and ${P.creativeId} is not null`, [brand]),
+    pool.query(`select ${paidSel(T.paidMeta)} from ${T.paidMeta} where ${P.brand} = $1 and ${P.creativeId} is not null`, [brand]),
+    pool.query(`select ${paidSel(T.paidTiktok)} from ${T.paidTiktok} where ${P.brand} = $1 and ${P.creativeId} is not null`, [brand]),
   ]);
 
   const metaBy = new Map(meta.rows.map((r) => [r.id, { ...r, platform: 'meta' }]));

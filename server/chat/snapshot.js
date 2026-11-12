@@ -100,11 +100,24 @@ async function qCreatives(pool, brand) {
   return new Map(rows.map((r) => [r.id, r]));
 }
 
+// Running = an active ad that delivered in the last two days. The ad status
+// on file is from the last day the ad delivered, so once an ad is paused it
+// stays ACTIVE for ever; the delivery check is what notices the pause.
+// Same rule as boostState in creatives.js.
+const DAILY_FOR = { v_paid_meta_creative: 'v_paid_meta_scored', v_paid_tiktok_creative: 'v_paid_tiktok_scored' };
+function runningExpr(view) {
+  const daily = DAILY_FOR[view];
+  if (!daily) return `${P.isActive}`;
+  return `(${P.isActive} and exists (select 1 from ${daily} d
+             where d.creative_id = ${view}.${P.creativeId} and d.brand_id = ${view}.${P.brand}
+               and d.date >= current_date - 2 and coalesce(d.impressions, 0) > 0))`;
+}
+
 async function qPaid(pool, view, brand, platform) {
   const { rows } = await pool.query(
     `select ${P.creativeId} as id, ${P.spend} as spend, ${P.reach} as reach, ${P.impressions} as impressions,
             ${P.hookRate} as hook_rate, ${P.holdRate} as hold_rate, ${P.hookQ} as hook_q, ${P.holdQ} as hold_q,
-            ${P.vtr} as vtr, ${P.avgWatchTime} as avg_watch_time, ${P.cqr} as cqr, ${P.isActive} as is_active,
+            ${P.vtr} as vtr, ${P.avgWatchTime} as avg_watch_time, ${P.cqr} as cqr, ${runningExpr(view)} as is_active,
             ${P.durationS} as duration_s, ${P.w25} as w25, ${P.w50} as w50, ${P.w75} as w75, ${P.w100} as w100,
             ${P.verdict} as verdict, ${P.working} as working, ${P.notWorking} as not_working,
             ${P.action} as action, ${P.actionType} as action_type, ${P.priority} as priority,
