@@ -105,6 +105,11 @@ function paidBlock(row, platform) {
   };
 }
 
+// An ad counts as running only if it delivered within this window: the last
+// two calendar days, the same as is_current in v_paid_windowed (the fatigue
+// panel). Measured from midnight of the last delivery date, so 3 days.
+const RUNNING_WINDOW_MS = 3 * 24 * 60 * 60 * 1000;
+
 // Views and the run's end date per creative, which the summary bar needs
 // and the lifetime views do not carry. Optional: a brand with no paid
 // history, or a database without migration 011, simply gets nothing.
@@ -112,17 +117,18 @@ async function paidExtras(brandId) {
   const out = { views: {}, window: {} };
   try {
     const { rows } = await query(
-      `select creative_id, sum(video_plays) as video_plays, max(date) as last_day
+      `select creative_id, sum(video_plays) as video_plays, max(date) as last_day,
+              max(date) filter (where coalesce(impressions, 0) > 0) as last_delivery
          from (
-           select creative_id, video_plays, date from v_paid_meta_scored where brand_id = $1
+           select creative_id, video_plays, date, impressions from v_paid_meta_scored where brand_id = $1
            union all
-           select creative_id, video_plays, date from v_paid_tiktok_scored where brand_id = $1
+           select creative_id, video_plays, date, impressions from v_paid_tiktok_scored where brand_id = $1
          ) x
         where creative_id is not null
         group by creative_id`, [brandId]);
     for (const r of rows) {
       out.views[r.creative_id] = Number(r.video_plays) || 0;
-      out.window[r.creative_id] = { last_day: r.last_day };
+      out.window[r.creative_id] = { last_day: r.last_day, last_delivery: r.last_delivery };
     }
   } catch (err) { if (err.code !== '42P01') throw err; }
 
@@ -302,6 +308,15 @@ async function buildPayload(brandId) {
       .sort((a, b) => (cqrRank[a] ?? 9) - (cqrRank[b] ?? 9))[0] || 'Invalid');
 
     const isBoosted = !!boostBy[id];
+    // Running means an active ad AND delivery in the last 2 days. The ad
+    // status on file is the one from the last day the ad delivered: once an
+    // ad is paused no new rows arrive, so that status stays ACTIVE for ever.
+    // Without the delivery check a paused ad read as running, and showed in
+    // the fatiguing list, indefinitely.
+    const lastDelivery = (extras.window[id] || {}).last_delivery;
+    const deliveredRecently = !!lastDelivery &&
+      (Date.now() - new Date(lastDelivery).getTime()) <= RUNNING_WINDOW_MS;
+    const isRunning = deliveredRecently && both.some(x => x.adStatus === 'ACTIVE');
 
     // Needs "now", so it is computed per request rather than in SQL.
     let needsBoostWarning = false;
@@ -342,7 +357,7 @@ async function buildPayload(brandId) {
       paidRatings: isStatic ? [] : both
         .map(x => ({ platform: x.platform, cqr: x.cqr || null, impressions: x.impressions || 0 }))
         .sort((a, b) => b.impressions - a.impressions),
-      adStatus: both.some(x => x.adStatus === 'ACTIVE') ? 'ACTIVE'
+      adStatus: isRunning ? 'ACTIVE'
               : (both.length ? 'STOPPED' : 'NOT_BOOSTED'),
       duration: c.duration_s === null ? (m || t || {}).duration ?? null : Number(c.duration_s),
       ret: (m || t || {}).ret || [100, 0, 0, 0, 0, 0],
@@ -357,7 +372,7 @@ async function buildPayload(brandId) {
       // Three states, not two. A creative that ran and was switched off
       // is not the same as one that never had spend behind it.
       boostState: !isBoosted ? 'never'
-                : (both.some(x => x.adStatus === 'ACTIVE') ? 'running' : 'ended'),
+                : (isRunning ? 'running' : 'ended'),
       boostEnded: (extras.window[id] || {}).last_day
         ? new Date(extras.window[id].last_day).toISOString().slice(0, 10) : null,
 
