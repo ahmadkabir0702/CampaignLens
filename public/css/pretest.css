@@ -172,6 +172,42 @@ figcaption{font:400 12.5px/18px var(--font);color:var(--ink-600);margin-top:4px}
 .bs-detail .bs-bar-track,.bs-detail .bs-total{background:var(--canvas-2)}
 .bs-detail .bs-fix{background:var(--canvas-2)}
 
+/* ---------- Sound and Funnel fit --------------------------------------
+   Same section, bar and check styles as the Pre-test Score. Colours follow
+   one rule: green 70 and above, amber 50 to 69, red below 50. */
+.card-badges{display:inline-flex;align-items:center;gap:6px;margin-left:auto;min-width:0}
+.card-badges .bs-badge{margin-left:0}
+.lens-chip{max-width:140px;overflow:hidden;text-overflow:ellipsis}
+.lens-built{color:var(--ink-700)}
+.lens-verdict{font:400 14px/21px var(--font);color:var(--ink-900);margin:0 0 12px}
+.lens-stages{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:10px}
+.lens-stage{background:var(--white);border-radius:var(--r-btn);padding:12px;box-shadow:inset 0 0 0 1px var(--line-soft);
+  display:flex;flex-direction:column;gap:6px;min-width:0}
+.lens-stage.is-built{box-shadow:inset 0 0 0 1.5px var(--navy)}
+.lens-stage-head{display:flex;align-items:center;gap:8px}
+.lens-stage-name{font:500 14px/20px var(--font);color:var(--ink-900)}
+.lens-tag{font:500 11px/1 var(--font);color:var(--white);background:var(--navy);border-radius:var(--r-pill);padding:4px 8px}
+.lens-stage-num{margin-left:auto;font:600 18px/22px var(--font);color:var(--tone);font-variant-numeric:tabular-nums}
+.lens-stage .bs-bar-track{display:block;background:var(--canvas-2)}
+.lens-stage-word{font:500 12.5px/16px var(--font);color:var(--tone)}
+.lens-k{font:400 12px/16px var(--font);color:var(--ink-400);margin-top:4px}
+.lens-list{list-style:none;margin:0;padding:0;display:flex;flex-direction:column;gap:3px}
+.lens-list li{font:400 13px/18px var(--font);color:var(--ink-700);padding-left:12px;position:relative}
+.lens-list li::before{content:'';position:absolute;left:0;top:7px;width:5px;height:5px;border-radius:50%;background:var(--pos)}
+.lens-list.is-gap li::before{background:var(--warn)}
+.lens-founds{display:flex;flex-direction:column;gap:3px;margin-top:12px;font:400 13px/18px var(--font);color:var(--ink-700)}
+.lens-found b{font-weight:500;color:var(--ink-900)}
+.lens-h-score{margin-left:10px;vertical-align:1px}
+.lens-h-word{font:500 13px/1 var(--font);color:var(--tone);margin-left:6px}
+.lens-loud{margin:12px 0 0}
+.lens-loud svg{width:100%;height:110px;display:block;background:var(--white);border-radius:var(--r-btn);overflow:visible}
+.lens-loud-band{fill:var(--pos-bg)}
+.lens-loud-line{fill:none;stroke:var(--navy);stroke-width:1.8;vector-effect:non-scaling-stroke;stroke-linejoin:round}
+.lens-loud text{font:400 10px var(--font);fill:var(--ink-400)}
+.bs-detail .lens-stage{background:var(--canvas-2);box-shadow:none}
+.bs-detail .lens-stage.is-built{box-shadow:inset 0 0 0 1.5px var(--navy)}
+@media (max-width:760px){.lens-stages{grid-template-columns:1fr}}
+
 /* ---------- YouTube field, PDF button ------------------------------ */
 .bs-field[hidden]{display:none}
 .bs-head-actions{display:flex;align-items:flex-start;gap:8px;flex:none}
@@ -221,6 +257,9 @@ figcaption{font:400 12.5px/18px var(--font);color:var(--ink-600);margin-top:4px}
   #pt-print .bs-all summary::after{content:''}
   #pt-print .bs-table{margin-bottom:12px}
   #pt-print .bs-table tr{break-inside:avoid;page-break-inside:avoid}
+  #pt-print .lens-stages{grid-template-columns:repeat(3,1fr);gap:8px;break-inside:avoid;page-break-inside:avoid}
+  #pt-print .lens-stage{background:#fff}
+  #pt-print .lens-loud{break-inside:avoid;page-break-inside:avoid}
 }
 
 

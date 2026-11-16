@@ -1967,6 +1967,10 @@ select:focus,.search-input:focus,.modal-input:focus{outline:none;border-color:va
 .dsum-inv-bg,.dsum-quiet{color:var(--ink-400);font-size:17px;line-height:28px}
 .dsum-pos{color:var(--pos)}
 .dsum-warn{color:var(--warn)}
+/* Built for: coloured by how well the creative fits that stage. */
+.dsum-fit-green{color:var(--pos)}
+.dsum-fit-amber{color:var(--warn)}
+.dsum-fit-red{color:var(--neg)}
 
 
 /* ---------- Toast --------------------------------------------------

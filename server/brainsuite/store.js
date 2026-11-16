@@ -89,7 +89,9 @@ async function stalledPolls() {
   const { rows } = await query(
     `select id from brainsuite_jobs
       where status in ('queued','analysing') and bs_job_id is not null
-        and coalesce(last_polled_at, started_at, created_at) < now() - interval '15 minutes'`);
+        -- a stored-mode pre-test still being sent by the worker is not polled yet
+        and (upload_key is null or bs_uploaded_at is not null)
+        and coalesce(last_polled_at, bs_uploaded_at, started_at, created_at) < now() - interval '15 minutes'`);
   return rows.map(r => r.id);
 }
 
@@ -164,6 +166,17 @@ async function listPretests(brandId, limit = 100) {
        left join app_users u on u.username = j.requested_by
       where j.brand_id = $1 and j.kind = 'pretest'
       order by j.created_at desc limit $2`, [brandId, limit]);
+  // Sound and Funnel fit, when migration 045 has run.
+  try {
+    const ids = rows.map(r => r.id);
+    if (ids.length) {
+      const { rows: lens } = await query(
+        `select pretest_id, status, funnel_intent, funnel_fit, sound_score from lens_checks
+          where kind = 'pretest' and pretest_id = any($1::uuid[])`, [ids]);
+      const by = new Map(lens.map(l => [l.pretest_id, l]));
+      for (const r of rows) r.lens = by.get(r.id) || null;
+    }
+  } catch (e) { if (e.code !== '42P01') throw e; }
   return rows;
 }
 
@@ -189,6 +202,18 @@ async function failAbandonedUploads() {
   return rows.length;
 }
 
+// Stored-mode pre-tests claimed for the worker that never reached the
+// scoring service (the worker job was lost). They used no quota; release it.
+async function failStuckUploads() {
+  const { rows } = await query(
+    `update brainsuite_jobs set status = 'failed', started_at = null, completed_at = now(),
+            error = 'The video was not processed. Run it again.'
+      where kind = 'pretest' and status = 'queued' and upload_key is not null
+        and bs_uploaded_at is null and started_at < now() - interval '2 hours'
+      returning id`);
+  return rows.length;
+}
+
 async function deleteResult(jobId) {
   await query(`delete from brainsuite_results where job_id = $1`, [jobId]);
 }
@@ -210,5 +235,5 @@ module.exports = {
   brandInfo, insertJob, getJob, updateJob, bumpPoll, saveResult, getResult,
   claimForStart, completeWithResult, updateIfRunning, stalledPolls,
   pretestsStartedToday, findByHash, activeForCreative, latestForCreative,
-  listPretests, expirePretests, failAbandonedUploads, deleteResult, usage,
+  listPretests, expirePretests, failAbandonedUploads, failStuckUploads, deleteResult, usage,
 };

@@ -22,6 +22,8 @@ const { buildBriefing, channelForPlatform, CHANNELS } = require('./briefing');
 const { enqueue, getConnection } = require('./queue');
 const { query } = require('../../db');
 
+const r2 = require('../lens/r2');
+
 const TTL_HOURS = Number(process.env.PRETEST_TTL_HOURS || 72);
 const DAILY_CAP = Number(process.env.BS_DAILY_CAP || 40);
 
@@ -80,10 +82,18 @@ function statusFor(bsStatus) {
 }
 
 // ── Pre-tests ────────────────────────────────────────────────────────────────
+// Two ways in, picked by whether temporary storage (R2) is configured:
+//
+//   stored  the browser uploads once to private storage; the pre-test worker
+//           (queue 'pretests') sends the file on to the scoring service and
+//           also runs Sound and Funnel fit. The default once R2 is set up.
+//   direct  the browser uploads straight to the scoring service, as before.
+//           No Sound or Funnel fit for pre-tests in this mode.
+const uploadMode = () => (r2.configured() ? 'stored' : 'direct');
+
 /**
  * Step 1 of 3. Checks everything that could stop the test BEFORE anything is
- * uploaded, then announces the job and hands the browser a one-file upload
- * form. The video goes from the browser straight to Brainsuite.
+ * uploaded, then hands the browser a one-file upload link.
  */
 async function createPretest({ brandId, username, fields }) {
   if (!client.configured()) throw new HttpError(503, 'Pre-testing is not connected on this server yet.');
@@ -115,27 +125,64 @@ async function createPretest({ brandId, username, fields }) {
   await checkPretestCap();
 
   const fileName = safeFileName(fields.file_name);
+
+  if (uploadMode() === 'stored') {
+    const t = r2.typeFor(fields.file_name);
+    if (!t) throw new HttpError(400, 'Choose an MP4, MOV, M4V or WebM video.');
+    if (!Number.isInteger(fileBytes) || fileBytes <= 0) throw new HttpError(400, 'The file size is missing.');
+    const key = r2.newKey(t.ext);
+    const row = await store.insertJob({
+      bsJobId: null, kind: 'pretest', brandId, requestedBy: username, status: 'uploading',
+      channel: briefing.channel, briefing, assetName, fileName, fileBytes,
+    });
+    await store.updateJob(row.id, { upload_key: key });
+    return { row, upload: await r2.uploadLink(key, t.type, fileBytes) };
+  }
+
   const bsJob = await client.announceJob(briefing.channel);
   const asset = await client.announceAsset(briefing.channel, bsJob.id, fileName);
   const row = await store.insertJob({
     bsJobId: bsJob.id, kind: 'pretest', brandId, requestedBy: username, status: 'uploading',
     channel: briefing.channel, briefing, assetName, fileName, fileBytes: fileBytes || null,
   });
-  return { row, upload: { url: asset.uploadUrl, fields: asset.fields } };
+  return { row, upload: { method: 'POST', url: asset.uploadUrl, fields: asset.fields } };
 }
 
-// The upload form is only valid for 5 minutes. Re-announcing the same asset
-// returns a fresh one.
+// Upload links expire (5 minutes direct, 15 stored). A fresh one for the same file.
 async function freshUpload(row) {
   if (row.status !== 'uploading') throw new HttpError(409, 'This pre-test is no longer waiting for its upload.');
+  if (row.upload_key) {
+    const t = r2.typeFor(row.upload_key);
+    return r2.uploadLink(row.upload_key, t ? t.type : 'video/mp4', Number(row.file_bytes));
+  }
   const asset = await client.announceAsset(row.channel, row.bs_job_id, row.file_name);
-  return { url: asset.uploadUrl, fields: asset.fields };
+  return { method: 'POST', url: asset.uploadUrl, fields: asset.fields };
 }
 
 // Step 3 of 3, after the browser's upload succeeded. Uses one test of quota.
 async function startPretest(row) {
   if (row.status !== 'uploading') throw new HttpError(409, 'This pre-test has already been started.');
   await checkPretestCap();
+
+  if (row.upload_key) {
+    // The file must really be there, at the size the link was made for.
+    const obj = await r2.head(row.upload_key);
+    if (!obj) throw new HttpError(409, 'The upload did not arrive. Try again.');
+    if (obj.bytes !== Number(row.file_bytes)) throw new HttpError(409, 'The uploaded file is not the one chosen. Try again.');
+    // Claimed first, so a double click cannot queue it twice. started_at
+    // holds the day's quota now; it is cleared if the test never starts.
+    const claimed = await store.claimForStart(row.id);
+    if (!claimed) throw new HttpError(409, 'This pre-test has already been started.');
+    const { enqueuePretest } = require('../lens/queue');
+    try {
+      await enqueuePretest(row.id);
+    } catch (e) {
+      await store.updateJob(row.id, { status: 'uploading', started_at: null }).catch(() => {});
+      throw new HttpError(503, 'Background processing is not available right now. Try again in a minute.');
+    }
+    return claimed;
+  }
+
   // Claim it first, so a double click or a retried request cannot start it twice.
   const claimed = await store.claimForStart(row.id);
   if (!claimed) throw new HttpError(409, 'This pre-test has already been started.');
@@ -155,8 +202,45 @@ async function startPretest(row) {
   return claimed;
 }
 
+/**
+ * Stored mode, run by the pre-test worker with the file on its disk: announce,
+ * upload, start, then poll as usual. Returns { started } or { refused }.
+ * The same steps the creative worker uses for added creatives.
+ */
+async function sendUploadedPretest(row, filePath) {
+  let bsJobId = row.bs_job_id;
+  if (!bsJobId) {
+    const bsJob = await client.announceJob(row.channel);
+    bsJobId = bsJob.id;
+    await store.updateJob(row.id, { bs_job_id: bsJobId });
+  }
+  const asset = await client.announceAsset(row.channel, bsJobId, row.file_name);
+  await client.uploadFile(asset, filePath, row.file_name);
+  try {
+    await client.startJob(row.channel, bsJobId, row.briefing);
+  } catch (e) {
+    if (refused(e)) {
+      const why = (e.detail || e.message).slice(0, 300);
+      await store.updateJob(row.id, { status: 'failed', started_at: null, error: `The test could not be started: ${why}` });
+      return { refused: why };
+    }
+    console.error(`[brainsuite] start ${row.id} unclear, polling to find out: ${e.message}`);
+  }
+  // From here it is only ever polled, never started again.
+  await store.updateJob(row.id, { bs_uploaded_at: new Date(), started_at: row.started_at || new Date() });
+  await queuePoll(row.id, FIRST_POLL_MS).catch(e => console.error(`[brainsuite] poll not queued for ${row.id}: ${e.message}`));
+  return { started: bsJobId };
+}
+
+/** Stored mode: the test never started (a bad file, or every attempt failed). No quota used. */
+async function failUploadedPretest(row, message) {
+  return store.updateJob(row.id, { status: 'failed', started_at: null, completed_at: new Date(), error: String(message).slice(0, 500) });
+}
+
 // The person who ran it, or an internal user, can end it early.
 async function removePretest(row) {
+  if (row.upload_key) r2.remove(row.upload_key).catch(() => {});
+  require('../lens/store').removeForPretest(row.id).catch(() => {});
   if (row.status === 'uploading') {
     return store.updateJob(row.id, { status: 'failed', error: 'Cancelled before the upload finished' });
   }
@@ -171,7 +255,7 @@ async function pollOnce(rowId) {
   if (!row || !row.bs_job_id) return null;
   if (!['queued', 'analysing'].includes(row.status)) return null;
 
-  const age = Date.now() - new Date(row.started_at || row.created_at).getTime();
+  const age = Date.now() - new Date(row.bs_uploaded_at || row.started_at || row.created_at).getTime();
   await store.bumpPoll(rowId);
   const fail = error => store.updateIfRunning(rowId, { status: 'failed', completed_at: new Date(), error: String(error).slice(0, 500) });
 
@@ -206,6 +290,10 @@ async function pollOnce(rowId) {
       // Images in the result are fresh right now; prime the cache for whoever opens it first.
       cacheMedia(row.bs_job_id, mediaFrom(result)).catch(() => {});
       console.log(`[brainsuite] ${row.kind} ${rowId} scored ${summary.total.score} (${summary.total.rating})`);
+      // The funnel fit reads the scored checks, so it is worked out again now.
+      require('../lens/service').refreshFunnel(row.kind === 'creative'
+        ? { kind: 'creative', creativeId: row.creative_id, brandId: row.brand_id }
+        : { kind: 'pretest', pretestId: row.id, brandId: row.brand_id }).catch(() => {});
     }
     return null;
   }
@@ -369,10 +457,12 @@ async function expireNow() {
   const abandoned = await store.failAbandonedUploads();
   const stalled = await store.stalledPolls();
   for (const id of stalled) await queuePoll(id, 1000);
-  if (expired || abandoned || stalled.length) {
-    console.log(`[brainsuite] expired ${expired} pre-test report(s), closed ${abandoned} abandoned upload(s), restarted ${stalled.length} poll(s)`);
+  const stuck = await store.failStuckUploads().catch(() => 0);
+  const lensGone = await require('../lens/store').expire().catch(() => 0);
+  if (expired || abandoned || stalled.length || stuck || lensGone) {
+    console.log(`[brainsuite] expired ${expired} pre-test report(s), closed ${abandoned} abandoned upload(s), restarted ${stalled.length} poll(s), closed ${stuck} stuck pre-test(s), cleared ${lensGone} sound and funnel result(s)`);
   }
-  return { expired, abandoned, restarted: stalled.length };
+  return { expired, abandoned, restarted: stalled.length, stuck, lensGone };
 }
 
 function settings() {
@@ -381,11 +471,13 @@ function settings() {
     queue: !!getConnection(),
     ttlHours: TTL_HOURS, dailyCap: DAILY_CAP,
     channels: CHANNELS,
+    uploadMode: uploadMode(),
   };
 }
 
 module.exports = {
   HttpError, createPretest, freshUpload, startPretest, removePretest,
+  sendUploadedPretest, failUploadedPretest, uploadMode,
   pollOnce, queuePoll, mediaFor, scoreCreative, retryCreativeUpload, expireNow, settings,
   statusFor, safeFileName,
 };
