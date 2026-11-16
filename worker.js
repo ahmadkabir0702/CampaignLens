@@ -28,6 +28,7 @@ const { query } = require('./db');
 const { notifySuccess, notifyFailure } = require('./notify');
 const { scoreCreative } = require('./server/brainsuite/service');
 const { startBrainsuiteWorker, closeBrainsuiteWorker } = require('./server/brainsuite/queue');
+const { startPretestWorker, closePretestWorker } = require('./server/lens/queue');
 
 // Gemini model. Google retires these on their own schedule — 2.5-flash was
 // pulled for new users — so it is an env var, changeable without a deploy.
@@ -74,6 +75,23 @@ function stepFor(duration) {
   while (Math.ceil(duration / step) > MAX_SEGMENTS) step += 1;
   return step;
 }
+
+// What the funnel fit needs beyond the creative attributes: is there an
+// offer, a direct ask, a reason to act now, and reasons to choose the product.
+// Shared by videos and statics. Read by server/lens/score.js.
+const FUNNEL_PROPS = {
+  reasons: { type: 'array', items: { type: 'string' } },
+  offer: { type: 'string' },
+  cta_text: { type: 'string' },
+  direct_action: { type: 'boolean' },
+  urgency: { type: 'boolean' },
+};
+const FUNNEL_KEYS = Object.keys(FUNNEL_PROPS);
+const FUNNEL_PROMPT = `"reasons": every concrete reason to choose the product that the ad gives, on screen or spoken, each in 2 to 6 words (for example "zero sugar", "lasts 48 hours", "with real lime"). Benefits, ingredients, results and proof count. Mood, slogans and the brand name do not. An empty array if there are none.
+"offer": any price, discount, free gift, contest or promotion, written as shown or said. An empty string if there is none.
+"cta_text": the call to action word for word as shown or said (for example "Order now", "Available at Keells"). An empty string if there is none.
+"direct_action": true only if the ad asks the viewer to act now in a specific way: buy, order, shop, book, sign up, download, call, tap a link. "Available in stores", "follow us" or a hashtag alone are false.
+"urgency": true if the ad gives a reason to act soon: a deadline, "this week", "limited", "while stocks last", "today".`;
 
 // Structured output. responseMimeType alone asks for JSON without saying what
 // shape; a schema constrains it, which is what stops the model returning an
@@ -146,16 +164,21 @@ const RESPONSE_SCHEMA = {
         required: ['t', 'on_screen', 'audio', 'product_visible'],
       },
     },
+    // ---- Funnel fit and sound (server/lens) ------------------------------
+    ...FUNNEL_PROPS,
+    brand_spoken_first_s: { type: 'number' },
   },
   required: ['duration', 'format', 'product_role', 'format_note', 'hook', 'timeline',
              'content_intent', 'narrative_structure', 'hook_device', 'hook_subject', 'hook_pace',
-             'opens_with_product', 'opens_with_face', 'has_text_overlay', 'logo_first_3s', 'captions', 'voiceover', 'music', 'cta', 'language', 'talent', 'production_style', 'aspect_ratio', 'timeline_attrs'],
+             'opens_with_product', 'opens_with_face', 'has_text_overlay', 'logo_first_3s', 'captions', 'voiceover', 'music', 'cta', 'language', 'talent', 'production_style', 'aspect_ratio', 'timeline_attrs',
+             ...FUNNEL_KEYS, 'brand_spoken_first_s'],
   propertyOrdering: ['duration', 'format', 'product_role', 'format_note', 'hook', 'timeline',
                      'content_intent', 'narrative_structure', 'hook_device', 'hook_subject', 'hook_pace',
-                     'opens_with_product', 'opens_with_face', 'has_text_overlay', 'logo_first_3s', 'captions', 'voiceover', 'music', 'cta', 'language', 'talent', 'production_style', 'aspect_ratio', 'timeline_attrs'],
+                     'opens_with_product', 'opens_with_face', 'has_text_overlay', 'logo_first_3s', 'captions', 'voiceover', 'music', 'cta', 'language', 'talent', 'production_style', 'aspect_ratio', 'timeline_attrs',
+                     ...FUNNEL_KEYS, 'brand_spoken_first_s'],
 };
 
-function buildPrompt(hintDuration) {
+function buildPrompt(hintDuration, brandName) {
   const dur = hintDuration && hintDuration > 0 ? hintDuration : null;
   const step = stepFor(dur);
   const n = dur ? Math.ceil(dur / step) : null;
@@ -252,6 +275,9 @@ For the next five keys, judge ONLY the first 3 seconds. Ignore everything after 
     "audio": one of "speech", "music", "both", "silent",
     "product_visible": true if the product is visible in that window }
 
+${FUNNEL_PROMPT}
+"brand_spoken_first_s": the second at which ${brandName ? `the brand name "${String(brandName).replace(/["\\]/g, '')}"` : 'the brand name'} is first said or sung aloud (not shown). -1 if it is never said.
+
 Return only the JSON object. No markdown, no commentary.`;
 }
 
@@ -301,13 +327,14 @@ const STATIC_SCHEMA = {
     talent: { type: 'string', enum: ['creator', 'celebrity', 'model', 'everyday_person', 'none'] },
     production_style: { type: 'string', enum: ['phone_shot', 'polished'] },
     aspect_ratio: { type: 'string', enum: ['vertical', 'square', 'horizontal'] },
+    ...FUNNEL_PROPS,
   },
   required: ['format', 'product_role', 'format_note', 'hook', 'slides', 'content_intent', 'narrative_structure',
              'hook_device', 'hook_subject', 'opens_with_product', 'opens_with_face', 'has_text_overlay',
-             'logo_first_slide', 'cta', 'language', 'talent', 'production_style', 'aspect_ratio'],
+             'logo_first_slide', 'cta', 'language', 'talent', 'production_style', 'aspect_ratio', ...FUNNEL_KEYS],
   propertyOrdering: ['format', 'product_role', 'format_note', 'hook', 'slides', 'content_intent', 'narrative_structure',
                      'hook_device', 'hook_subject', 'opens_with_product', 'opens_with_face', 'has_text_overlay',
-                     'logo_first_slide', 'cta', 'language', 'talent', 'production_style', 'aspect_ratio'],
+                     'logo_first_slide', 'cta', 'language', 'talent', 'production_style', 'aspect_ratio', ...FUNNEL_KEYS],
 };
 
 function buildStaticPrompt(count, caption) {
@@ -352,6 +379,7 @@ For the next four keys, judge ONLY the ${first}:
 "talent": "creator", "celebrity", "model", "everyday_person" or "none".
 "production_style": "phone_shot" (informal, native to social) or "polished" (professionally shot or designed).
 "aspect_ratio": "vertical", "square" or "horizontal".
+${FUNNEL_PROMPT}
 
 Caption, between the markers:
 <<<
@@ -822,7 +850,7 @@ async function geminiCall(label, fn, { tries = 3, baseMs = 5000 } = {}) {
 const INLINE_MAX_BYTES = Number(process.env.GEMINI_INLINE_MAX_BYTES || 0);
 
 // ── Steps 3-4: Gemini ─────────────────────────────────────────────────────────
-async function analyseVideo(ai, videoPath, hintDuration) {
+async function analyseVideo(ai, videoPath, hintDuration, brandName) {
   const { size } = fs.statSync(videoPath);
   const inline = size <= INLINE_MAX_BYTES;
   let geminiFile = null;
@@ -865,7 +893,7 @@ async function analyseVideo(ai, videoPath, hintDuration) {
       model: GEMINI_MODEL,
       contents: [{ role: 'user', parts: [
         videoPart,
-        { text: buildPrompt(hintDuration) },
+        { text: buildPrompt(hintDuration, brandName) },
       ]}],
       // A 90s video at 2s granularity is ~45 timeline entries plus the four
       // quartile segments, and thinking tokens count toward this ceiling.
@@ -1110,6 +1138,7 @@ function makeProcessor(ai) {
       let timeline = [];
       let safeDur = null;
       let staticInfo = null;
+      let staticRead = null;
 
       if (isStatic) {
         await job.updateProgress({ step: 'reading slides', pct: 40 });
@@ -1142,6 +1171,7 @@ function makeProcessor(ai) {
             has_text: typeof x.has_text === 'boolean' ? x.has_text : null,
           };
         });
+        staticRead = sa;
         a = sa ? {
           hook: sa.hook || null,
           format: pick(sa.format, STATIC_FORMATS),
@@ -1161,7 +1191,10 @@ function makeProcessor(ai) {
         await streamToFile(meta.download_url, videoPath);
 
         await job.updateProgress({ step: 'analysing', pct: 60 });
-        a = await analyseVideo(ai, videoPath, typeof meta.duration === 'number' ? meta.duration : null);
+        // The brand name lets the analysis say when it is first spoken.
+        const brandRow = await query('select name from brands where brand_id = $1', [d.brand]).catch(() => ({ rows: [] }));
+        a = await analyseVideo(ai, videoPath, typeof meta.duration === 'number' ? meta.duration : null,
+          brandRow.rows[0] ? brandRow.rows[0].name : null);
 
       // A partial analysis is not worth storing — the dashboard labels
       // segments by position, so a missing one mislabels the rest.
@@ -1368,6 +1401,20 @@ function makeProcessor(ai) {
         if (bs && (bs.started || bs.reused)) console.log(`[worker] ${creativeId}: Brainsuite ${bs.started ? 'test started' : 'score reused'}`);
       }
 
+      // Sound and Funnel fit, from the same file and the same analysis: no
+      // extra download and no extra Gemini call. Never fatal. The funnel is
+      // worked out again when the Pre-test Score arrives.
+      try {
+        const lens = require('./server/lens/service');
+        if (!isStatic && videoPath) {
+          await lens.runForVideo({ creativeId, brandId: d.brand, filePath: videoPath, duration: safeDur,
+            analysis: { ...a, product_screen_pct: at.product_screen_pct, time_to_product_s: at.time_to_product_s } });
+        } else if (staticRead) {
+          await lens.runForStatic({ creativeId, brandId: d.brand,
+            analysis: { ...staticRead, logo_first_3s: at.logo_first_3s, product_screen_pct: at.product_screen_pct } });
+        }
+      } catch (e) { console.error(`[worker] ${creativeId}: sound and funnel skipped: ${e.message}`); }
+
       return {
         status: 'completed', creativeId, platform,
         hook: a.hook || null,
@@ -1442,8 +1489,9 @@ function startWorker(ai) {
 
   attachShutdown(worker, connection);
 
-  // Brainsuite polling runs wherever the creative worker runs.
+  // Brainsuite polling and pre-tests run wherever the creative worker runs.
   startBrainsuiteWorker();
+  startPretestWorker(ai);
 
   console.log('[worker] active and listening for background download tasks');
   return worker;
@@ -1463,7 +1511,7 @@ function attachShutdown(worker, connection) {
     console.log(`[worker] ${signal} received — finishing in-flight jobs, no new ones accepted`);
     try {
       // Both workers drain at once: active jobs finish, no new ones start.
-      await Promise.all([worker.close(), closeBrainsuiteWorker()]);
+      await Promise.all([worker.close(), closeBrainsuiteWorker(), closePretestWorker()]);
       console.log('[worker] all in-flight jobs finished');
     } catch (e) {
       console.error('[worker] shutdown error:', e.message);

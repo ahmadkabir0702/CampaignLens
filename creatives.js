@@ -181,9 +181,10 @@ async function brainsuiteScores(brandId) {
 }
 
 async function buildPayload(brandId) {
-  const [extras, bsBy, staticBands, followersBy, slidesBy] = await Promise.all([
+  const [extras, bsBy, staticBands, followersBy, slidesBy, lensBy] = await Promise.all([
     paidExtras(brandId), brainsuiteScores(brandId),
     SR.loadBands(query, brandId), SR.loadFollowers(query, brandId), slidesFor(brandId),
+    require('./server/lens/store').forBrand(brandId),
   ]);
   const [brandR, contentR, metaR, ttR, organicR, bestR, boostR, accountR, campR] =
     await Promise.all([
@@ -430,6 +431,11 @@ async function buildPayload(brandId) {
       bsStatus: bsBy[id] ? bsBy[id].status : null,
       bsScore: bsBy[id] && bsBy[id].total_score !== null ? Number(bsBy[id].total_score) : null,
       bsRating: bsBy[id] ? bsBy[id].total_rating || null : null,
+
+      // Sound and Funnel fit: null until worked out (migration 045).
+      lensIntent: lensBy[id] ? lensBy[id].funnel_intent || null : null,
+      lensFit: lensBy[id] && lensBy[id].funnel_fit != null ? Number(lensBy[id].funnel_fit) : null,
+      lensSound: lensBy[id] && lensBy[id].sound_score != null ? Number(lensBy[id].sound_score) : null,
 
       // organic
       igOrganic: org.ig || null,
