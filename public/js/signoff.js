@@ -172,7 +172,7 @@
       LIST = data.signoffs || [];
       ME = data.me || ME;
     } catch (e) {
-      el.innerHTML = `<div class="sg-wrap"><div class="load-msg load-msg-error">Couldn't load the checklists. ${esc(e.message)}
+      el.innerHTML = `<div class="sg-wrap"><div class="load-msg load-msg-error">Couldn't load the checklists. ${esc((typeof connectionMessage === 'function' ? connectionMessage(e) : e.message))}
         <button class="load-retry" onclick="Signoff.render()">Try again</button></div></div>`;
       return;
     }

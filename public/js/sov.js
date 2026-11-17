@@ -106,7 +106,7 @@
       if (state.cat >= state.data.categories.length) state.cat = 0;
       render();
     } catch (e) {
-      page.innerHTML = `<div class="load-msg load-msg-error">Couldn't load share of voice. ${esc(e.message)}
+      page.innerHTML = `<div class="load-msg load-msg-error">Couldn't load share of voice. ${esc((typeof connectionMessage === 'function' ? connectionMessage(e) : e.message))}
         <button class="load-retry" onclick="SOV.refresh()">Try again</button></div>`;
     }
   }

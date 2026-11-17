@@ -1353,7 +1353,7 @@ app.get('/api/brands', async (req, res) => {
   app.get('/api/health', async (req, res) => {
     try {
       await query('select 1');
-      res.json({ ok: true });
+      res.json({ ok: true, version: res.getHeader('X-App-Version') || null, up_s: Math.round(process.uptime()) });
     } catch (err) {
       console.error('[health]', err.message);
       res.status(503).json({ ok: false });
