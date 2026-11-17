@@ -1979,6 +1979,15 @@ select:focus,.search-input:focus,.modal-input:focus{outline:none;border-color:va
   transition:opacity var(--t-base) var(--ease-out),transform var(--t-base) var(--ease-out),display var(--t-base) allow-discrete}
 .cl-toast.show{display:block;opacity:1;transform:none}
 @starting-style{.cl-toast.show{opacity:0;transform:translateY(8px)}}
+
+/* A newer version is live: one quiet bar with a Refresh button. Stays until
+   used or dismissed, above the toast. */
+.app-update{position:fixed;left:50%;bottom:calc(24px + env(safe-area-inset-bottom,0px));z-index:320;translate:-50% 0;
+  display:flex;align-items:center;gap:12px;max-width:min(560px,calc(100vw - 32px));padding:9px 10px 9px 16px;border-radius:10px;
+  background:var(--ink-900);color:#fff;font:400 13.5px/19px var(--font);box-shadow:var(--shadow-pop)}
+.app-update-btn{flex:none;height:30px;padding:0 12px;border-radius:7px;border:0;background:#fff;color:var(--ink-900);font:500 13px/1 var(--font);cursor:pointer}
+.app-update-x{flex:none;width:28px;height:28px;border:0;background:transparent;color:rgba(255,255,255,.7);font:400 18px/1 var(--font);cursor:pointer}
+.app-update-x:hover{color:#fff}
 .cl-toast.is-error::before{content:"";display:inline-block;width:8px;height:8px;border-radius:50%;
   background:#F28B92;margin-right:9px;vertical-align:1px}
 

@@ -11,6 +11,13 @@ const { loadFeatures } = require('./server/features');
 const SEC = require('./server/security');
 
 const app = express();
+
+// ── Version and reliability ───────────────────────────────────────────────
+// Every response says which build answered it. A tab left open across a
+// deploy is still running the old page; when the browser sees a newer
+// version it offers a refresh instead of failing in odd ways.
+const APP_VERSION = (process.env.RENDER_GIT_COMMIT || '').slice(0, 7) || Date.now().toString(36);
+app.use((req, res, next) => { res.setHeader('X-App-Version', APP_VERSION); next(); });
 app.disable('x-powered-by');
 // Render terminates TLS at its proxy, so without this Express sees the request
 // as plain HTTP and a secure cookie would never be set on the custom domain.
@@ -380,8 +387,33 @@ app.use((req, res, next) => {
   res.redirect('/change-password');
 });
 
-// Serve static files — only after auth middleware
-app.use(express.static(path.join(__dirname, 'public')));
+// The app page, with every script and stylesheet tagged with this build's
+// version. The page itself is never cached; the files it names can be,
+// because a new deploy names new URLs. Without this a browser could mix an
+// old script with a new server and only a hard refresh would fix it.
+const INDEX_HTML = (() => {
+  try {
+    return fs.readFileSync(path.join(__dirname, 'public', 'index.html'), 'utf8')
+      .replace(/((?:src|href)="\/(?:js|css|vendor)\/[^"?]+)"/g, `$1?v=${APP_VERSION}"`);
+  } catch (e) { return null; }
+})();
+function sendIndex(res) {
+  res.setHeader('Cache-Control', 'no-cache');
+  if (INDEX_HTML) return res.type('html').send(INDEX_HTML);
+  return res.sendFile(path.join(__dirname, 'public', 'index.html'));
+}
+app.get(['/', '/index.html'], (req, res) => sendIndex(res));
+
+// Serve static files — only after auth middleware. A versioned URL can be
+// kept for a year (private: these are behind the login, so never on a
+// shared cache); anything else is checked with the server every time.
+app.use((req, res, next) => {
+  if (req.method === 'GET' && /^\/(js|css|vendor)\//.test(req.path)) {
+    res.setHeader('Cache-Control', req.query.v ? 'private, max-age=31536000, immutable' : 'no-cache');
+  }
+  next();
+});
+app.use(express.static(path.join(__dirname, 'public'), { cacheControl: false, index: false }));
 
 const ai = new GoogleGenAI({ apiKey: process.env.GEMINI_API_KEY });
 
@@ -422,9 +454,7 @@ require('./server/admin/routes')(app);
 // An API path nothing answered is a 404, not the app's page.
 app.all('/api/*', (req, res) => res.status(404).json({ error: 'Not found.' }));
 
-app.get('*', (req, res) => {
-  res.sendFile(path.join(__dirname, 'public', 'index.html'));
-});
+app.get('*', (req, res) => sendIndex(res));
 
 // Last resort: an error nothing caught is logged, never shown.
 // eslint-disable-next-line no-unused-vars
@@ -439,7 +469,33 @@ app.use((err, req, res, next) => {
 
 const PORT = process.env.PORT || 8080;
 const server = app.listen(PORT, '0.0.0.0', () => {
-  console.log(`Server listening on port ${PORT}`);
+  console.log(`Server listening on port ${PORT} (version ${APP_VERSION})`);
+  // One line per start on the admin page, so frequent restarts show up.
+  require('./server/ops').logError('server-start', new Error(`Server started, version ${APP_VERSION}`));
+});
+
+// Render's proxy keeps connections to this server open and reuses them. Node
+// closes an idle one after 5 seconds by default, so the proxy can send a
+// request down a connection Node is closing at that moment, and the browser
+// gets a dropped request ("Failed to fetch"). Idle connections now stay open
+// longer than the proxy's, so the proxy is always the one to close them.
+server.keepAliveTimeout = 120 * 1000;
+server.headersTimeout = 125 * 1000;
+
+// A promise nobody caught used to stop the whole server (Node's default),
+// taking every open page down with it until Render restarted it. Now it is
+// recorded on the admin page and the server carries on.
+process.on('unhandledRejection', (reason) => {
+  const err = reason instanceof Error ? reason : new Error(String(reason));
+  console.error('[server] unhandled rejection:', err.stack ? err.stack.split('\n').slice(0, 4).join(' | ') : err.message);
+  try { require('./server/ops').logError('unhandled-rejection', err); } catch (e) { /* recording is best effort */ }
+});
+// A thrown error nothing caught leaves the process in an unknown state, so
+// it still restarts, but the reason is recorded first.
+process.on('uncaughtException', (err) => {
+  console.error('[server] crash:', err && err.stack ? err.stack.split('\n').slice(0, 6).join(' | ') : err);
+  try { require('./server/ops').logError('crash', err); } catch (e) { /* recording is best effort */ }
+  setTimeout(() => process.exit(1), 1500).unref();
 });
 
 // Render sends SIGTERM on every deploy. The queue worker runs inside this
