@@ -11,5 +11,11 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version: 22
+      # youtube-dl-exec fetches its binary from the GitHub API on install,
+      # unauthenticated, and the shared runner address hits the rate limit.
+      # The tests never call it, so the download is skipped here. Render's
+      # build is not affected.
       - run: npm install --no-audit --no-fund
+        env:
+          YOUTUBE_DL_SKIP_DOWNLOAD: 'true'
       - run: npm test

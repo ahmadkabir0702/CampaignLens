@@ -1298,6 +1298,54 @@ app.get('/api/brands', async (req, res) => {
   });
 
   // -------------------------------------------------------------------
+  //  CQR GOOD RATE, HOOK GOOD RATE, HOLD GOOD RATE
+  //
+  //  Paid video, weighted by impressions, per brand and per campaign, for
+  //  any date range (server/cqr-rollup.js). Media Summary only, so the
+  //  account needs it (FEATURE_GATES in server.js) and agencies never get it.
+  //  Comparing brands side by side is for Mindshare and the admin, and only
+  //  across brands the login can already see.
+  // -------------------------------------------------------------------
+  const CQRR = require('./server/cqr-rollup');
+  const canCompareBrands = (s) => s.role === 'admin' || s.org === 'mindshare';
+  const noAgency = (req, res) => {
+    if ((req.session || {}).org === 'agency') { notPermitted(res); return false; }
+    return true;
+  };
+
+  app.get('/api/cqr-rates', async (req, res) => {
+    try {
+      if (!noAgency(req, res)) return;
+      const brand = resolveBrand(req);
+      const out = await CQRR.forBrand(query, brand, { from: req.query.from, to: req.query.to });
+      res.json({ ...out, can_compare: canCompareBrands(req.session) && (req.session.brands || []).length > 1 });
+    } catch (err) {
+      sendError(res, 'cqr-rates', err);
+    }
+  });
+
+  app.get('/api/cqr-rates/compare', async (req, res) => {
+    try {
+      if (!noAgency(req, res)) return;
+      if (!canCompareBrands(req.session)) return notPermitted(res);
+      const allowed = req.session.brands || [];
+      const asked = String(req.query.brands || '').split(',').map((b) => b.trim()).filter(Boolean);
+      // Only brands this login can see. Anything else asked for is dropped,
+      // not reported, so the reply never confirms another brand exists.
+      const ids = (asked.length ? asked : allowed).filter((b) => allowed.includes(b));
+      const { rows: names } = await query(
+        `select brand_id, name from brands where brand_id = any($1) and is_active = true order by name`, [ids]);
+      if (!names.length) return res.json({ from: null, to: null, brands: [] });
+      const out = await CQRR.forBrands(query, names.map((n) => n.brand_id), { from: req.query.from, to: req.query.to });
+      const label = new Map(names.map((n) => [n.brand_id, n.name]));
+      out.brands = out.brands.map((b) => ({ ...b, name: label.get(b.brand_id) || b.brand_id }));
+      res.json(out);
+    } catch (err) {
+      sendError(res, 'cqr-rates-compare', err);
+    }
+  });
+
+  // -------------------------------------------------------------------
   //  Which section someone opened, for the admin page's usage view. Only
   //  the section name and the login are kept, counted per day.
   // -------------------------------------------------------------------

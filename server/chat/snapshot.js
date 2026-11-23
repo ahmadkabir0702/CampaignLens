@@ -33,7 +33,7 @@ const { getPool } = require('./db');
 // best day.
 // Bumped to 12: a creative on Meta and TikTok rated differently on each is
 // described with both ratings, never one.
-const SNAPSHOT_SCHEMA_VERSION = 12;
+const SNAPSHOT_SCHEMA_VERSION = 14;
 
 const T = S.tables, C = S.creative, P = S.paidView, O = S.organicView, OR = S.organicRawCols;
 const OB = S.organicBest, B = S.boost, TH = S.thresholds, CR = S.creator;
@@ -198,6 +198,17 @@ async function qCqrHistory(pool, brand) {
         order by id desc limit 500`, [brand]);
     return rows;
   }, 'cqr history');
+}
+
+// CQR Good rate, Hook Good rate and Hold Good rate, all time, for the brand
+// and each campaign: the same code as Media Summary (server/cqr-rollup.js).
+async function qRates(pool, brand) {
+  try {
+    return await require('../cqr-rollup').forBrand((t, p) => pool.query(t, p), brand, {});
+  } catch (e) {
+    console.warn(`[ask-lens] cqr rates unavailable: ${e.message}`);
+    return null;
+  }
 }
 
 // The benchmarks that actually rate this brand: its own rows, and the
@@ -374,6 +385,34 @@ function compactLine(c) {
 }
 
 /** Renders the analytics object. No computation happens here. */
+/**
+ * PAID VIDEO QUALITY: the impression-weighted rates. The counts above are
+ * one vote per creative; these weigh each video by how much it ran, so the
+ * two can differ and both are right. The assistant is told which is which.
+ */
+function ratesDigest(L, rates) {
+  if (!rates || !rates.out || !rates.out.overall.combined.impressions) return;
+  const { out, slugs } = rates;
+  const p = (v) => (v === null || v === undefined ? 'n/a' : `${Math.round(v)}%`);
+  const line = (f) => f && f.impressions
+    ? `CQR Good ${p(f.cqr_good_rate)} (${f.cqr_good_n} of ${f.rated_n} videos), hook Good ${p(f.hook_good_rate)}, hold Good ${p(f.hold_good_rate)}, impressions rated ${p(f.rated_share)}`
+    : 'no paid video delivery';
+  L.push('');
+  L.push('PAID VIDEO QUALITY (weighted by impressions, all time; the same figures as Media Summary)');
+  L.push('  CQR Good rate = impressions on videos rated Good / impressions on videos with a CQR grade. Hook Good rate and Hold Good rate use the hook or hold grade over the same base. Impressions rated = share of paid video impressions on rated videos (under 10,000 impressions is not rated).');
+  L.push('  Combined adds Meta and TikTok impressions; it is not an average of the two. These differ from the CQR mix counts above, which count each creative once: say "weighted by impressions" when using these.');
+  for (const [k, lab] of [['combined', 'Combined'], ['meta', 'Meta'], ['tiktok', 'TikTok']]) {
+    L.push(`  ${lab} [rates:all:all:all:${k}]: ${line(out.overall[k])}`);
+  }
+  const camps = out.campaigns.filter((c) => c.combined.impressions > 0).slice(0, 10);
+  if (camps.length) {
+    L.push('  By campaign, combined, most impressions first:');
+    for (const c of camps) L.push(`    ${c.name} [rates:all:all:${slugs[c.name]}:combined]: ${line(c.combined)}`);
+    if (out.campaigns.length > camps.length) L.push(`    ${out.campaigns.length - camps.length} more campaigns: use cqr_rates.`);
+  }
+  L.push('  Reference with [[metric:cqr_good_rate|ID]] using the id in square brackets (swap combined for meta or tiktok for one platform), or ID "brand" for the combined brand figure. For a date range, call cqr_rates.');
+}
+
 function renderDigest(an, insights) {
   const label = S.brandLabels[an.brand] || an.brand;
   const L = [];
@@ -423,6 +462,7 @@ function renderDigest(an, insights) {
   L.push(`  Spend by CQR: Good ${money(an.spendByCqr.Good)} | Average ${money(an.spendByCqr.Average)} | Poor ${money(an.spendByCqr.Poor)}`);
   L.push(`  Brand avg hook ${fmtPct(an.totals.hook_rate)} (${an.totals.strongHookShare}% Strong) | avg hold ${fmtPct(an.totals.hold_rate)} (${an.totals.strongHoldShare}% Strong)`);
   L.push(`  Poor creatives: ${an.poorSplit.activeCount} still running on ${money(an.poorSplit.activeSpend)} (current waste), ${an.poorSplit.stoppedCount} stopped after ${money(an.poorSplit.stoppedSpend)} (past spend, already addressed)`);
+  ratesDigest(L, an.rates);
 
   // ---- Fatigue -------------------------------------------------
   // The lifetime rating covers the whole run, so recent decline is
@@ -626,10 +666,10 @@ async function buildSnapshot(brand, _r, opts = {}) {
   assertBrand(brand);
   const pool = opts.pool || getPool();
   const [creatives, metaRows, ttRows, organicRows, boostRows, thresholds, monthly, freshness,
-         bsRows, windowRows, historyRows] = await Promise.all([
+         bsRows, windowRows, historyRows, ratesOut] = await Promise.all([
     qCreatives(pool, brand), qPaid(pool, T.paidMeta, brand, 'meta'), qPaid(pool, T.paidTiktok, brand, 'tiktok'),
     qOrganic(pool, brand), qBoost(pool, brand), qThresholds(pool, brand), qMonthly(pool, brand), qFreshness(pool, brand),
-    qBrainsuite(pool, brand), qWindowed(pool, brand), qCqrHistory(pool, brand),
+    qBrainsuite(pool, brand), qWindowed(pool, brand), qCqrHistory(pool, brand), qRates(pool, brand),
   ]);
   // Score per creative, from the most recent succeeded job. Earlier jobs
   // and failed ones are kept out: a failed job is not a score of zero.
@@ -723,6 +763,9 @@ async function buildSnapshot(brand, _r, opts = {}) {
     .filter((r) => r.score !== null && r.score !== undefined)
     .map((r) => ({ id: r.id, score: Number(r.score), rating: r.rating }))
     .sort((a, b) => b.score - a.score);
+  const RATES = require('./rates');
+  const rated = ratesOut ? RATES.recordsFrom(ratesOut) : null;
+  an.rates = ratesOut && rated ? { out: ratesOut, slugs: Object.fromEntries(rated.slugs) } : null;
 
   const version = crypto.createHash('sha256')
     .update([brand, freshness.max_date, freshness.row_count, paid.length, organic.length, boostRows.length].join('|'))
@@ -753,6 +796,16 @@ async function buildSnapshot(brand, _r, opts = {}) {
   }
 
   records.brand = { id: 'brand', name: S.brandLabels[brand], ...an.totals, cqr_mix: an.cqrMix };
+  if (rated) {
+    Object.assign(records, rated.records);
+    // [[metric:cqr_good_rate|brand]]: all campaigns, both platforms, all time.
+    const all = rated.records['rates:all:all:all:combined'];
+    if (all) {
+      for (const k of ['cqr_good_rate', 'hook_good_rate', 'hold_good_rate', 'rated_share',
+                       'cqr_good_n', 'hook_good_n', 'hold_good_n', 'rated_n', 'video_n']) records.brand[k] = all[k];
+      records.brand.scope_label = all.scope_label;
+    }
+  }
   for (const e of an.elements || []) records[`element:${e.key}`] = { id: `element:${e.key}`, ...e };
   for (const e of an.organicElements || []) records[`element:${e.key}`] = { id: `element:${e.key}`, ...e };
   for (const i of insights) if (i.card) records[`insight:${i.id}`] = { id: `insight:${i.id}`, ...i.card };

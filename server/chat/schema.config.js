@@ -137,8 +137,17 @@ const schema = {
   vanityMetrics: ['ctr', 'vtr', 'cpm', 'cpc'],
   rankableMetrics: ['cqr', 'hook_rate', 'hold_rate', 'engagement_rate', 'reach', 'video_views', 'spend', 'impressions', 'avg_watch_time', 'vtr', 'ctr'],
 
+  // Paid video, weighted by impressions, for the brand, a campaign or a
+  // date range (server/chat/rates.js). Not creative metrics: their ids are
+  // "brand" or rates:..., never a creative id.
+  rollupMetrics: ['cqr_good_rate', 'hook_good_rate', 'hold_good_rate', 'rated_share'],
+
   metricDisplay: {
     cqr: { label: 'CQR', type: 'cqr' },
+    cqr_good_rate: { label: 'CQR Good rate', type: 'pct', decimals: 0 },
+    hook_good_rate: { label: 'Hook Good rate', type: 'pct', decimals: 0 },
+    hold_good_rate: { label: 'Hold Good rate', type: 'pct', decimals: 0 },
+    rated_share: { label: 'Impressions rated', type: 'pct', decimals: 0 },
     hook_rate: { label: 'Hook rate', type: 'pct', decimals: 1 },
     hold_rate: { label: 'Hold rate', type: 'pct', decimals: 1 },
     engagement_rate: { label: 'Engagement rate', type: 'pct', decimals: 2 },

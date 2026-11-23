@@ -138,10 +138,21 @@ function referencedIds(markers) {
 
 /** Fetch records the snapshot and tool results did not already supply. */
 async function resolveMissing(ids, have, ctx, pool) {
-  const missing = ids.filter((id) => !have[id]);
-  if (!missing.length) return {};
-  const { handlers } = require('./toolHandlers');
+  const RATES = require('./rates');
+  const missingAll = ids.filter((id) => !have[id]);
+  const rates = missingAll.filter(RATES.isRatesId);
+  const missing = missingAll.filter((id) => !RATES.isRatesId(id));
   const out = {};
+  if (rates.length) {
+    try {
+      const db = ctx.pool || pool || getPool();
+      Object.assign(out, await RATES.resolveIds((t, p) => db.query(t, p), ctx.brand, rates.slice(0, 8)));
+    } catch (err) {
+      console.error('[resolveMissing:rates]', err.message);
+    }
+  }
+  if (!missing.length) return out;
+  const { handlers } = require('./toolHandlers');
   try {
     const res = await handlers.compare_creatives(
       { creative_ids: missing.length === 1 ? [missing[0], missing[0]] : missing.slice(0, 4) },

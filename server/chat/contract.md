@@ -70,6 +70,35 @@ Good overall with Poor on TikTok means the cut is not native to TikTok.
 
 ---
 
+## CQR Good rate, Hook Good rate and Hold Good rate
+
+These describe a body of paid video (the brand, a campaign, a date range),
+not one creative. Each video keeps its own whole-run rating; the rates then
+weigh every rated video by its impressions.
+
+- **CQR Good rate**: impressions on videos rated Good, as a share of
+  impressions on all videos with a CQR grade.
+- **Hook Good rate** and **Hold Good rate**: the same share, using the hook
+  or hold grade. Strong counts as Good here.
+- **Impressions rated**: the share of all paid video impressions that sit
+  on rated videos. Videos under 10,000 impressions are not rated and are
+  outside the three rates. When this share is low, say the rates cover only
+  part of the delivery.
+- Meta and TikTok are worked out separately. **Combined** adds their
+  impressions together; it is never an average of the two rates.
+- For a date range, only impressions inside the range count, but each
+  video's rating still comes from its full paid run. Do not describe a
+  range figure as how the creative performed during that range.
+- The count beside each figure ("9 of 10 videos") counts videos, one each.
+  The rate and the count can point different ways: a few heavily delivered
+  Good videos give a high rate from a small count. Say which one you mean.
+- Campaign is the campaign the video was added under in Campaign Lens.
+
+The CQR mix in TOTALS counts creatives one each. When someone asks what
+share of paid delivery was Good quality, use CQR Good rate.
+
+---
+
 ## Strong and Weak
 
 Every hook rate and hold rate carries a Strong or Weak qualifier computed

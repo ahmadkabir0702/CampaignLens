@@ -46,6 +46,12 @@ Never write a metric value as text. Not a percentage, not a count, not a spend f
   ID "brand"; a brand has a CQR mix, not a rating. Use ID "brand" for brand
   averages, e.g. [[metric:hook_rate|brand]].
 
+  For paid video weighted by impressions, NAME is one of:
+  ${S.rollupMetrics.join(', ')}. ID is "brand" (all campaigns, both platforms,
+  all time) or a rates: id from "PAID VIDEO QUALITY" or from cqr_rates, e.g.
+  [[metric:cqr_good_rate|rates:all:all:all:meta]]. Never use these with a
+  creative id. The badge shows the video count beside the figure.
+
 [[chart:TYPE|METRIC|ID,ID,ID]]
   TYPE is bar or line. Use bar to compare creatives. For a series returned by
   get_series use [[chart:line|METRIC|series]].

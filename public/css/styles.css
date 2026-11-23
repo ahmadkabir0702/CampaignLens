@@ -1057,6 +1057,48 @@ select:focus,.search-input:focus,.modal-input:focus{outline:none;border-color:va
 .ms-cut-k{white-space:nowrap;padding-right:16px}
 .ms-cut-n{font:400 12px/15px var(--font);color:var(--ink-400);margin-top:2px}
 
+/* Paid video quality (cqr-rates.js). A rate reads first, its video count
+   after it in the quieter grey, so the weighted figure leads and the count
+   only supports it. */
+.cqrr-ctl{display:flex;flex-wrap:wrap;align-items:flex-end;gap:10px 12px;margin-bottom:12px}
+.cqrr-dates{display:flex;align-items:center;gap:7px;font:400 12.5px var(--font);color:var(--ink-500)}
+.cqrr-dates input{font:400 13px var(--font);height:34px;border:1px solid var(--line);
+  border-radius:var(--r-btn);padding:0 9px;background:var(--white);color:var(--ink-900)}
+.cqrr-ctl .so-seg-btn{height:34px}
+.cqrr-cmp-btn{border:1px solid var(--line);border-radius:var(--r-btn);height:34px}
+.cqrr-sub{font-weight:400;color:var(--ink-400);margin-left:6px}
+.cqrr-scroll{overflow-x:auto;-webkit-overflow-scrolling:touch}
+.cqrr-table td.n{white-space:nowrap}
+.cqrr-v{font-weight:500;color:var(--ink-900);font-size:13.5px}
+.cqrr-n{color:var(--ink-400);font-size:11.5px;margin-left:5px}
+.cqrr-total td{border-top:1px solid var(--line)}
+.cqrr-total .ms-plat{font-weight:600}
+.cqrr-name{white-space:normal;min-width:140px}
+.cqrr-none{color:var(--ink-400);text-align:left !important}
+.cqrr-err{font:400 12.5px/18px var(--font);color:var(--neg, #C2414B);padding:4px 0 8px}
+.cqrr-busy{opacity:.55;transition:opacity var(--t-base)}
+#ms-cqr .ms-grid.cols-1 + .ms-foot{margin-top:12px}
+/* On a phone each row becomes a block of label and value pairs: four rates
+   side by side do not fit, and a table that scrolls sideways hides them. */
+@media (max-width:768px){
+  .cqrr-ctl{align-items:stretch}
+  .cqrr-ctl .ms-fgroup,.cqrr-ctl .kfi-select{width:100%}
+  .cqrr-ctl .so-seg{display:flex}
+  .cqrr-ctl .so-seg-btn{flex:1}
+  .cqrr-cmp-btn{width:100%}
+  .cqrr-dates{width:100%}
+  .cqrr-dates input{flex:1;min-width:0}
+  .cqrr-table thead{display:none}
+  .cqrr-table,.cqrr-table tbody,.cqrr-table tr{display:block;width:100%}
+  .cqrr-table tr{padding:8px 0;border-bottom:1px solid var(--line-soft)}
+  .cqrr-table tr:last-child{border-bottom:none}
+  .cqrr-table td{display:flex;justify-content:space-between;align-items:baseline;gap:12px;
+    border:none !important;padding:3px 0 !important;text-align:right}
+  .cqrr-table td::before{content:attr(data-k);color:var(--ink-500);text-align:left}
+  .cqrr-table td.ms-plat{padding-bottom:5px !important}
+  .cqrr-table td.ms-plat::before,.cqrr-table td.cqrr-none::before{content:none}
+}
+
 .ms-link{
   border:0;background:none;padding:0;cursor:pointer;
   font:400 12.5px/18px var(--font);color:var(--navy);

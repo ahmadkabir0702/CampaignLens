@@ -20,6 +20,12 @@
     impressions:     { label: 'Impressions',     type: 'count' },
     spend:           { label: 'Spend',           type: 'currency' },
     avg_watch_time:  { label: 'Avg watch',       type: 'seconds', decimals: 1 },
+    // Paid video, weighted by impressions (server/chat/rates.js). n and d
+    // name the video counts shown beside the figure: "18% (9 of 10 videos)".
+    cqr_good_rate:   { label: 'CQR Good rate',   type: 'pct', decimals: 0, rollup: true, n: 'cqr_good_n',  d: 'rated_n' },
+    hook_good_rate:  { label: 'Hook Good rate',  type: 'pct', decimals: 0, rollup: true, n: 'hook_good_n', d: 'rated_n' },
+    hold_good_rate:  { label: 'Hold Good rate',  type: 'pct', decimals: 0, rollup: true, n: 'hold_good_n', d: 'rated_n' },
+    rated_share:     { label: 'Impressions rated', type: 'pct', decimals: 0, rollup: true, n: 'rated_n', d: 'video_n' },
   };
 
   var PLATFORMS = {
@@ -47,7 +53,12 @@
     var n = Number(value);
     if (!isFinite(n)) return 'n/a';
     if (!def) return String(value);
-    if (def.type === 'pct') return n.toFixed(def.decimals) + '%';
+    if (def.type === 'pct') {
+      // A part is never rounded up to the whole or a sliver down to none.
+      if (def.rollup && n > 0 && n < 1) return '<1%';
+      if (def.rollup && n < 100 && n >= 99.5) return '>99%';
+      return n.toFixed(def.decimals) + '%';
+    }
     if (def.type === 'currency') return formatCount(n) + ' ' + CURRENCY;
     if (def.type === 'seconds') return n.toFixed(def.decimals) + 's';
     return formatCount(n);
@@ -284,12 +295,24 @@
       return badge;
     }
 
+    var def = METRICS[marker.metric] || {};
     var b = el('span', 'al-badge');
     b.appendChild(el('span', 'al-badge-value', formatMetric(marker.metric, value)));
     b.appendChild(el('span', 'al-badge-label', metricLabel(marker.metric)));
-    b.title = metricLabel(marker.metric) + (marker.id === 'brand' ? ', brand average' : ' for ' + (rec ? rec.name : marker.id));
+    var count = el('span', 'al-badge-label al-badge-count', '');
+    if (def.rollup) b.appendChild(count);
+    function fill(r) {
+      b.querySelector('.al-badge-value').textContent = formatMetric(marker.metric, r ? r[marker.metric] : null);
+      if (def.rollup && r && r[def.d] != null) {
+        count.textContent = '(' + r[def.n] + ' of ' + r[def.d] + ' video' + (Number(r[def.d]) === 1 ? '' : 's') + ')';
+      }
+      b.title = metricLabel(marker.metric) + (def.rollup
+        ? ', ' + ((r && r.scope_label) || 'all campaigns, Meta and TikTok combined, all time') + ', weighted by impressions'
+        : (marker.id === 'brand' ? ', brand average' : ' for ' + (r ? r.name : marker.id)));
+    }
+    fill(rec);
     if (!rec && marker.id !== 'brand') store.fetchMissing([marker.id], ctx).then(function () {
-      var r = store.get(marker.id); if (r) b.querySelector('.al-badge-value').textContent = formatMetric(marker.metric, r[marker.metric]);
+      var r = store.get(marker.id); if (r) fill(r);
     });
     return b;
   }

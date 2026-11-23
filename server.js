@@ -210,7 +210,9 @@ const FEATURE_GATES = [
     covers: p => p.startsWith('/api/signoffs') },
   { flag: 'repurpose',   label: 'Repurposing',
     covers: p => p.startsWith('/api/repurpose') },
-  // Media Summary and Creators are drawn from the same creative data the
+  { flag: 'media',       label: 'Media Summary',
+    covers: p => p.startsWith('/api/cqr-rates') },
+  // Apart from the CQR rates above, Media Summary and Creators are drawn from the same creative data the
   // Creative Hub uses, so there is no endpoint of their own to refuse.
   // The page removes them, and /api/dashboard-data leaves out the
   // account-level media numbers for accounts without Media Summary.
