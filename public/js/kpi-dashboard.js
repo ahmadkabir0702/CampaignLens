@@ -248,10 +248,12 @@ function msRenderBody() {
     msSectionOutput(data) +
     msSectionTrend(data) +
     msSectionOrganic(data) +
+    (typeof msSectionCqrRates === 'function' ? msSectionCqrRates() : '') +
     msSectionPaid(data) +
     msSectionWhatWorked(data) +
     msSectionCreators(data);
   msMotionPlay(body, before);
+  if (typeof cqrrPaint === 'function') { cqrrPaint(); cqrrAfterRender(); }
 }
 
 // ---------- 1. What went out ----------------------------------------
