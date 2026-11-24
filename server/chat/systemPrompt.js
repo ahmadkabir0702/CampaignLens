@@ -48,7 +48,7 @@ Never write a metric value as text. Not a percentage, not a count, not a spend f
 
   For paid video weighted by impressions, NAME is one of:
   ${S.rollupMetrics.join(', ')}. ID is "brand" (all campaigns, both platforms,
-  all time) or a rates: id from "PAID VIDEO QUALITY" or from cqr_rates, e.g.
+  all time) or a rates: id from "PAID VIDEO QUALITY AND ENGAGEMENT" or from paid_rates, e.g.
   [[metric:cqr_good_rate|rates:all:all:all:meta]]. Never use these with a
   creative id. The badge shows the video count beside the figure.
 

@@ -18,11 +18,28 @@ const ROWS = [
   { platform: 'tiktok', brand_id: 'lux', creative_id: 'E', campaign: 'Always on', impr: '300000', cqr: 'Good', hook_q: 'Good', hold_q: 'Strong' },
 ];
 
-function fakeQuery(rows, span = { first_day: '2025-01-03', last_day: '2026-11-21' }) {
+// Engagement rows, as loadEngagement returns them: per creative and platform,
+// all delivery, and the part on days with engagement data.
+const ENG = [
+  // Meta video A: 400k impressions, 300k of them on days with engagement data.
+  { platform: 'meta', brand_id: 'lux', creative_id: 'A', campaign: 'Diwali 2026', impr: '400000', spend: '120000', eng_impr: '300000', eng_spend: '90000', eng: '9000' },
+  // Meta photo P: counts for engagement though it has no CQR.
+  { platform: 'meta', brand_id: 'lux', creative_id: 'P', campaign: 'Always on', impr: '100000', spend: '20000', eng_impr: '100000', eng_spend: '20000', eng: '1000' },
+  // TikTok E: no engagement data yet.
+  { platform: 'tiktok', brand_id: 'lux', creative_id: 'E', campaign: 'Always on', impr: '300000', spend: '60000', eng_impr: '0', eng_spend: '0', eng: '0' },
+  { platform: 'tiktok', brand_id: 'lux', creative_id: 'A', campaign: 'Diwali 2026', impr: '100000', spend: '15000', eng_impr: '100000', eng_spend: '15000', eng: '6000' },
+];
+
+function fakeQuery(rows, span = { first_day: '2025-01-03', last_day: '2026-11-21' }, eng = ENG) {
   const calls = [];
   const q = async (text, params) => {
     calls.push({ text, params });
     if (/first_day/.test(text)) return { rows: [span] };
+    if (/eng_ig_follows/.test(text)) return { rows: [{ seen: false }] };
+    if (/bool_and/.test(text)) {
+      if (eng === 'missing') throw Object.assign(new Error('column "engagements" does not exist'), { code: '42703' });
+      return { rows: eng.filter((r) => params[0].includes(r.brand_id)) };
+    }
     const ids = params[0];
     return { rows: rows.filter((r) => ids.includes(r.brand_id)) };
   };
@@ -117,7 +134,7 @@ test('an old marker id resolves again; anything else is ignored', async () => {
   assert.equal(got['rates:all:all:always-on:tiktok'].cqr_good_rate, 100);
 });
 
-test('the cqr_rates tool matches a campaign by part of its name', async () => {
+test('the paid_rates tool matches a campaign by part of its name', async () => {
   R.clearCache();
   const res = await RATES.tool({ campaign: 'diwali', platform: 'combined' }, { brand: 'lux' }, fakeQuery(ROWS));
   assert.equal(res.result.rows.length, 1);
@@ -130,4 +147,50 @@ test('the cqr_rates tool matches a campaign by part of its name', async () => {
 
   const bad = await RATES.tool({ from: 'yesterday' }, { brand: 'lux' }, fakeQuery(ROWS));
   assert.match(bad.result.error, /YYYY-MM-DD/);
+});
+
+test('engagement rate counts only days with engagement data, on both sides', async () => {
+  R.clearCache();
+  const out = await R.forBrand(fakeQuery(ROWS), 'lux', {});
+  const m = out.overall.meta;
+  assert.equal(out.engagement_ready, true);
+  // (9,000 + 1,000) / (300k + 100k) = 2.5%. All 500k would give 2%.
+  assert.equal(m.paid_engagement_rate, 2.5);
+  // (90,000 + 20,000) / 10,000 engagements
+  assert.equal(m.cost_per_engagement, 11);
+  assert.equal(m.eng_coverage, 80);
+  assert.equal(m.eng_creative_n, 2);
+  assert.equal(m.paid_creative_n, 2);
+});
+
+test('combined engagement adds the platforms; nothing read reads as no figure', async () => {
+  R.clearCache();
+  const out = await R.forBrand(fakeQuery(ROWS), 'lux', {});
+  const t = out.overall.tiktok, c = out.overall.combined;
+  assert.equal(t.paid_engagement_rate, 6);           // 6,000 / 100k; E has no data and is left out
+  assert.equal(t.eng_coverage, 25);
+  // 16,000 / 500k = 3.2%. The average of 2.5 and 6 would be 4.25.
+  assert.equal(c.paid_engagement_rate, 3.2);
+  assert.equal(c.cost_per_engagement, 7.81);         // 125,000 / 16,000
+  const always = out.campaigns.find((x) => x.name === 'Always on');
+  assert.equal(always.tiktok.paid_engagement_rate, null);
+  assert.equal(always.tiktok.cost_per_engagement, null);
+});
+
+test('before 046 is run the CQR figures still come back, without engagement', async () => {
+  R.clearCache();
+  const out = await R.forBrand(fakeQuery(ROWS, undefined, 'missing'), 'lux', {});
+  assert.equal(out.engagement_ready, false);
+  assert.equal(out.overall.combined.cqr_good_rate, 70);
+  assert.equal(out.overall.combined.paid_engagement_rate, undefined);
+});
+
+test('Ask Lens records carry the engagement figures', async () => {
+  R.clearCache();
+  const out = await R.forBrand(fakeQuery(ROWS), 'lux', {});
+  const { records } = RATES.recordsFrom(out);
+  assert.equal(records['rates:all:all:all:combined'].paid_engagement_rate, 3.2);
+  assert.equal(records['rates:all:all:always-on:meta'].cost_per_engagement, 20);
+  const res = await RATES.tool({ platform: 'combined' }, { brand: 'lux' }, fakeQuery(ROWS));
+  assert.equal(res.result.rows[0].paid_engagement_rate, 3.2);
 });

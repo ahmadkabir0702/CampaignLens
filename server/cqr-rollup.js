@@ -24,6 +24,20 @@
  *     impressions together; it never averages the two rates.
  *   - Campaign is the Campaign Lens campaign each creative was added under.
  *   - A video on both platforms counts once on each in the video counts.
+ *
+ * Engagement rate and cost per engagement (046), over the same levels:
+ *
+ *   Engagement rate      engagements / impressions
+ *   Cost per engagement  spend in LKR / engagements
+ *
+ *   Meta engagements are post reactions, comments, shares, saves, link
+ *   clicks, Instagram follows and page likes; TikTok's are paid likes,
+ *   comments, shares, follows and destination clicks. The sync writes the
+ *   total per ad and day (paid_meta.engagements, paid_tiktok.engagements).
+ *   Every paid creative counts, not only video. A day the sync has not
+ *   read for engagement is left out of both sides of both figures, never
+ *   counted as zero; Impressions covered says how much that leaves in.
+ *   Combined adds engagements, impressions and spend; it never averages.
  */
 
 const GRADED = new Set(['Good', 'Average', 'Poor']);
@@ -66,13 +80,52 @@ function figures(t) {
   };
 }
 
-function threeWay(rows) {
+function threeWay(rows, engRows) {
   const by = { meta: empty(), tiktok: empty(), combined: empty() };
   for (const r of rows) {
     add(by[r.platform], r);
     add(by.combined, r);
   }
-  return { meta: figures(by.meta), tiktok: figures(by.tiktok), combined: figures(by.combined) };
+  const out = { meta: figures(by.meta), tiktok: figures(by.tiktok), combined: figures(by.combined) };
+  if (engRows) {
+    const e = { meta: emptyEng(), tiktok: emptyEng(), combined: emptyEng() };
+    for (const r of engRows) { addEng(e[r.platform], r); addEng(e.combined, r); }
+    for (const p of ['meta', 'tiktok', 'combined']) Object.assign(out[p], engFigures(e[p]));
+  }
+  return out;
+}
+
+// ---- Engagement --------------------------------------------------------
+function emptyEng() {
+  return { impr: 0, spend: 0, eng_impr: 0, eng_spend: 0, eng: 0, creative_n: 0, eng_creative_n: 0 };
+}
+
+function addEng(t, r) {
+  t.impr += Number(r.impr) || 0;
+  t.spend += Number(r.spend) || 0;
+  t.creative_n += 1;
+  const ei = Number(r.eng_impr) || 0;
+  if (ei <= 0) return;
+  t.eng_impr += ei;
+  t.eng_spend += Number(r.eng_spend) || 0;
+  t.eng += Number(r.eng) || 0;
+  t.eng_creative_n += 1;
+}
+
+const round = (v, dp) => Math.round(v * 10 ** dp) / 10 ** dp;
+
+function engFigures(t) {
+  return {
+    paid_engagement_rate: t.eng_impr > 0 ? round((t.eng / t.eng_impr) * 100, 2) : null,
+    cost_per_engagement: t.eng > 0 ? round(t.eng_spend / t.eng, 2) : null,
+    engagements: t.eng,
+    eng_impressions: t.eng_impr,
+    eng_coverage: pct(t.eng_impr, t.impr),
+    eng_spend: round(t.eng_spend, 2),
+    paid_impressions: t.impr,
+    paid_creative_n: t.creative_n,
+    eng_creative_n: t.eng_creative_n,
+  };
 }
 
 const ISO = /^\d{4}-\d{2}-\d{2}$/;
@@ -122,6 +175,74 @@ async function loadRows(q, brandIds, from, to) {
   return rows;
 }
 
+/**
+ * One row per creative and platform with delivery inside the range: all
+ * impressions and spend, and the part of both on days the sync has read
+ * for engagement, with those engagements. Null before 046 is run.
+ */
+async function loadEngagement(q, brandIds, from, to) {
+  const range = `($2::date is null or date >= $2::date) and ($3::date is null or date <= $3::date)`;
+  try {
+    const { rows } = await q(
+      `with s as (
+         select 'meta'::text as platform, brand_id, creative_id, date::date as d,
+                sum(impressions)::numeric as impr, sum(to_lkr(spend, currency, date)) as spend
+           from v_paid_meta_scored
+          where brand_id = any($1::text[]) and creative_id is not null and ${range}
+          group by brand_id, creative_id, date::date
+         union all
+         select 'tiktok'::text, brand_id, creative_id, date::date,
+                sum(impressions)::numeric, sum(to_lkr(spend, currency, date))
+           from v_paid_tiktok_scored
+          where brand_id = any($1::text[]) and creative_id is not null and ${range}
+          group by brand_id, creative_id, date::date
+       ),
+       e as (
+         select 'meta'::text as platform, brand_id, creative_id, date::date as d,
+                sum(engagements)::numeric as eng, bool_and(engagements is not null) as captured
+           from paid_meta
+          where brand_id = any($1::text[]) and creative_id is not null and ${range}
+          group by brand_id, creative_id, date::date
+         union all
+         select 'tiktok'::text, brand_id, creative_id, date::date,
+                sum(engagements)::numeric, bool_and(engagements is not null)
+           from paid_tiktok
+          where brand_id = any($1::text[]) and creative_id is not null and ${range}
+          group by brand_id, creative_id, date::date
+       )
+       select s.platform, s.brand_id, s.creative_id,
+              coalesce(nullif(trim(c.campaign), ''), 'No campaign') as campaign,
+              sum(s.impr) as impr, coalesce(sum(s.spend), 0) as spend,
+              coalesce(sum(s.impr) filter (where e.captured), 0) as eng_impr,
+              coalesce(sum(s.spend) filter (where e.captured), 0) as eng_spend,
+              coalesce(sum(e.eng) filter (where e.captured), 0) as eng
+         from s
+         join creatives c on c.creative_id = s.creative_id
+         left join e on e.platform = s.platform and e.brand_id = s.brand_id
+                    and e.creative_id = s.creative_id and e.d = s.d
+        where s.impr > 0
+        group by s.platform, s.brand_id, s.creative_id, c.campaign`,
+      [brandIds, from, to]);
+    return rows;
+  } catch (e) {
+    // 42703: the engagement columns are not there yet (046 not run).
+    if (e && e.code === '42703') return null;
+    throw e;
+  }
+}
+
+/** Whether Meta has reported any Instagram follows for these brands. */
+async function igFollowsSeen(q, brandIds) {
+  try {
+    const { rows } = await q(
+      `select exists (select 1 from paid_meta where brand_id = any($1::text[]) and eng_ig_follows > 0) as seen`, [brandIds]);
+    return !!(rows[0] && rows[0].seen);
+  } catch (e) {
+    if (e && e.code === '42703') return false;
+    throw e;
+  }
+}
+
 /** The first and last day of paid delivery on file, for the date control. */
 async function dataSpan(q, brandIds) {
   const { rows } = await q(
@@ -160,16 +281,30 @@ async function forBrand(q, brandId, { from, to } = {}) {
 }
 
 async function forBrandUncached(q, brandId, from, to) {
-  const [rows, span] = await Promise.all([loadRows(q, [brandId], from, to), dataSpan(q, [brandId])]);
-  const byCampaign = new Map();
-  for (const r of rows) {
-    if (!byCampaign.has(r.campaign)) byCampaign.set(r.campaign, []);
-    byCampaign.get(r.campaign).push(r);
-  }
-  const campaigns = [...byCampaign.entries()]
-    .map(([name, rs]) => ({ name, ...threeWay(rs) }))
-    .sort((a, b) => b.combined.impressions - a.combined.impressions);
-  return { brand_id: brandId, from, to, span, overall: threeWay(rows), campaigns };
+  const [rows, span, engRows, igSeen] = await Promise.all([
+    loadRows(q, [brandId], from, to), dataSpan(q, [brandId]),
+    loadEngagement(q, [brandId], from, to), igFollowsSeen(q, [brandId]),
+  ]);
+  const group = (list) => {
+    const m = new Map();
+    for (const r of list || []) {
+      if (!m.has(r.campaign)) m.set(r.campaign, []);
+      m.get(r.campaign).push(r);
+    }
+    return m;
+  };
+  const byCampaign = group(rows);
+  const engByCampaign = group(engRows);
+  const names = new Set([...byCampaign.keys(), ...engByCampaign.keys()]);
+  const campaigns = [...names]
+    .map((name) => ({ name, ...threeWay(byCampaign.get(name) || [], engRows ? engByCampaign.get(name) || [] : null) }))
+    .sort((a, b) => (b.combined.paid_impressions || b.combined.impressions) - (a.combined.paid_impressions || a.combined.impressions));
+  return {
+    brand_id: brandId, from, to, span,
+    engagement_ready: !!engRows,
+    inputs: { ig_follows: igSeen, tiktok_favorites: false },
+    overall: threeWay(rows, engRows), campaigns,
+  };
 }
 
 /** Several brands side by side, overall only. */
@@ -179,10 +314,15 @@ async function forBrands(q, brandIds, { from, to } = {}) {
 }
 
 async function forBrandsUncached(q, brandIds, from, to) {
-  const rows = await loadRows(q, brandIds, from, to);
+  const [rows, engRows] = await Promise.all([loadRows(q, brandIds, from, to), loadEngagement(q, brandIds, from, to)]);
   const by = new Map(brandIds.map((b) => [b, []]));
+  const engBy = new Map(brandIds.map((b) => [b, []]));
   for (const r of rows) if (by.has(r.brand_id)) by.get(r.brand_id).push(r);
-  return { from, to, brands: brandIds.map((b) => ({ brand_id: b, ...threeWay(by.get(b)) })) };
+  for (const r of engRows || []) if (engBy.has(r.brand_id)) engBy.get(r.brand_id).push(r);
+  return {
+    from, to, engagement_ready: !!engRows,
+    brands: brandIds.map((b) => ({ brand_id: b, ...threeWay(by.get(b), engRows ? engBy.get(b) : null) })),
+  };
 }
 
-module.exports = { forBrand, forBrands, threeWay, figures, cleanDate, clearCache, PLATFORMS };
+module.exports = { forBrand, forBrands, threeWay, figures, engFigures, cleanDate, clearCache, PLATFORMS };
