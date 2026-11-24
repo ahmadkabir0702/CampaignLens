@@ -316,7 +316,9 @@
         count.textContent = '(' + r[def.n] + ' of ' + r[def.d] + ' ' + unit + (Number(r[def.d]) === 1 ? '' : 's') + ')';
       }
       b.title = metricLabel(marker.metric) + (def.rollup
-        ? ', ' + ((r && r.scope_label) || 'all campaigns, Meta and TikTok combined, all time') + ', weighted by impressions'
+        ? (r && !r.scope_label && marker.id !== 'brand' && marker.id.indexOf('rates:') !== 0
+            ? ' for ' + (r.name || marker.id) + ', over its whole paid run'
+            : ', ' + ((r && r.scope_label) || 'all campaigns, Meta and TikTok combined, all time') + ', weighted by impressions')
         : (marker.id === 'brand' ? ', brand average' : ' for ' + (r ? r.name : marker.id)));
     }
     fill(rec);

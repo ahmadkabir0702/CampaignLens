@@ -35,7 +35,8 @@ const { getPool } = require('./db');
 // described with both ratings, never one.
 // 16: engagement rate and cost per engagement in PAID VIDEO QUALITY AND
 // ENGAGEMENT. (15 is the Sound and Funnel fit merge.)
-const SNAPSHOT_SCHEMA_VERSION = 16;
+// 17: engagement rate on true reach.
+const SNAPSHOT_SCHEMA_VERSION = 17;
 
 const T = S.tables, C = S.creative, P = S.paidView, O = S.organicView, OR = S.organicRawCols;
 const OB = S.organicBest, B = S.boost, TH = S.thresholds, CR = S.creator;
@@ -400,7 +401,9 @@ function ratesDigest(L, rates) {
   const er = (f) => {
     if (!out.engagement_ready || !f || !f.paid_impressions) return '';
     if (!f.eng_impressions) return ' | engagement: no data yet';
-    return ` | engagement rate ${f.paid_engagement_rate}%, cost per engagement LKR ${f.cost_per_engagement ?? 'n/a'}, impressions covered ${p(f.eng_coverage)}`;
+    const er = f.paid_engagement_rate === null || f.paid_engagement_rate === undefined
+      ? 'engagement rate n/a (no true reach)' : `engagement rate ${f.paid_engagement_rate}% on reach ${f.reach}`;
+    return ` | ${er}, cost per engagement LKR ${f.cost_per_engagement ?? 'n/a'}, impressions covered ${p(f.eng_coverage)}`;
   };
   const line = (f) => (f && f.impressions
     ? `CQR Good ${p(f.cqr_good_rate)} (${f.cqr_good_n} of ${f.rated_n} videos), hook Good ${p(f.hook_good_rate)}, hold Good ${p(f.hold_good_rate)}, impressions rated ${p(f.rated_share)}`
@@ -413,7 +416,7 @@ function ratesDigest(L, rates) {
     L.push(`  ${lab} [rates:all:all:all:${k}]: ${line(out.overall[k])}`);
   }
   if (out.engagement_ready) {
-    L.push(`  Engagement rate = engagements / impressions, over every paid creative (not only video). Cost per engagement = spend in LKR / engagements. Meta engagements: reactions, comments, shares, saves, link clicks${out.inputs && out.inputs.ig_follows ? ', Instagram follows' : ''}, page likes. TikTok: paid likes, comments, shares, follows, destination clicks. TikTok favorites are not available. Only days with engagement data count; "impressions covered" is how much of the delivery that is.`);
+    L.push(`  Engagement rate = engagements / true reach (different people, as Meta and TikTok report it for that exact period), over every paid creative (not only video). Combined = all engagements / (Meta reach + TikTok reach), so people reached on both count twice. Exists only for all_time, this_year, last_30, this_month, last_month and single months; never for a custom range, and never estimate it. Cost per engagement = spend in LKR / engagements. Meta engagements: reactions, comments, shares, saves, link clicks${out.inputs && out.inputs.ig_follows ? ', Instagram follows' : ''}, page likes. TikTok: paid likes, comments, shares, follows, destination clicks. TikTok favorites are not available. Only days with engagement data count; "impressions covered" is how much of the delivery that is.`);
   }
   const camps = out.campaigns.filter((c) => (c.combined.impressions || c.combined.paid_impressions) > 0).slice(0, 10);
   if (camps.length) {
@@ -678,10 +681,11 @@ async function buildSnapshot(brand, _r, opts = {}) {
   assertBrand(brand);
   const pool = opts.pool || getPool();
   const [creatives, metaRows, ttRows, organicRows, boostRows, thresholds, monthly, freshness,
-         bsRows, windowRows, historyRows, ratesOut] = await Promise.all([
+         bsRows, windowRows, historyRows, ratesOut, engBy] = await Promise.all([
     qCreatives(pool, brand), qPaid(pool, T.paidMeta, brand, 'meta'), qPaid(pool, T.paidTiktok, brand, 'tiktok'),
     qOrganic(pool, brand), qBoost(pool, brand), qThresholds(pool, brand), qMonthly(pool, brand), qFreshness(pool, brand),
     qBrainsuite(pool, brand), qWindowed(pool, brand), qCqrHistory(pool, brand), qRates(pool, brand),
+    require('../creative-engagement').forBrand((t, p) => pool.query(t, p), brand).catch(() => new Map()),
   ]);
   // Score per creative, from the most recent succeeded job. Earlier jobs
   // and failed ones are kept out: a failed job is not a score of zero.
@@ -718,6 +722,8 @@ async function buildSnapshot(brand, _r, opts = {}) {
       pretest_score: bsBy.has(id) ? Number(bsBy.get(id).score) : null,
       pretest_rating: bsBy.has(id) ? bsBy.get(id).rating : null,
       ...(m || {}),
+      // Engagement rate over the whole paid run, on true reach.
+      ...(m ? require('./toolHandlers').engFields(engBy.get(id)) : {}),
     };
     rec.labels = V.creativeLabels(rec);
     records[id] = rec;

@@ -47,6 +47,16 @@ function runningExpr(view) {
 }
 
 /** Load and merge every boosted creative for a brand, with creative metadata. */
+/**
+ * Engagement rate over the whole paid run, on true reach: the creative's
+ * combined figure, and each platform's inside per_platform.
+ */
+function engFields(e) {
+  if (!e) return { paid_engagement_rate: null };
+  return { paid_engagement_rate: (e.combined || {}).rate ?? null,
+           paid_engagement_by_platform: { meta: (e.meta || {}).rate ?? null, tiktok: (e.tiktok || {}).rate ?? null } };
+}
+
 async function loadMerged(pool, brand) {
   const paidSel = (view) => `${P.creativeId} as id, ${P.spend} as spend, ${P.reach} as reach,
     ${P.impressions} as impressions, ${P.hookRate} as hook_rate, ${P.holdRate} as hold_rate,
@@ -58,7 +68,7 @@ async function loadMerged(pool, brand) {
     ${P.action} as action, ${P.actionType} as action_type, ${P.priority} as priority,
     ${P.confidence} as confidence, ${P.actionStatus} as action_status`;
 
-  const [cr, meta, tt] = await Promise.all([
+  const [cr, meta, tt, engBy] = await Promise.all([
     queryTolerant(pool, 
       `select c.${C.id} as id, c.${C.hook} as hook, c.${C.format} as format, c.${C.type} as type,
               c.${C.campaign} as campaign, c.${C.isRepurposed} as is_repurposed, c.${C.parentId} as parent_id,
@@ -74,6 +84,7 @@ async function loadMerged(pool, brand) {
        where c.${C.brand} = $1`, [brand]),
     pool.query(`select ${paidSel(T.paidMeta)} from ${T.paidMeta} where ${P.brand} = $1 and ${P.creativeId} is not null`, [brand]),
     pool.query(`select ${paidSel(T.paidTiktok)} from ${T.paidTiktok} where ${P.brand} = $1 and ${P.creativeId} is not null`, [brand]),
+    require('../creative-engagement').forBrand((t, p) => pool.query(t, p), brand),
   ]);
 
   const metaBy = new Map(meta.rows.map((r) => [r.id, { ...r, platform: 'meta' }]));
@@ -97,6 +108,7 @@ async function loadMerged(pool, brand) {
       language: c.language, talent: c.talent, production_style: c.production_style, aspect_ratio: c.aspect_ratio,
       product_screen_pct: c.product_screen_pct, cuts_per_10s: c.cuts_per_10s,
       boosted: true, ...m,
+      ...engFields(engBy.get(c.id)),
     });
   }
   return out;
@@ -340,4 +352,4 @@ async function runTool(name, args, ctx) {
   }
 }
 
-module.exports = { runTool, handlers, loadMerged, MAX_RESULT_CHARS };
+module.exports = { runTool, handlers, loadMerged, engFields, MAX_RESULT_CHARS };

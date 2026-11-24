@@ -49,12 +49,17 @@ function cqrrDates() {
   }
 }
 
+// The presets name their period, so the server can match the true reach
+// the Reach sync fetched for exactly that period. Custom has none.
+const CQRR_PERIOD = { all: 'all_time', last30: 'last_30', thisMonth: 'this_month', lastMonth: 'last_month', thisYear: 'this_year' };
+
 function cqrrQuery(extra) {
   const [from, to] = cqrrDates();
   const p = new URLSearchParams();
   if (typeof BRAND_ID !== 'undefined' && BRAND_ID) p.set('brand', BRAND_ID);
   if (from) p.set('from', from);
   if (to) p.set('to', to);
+  if (CQRR_PERIOD[CQRR.range]) p.set('period', CQRR_PERIOD[CQRR.range]);
   Object.entries(extra || {}).forEach(([k, v]) => p.set(k, v));
   return p.toString();
 }
@@ -183,27 +188,45 @@ const cqrrCount = (v) => (Number(v) < 1e6 ? Number(v || 0).toLocaleString('en-US
 const cqrrCreatives = (n, d) => `(${n} of ${d} creative${d === 1 ? '' : 's'})`;
 
 /** Engagement figures for one row, after its label cell. */
-function cqrrEngCells(f, withImpr) {
+/** Why a row has no engagement rate, in a few words. */
+function cqrrNoRate(f, status) {
+  if (status === 'custom') return 'preset ranges only';
+  if (status === 'not_fetched' || status === 'not_ready') return 'reach not fetched yet';
+  if (!f.reach) return 'no reach for this';
+  return 'no engagement data';
+}
+
+function cqrrEngCells(f, withImpr, status) {
+  const span = withImpr ? 6 : 5;
   if (!f || !f.paid_impressions) {
-    return `<td class="n cqrr-none" colspan="${withImpr ? 5 : 4}">No paid delivery in this range</td>`;
+    return `<td class="n cqrr-none" colspan="${span}">No paid delivery in this range</td>`;
   }
   if (!f.eng_impressions) {
-    return `<td class="n cqrr-none" colspan="${withImpr ? 5 : 4}">No engagement data for these days yet</td>`;
+    return `<td class="n cqrr-none" colspan="${span}">No engagement data for these days yet</td>`;
   }
-  return `<td class="n" data-k="Engagement rate"><span><span class="cqrr-v">${cqrrEr(f.paid_engagement_rate)}</span><span class="cqrr-n">${cqrrCreatives(f.eng_creative_n, f.paid_creative_n)}</span></span></td>`
+  const rate = f.paid_engagement_rate !== null && f.paid_engagement_rate !== undefined
+    ? `<span class="cqrr-v">${cqrrEr(f.paid_engagement_rate)}</span><span class="cqrr-n">${cqrrCreatives(f.eng_creative_n, f.paid_creative_n)}</span>`
+    : `<span class="cqrr-v">–</span><span class="cqrr-n">(${cqrrNoRate(f, status)})</span>`;
+  const reach = f.reach
+    ? `${cqrrCount(f.reach)}${f.reach_basis === 'account' ? '<span class="cqrr-n">(whole ad account)</span>' : ''}`
+    : '–';
+  return `<td class="n" data-k="Engagement rate"><span>${rate}</span></td>`
     + `<td class="n" data-k="Cost per engagement"><span class="cqrr-v">${cqrrLkr(f.cost_per_engagement)}</span></td>`
     + `<td class="n" data-k="Engagements">${cqrrCount(f.engagements)}</td>`
+    + `<td class="n" data-k="Reach"><span>${reach}</span></td>`
     + `<td class="n" data-k="Impressions covered">${cqrrPct(f.eng_coverage)}</td>`
     + (withImpr ? `<td class="n" data-k="Impressions">${fmtN(f.paid_impressions)}</td>` : '');
 }
 
 const CQRR_ENG_HEAD = `<th class="n">Engagement rate</th><th class="n">Cost per engagement</th>
-  <th class="n">Engagements</th><th class="n">Impressions covered</th>`;
+  <th class="n">Engagements</th><th class="n">Reach</th><th class="n">Impressions covered</th>`;
 
 const cqrrIsEng = () => CQRR.measure === 'engagement';
 const cqrrImpr = (f) => (f ? (cqrrIsEng() ? f.paid_impressions : f.impressions) || 0 : 0);
-const cqrrRowCells = (f, withImpr) => (cqrrIsEng() ? cqrrEngCells(f, withImpr) : cqrrCells(f, withImpr));
+const cqrrRowCells = (f, withImpr, status) => (cqrrIsEng() ? cqrrEngCells(f, withImpr, status) : cqrrCells(f, withImpr));
 const cqrrRowHead = () => (cqrrIsEng() ? CQRR_ENG_HEAD : CQRR_HEAD);
+
+const cqrrDay = (s) => new Date(`${s}T00:00:00`).toLocaleDateString('en-GB', { day: 'numeric', month: 'short', year: 'numeric' });
 
 function cqrrRangeLabel() {
   const r = CQRR_RANGES.find(([v]) => v === CQRR.range);
@@ -273,13 +296,21 @@ function cqrrEngagement(d) {
   if (!d.engagement_ready) {
     return msCard(title, `<div class="ms-bar-empty">Engagement figures appear once the engagement data has been loaded.</div>`);
   }
+  const status = d.reach && d.reach.status;
   const row = (label, f, strong) => `<tr${strong ? ' class="cqrr-total"' : ''}>
-    <td class="ms-plat">${label}</td>${cqrrEngCells(f)}</tr>`;
+    <td class="ms-plat">${label}</td>${cqrrEngCells(f, false, status)}</tr>`;
+  const why = {
+    custom: 'Engagement rate is on true reach, which Meta and TikTok give only for the preset ranges. Pick a preset date range to see it.',
+    not_fetched: 'True reach for this period has not been fetched yet. The Reach sync runs each night.',
+    not_ready: 'True reach has not been set up yet.',
+  }[status];
+  const dates = status === 'ok' && d.reach.period !== 'all_time' && d.reach.start
+    ? `Reach and engagements cover ${cqrrDay(d.reach.start)} to ${cqrrDay(d.reach.end)}.` : '';
   return msCard(title,
-    `<div class="cqrr-scroll"><table class="ms-table cqrr-table">
+    `${why ? `<div class="cqrr-why">${why}</div>` : ''}<div class="cqrr-scroll"><table class="ms-table cqrr-table">
       <thead><tr><th>Platform</th>${CQRR_ENG_HEAD}</tr></thead>
       <tbody>${row('Meta', src.meta)}${row('TikTok', src.tiktok)}${row('Combined', src.combined, true)}</tbody>
-    </table></div>`,
+    </table></div>${dates ? `<div class="cqrr-why">${dates}</div>` : ''}`,
     camp ? 'Follows the Campaign filter above' : 'Every paid creative');
 }
 
@@ -295,7 +326,7 @@ function cqrrCampaigns(d) {
   return msCard(`${what} by campaign`,
     `<div class="cqrr-scroll"><table class="ms-table cqrr-table">
       <thead><tr><th>Campaign</th>${cqrrRowHead()}<th class="n">Impressions</th></tr></thead>
-      <tbody>${rows.map((c) => `<tr><td class="ms-plat cqrr-name">${msEsc(c.name)}</td>${cqrrRowCells(c[CQRR.plat], true)}</tr>`).join('')}</tbody>
+      <tbody>${rows.map((c) => `<tr><td class="ms-plat cqrr-name">${msEsc(c.name)}</td>${cqrrRowCells(c[CQRR.plat], true, d.reach && d.reach.status)}</tr>`).join('')}</tbody>
     </table></div>`, `${pl}, most impressions first`);
 }
 
@@ -313,7 +344,7 @@ function cqrrCompare() {
       : `<div class="cqrr-scroll"><table class="ms-table cqrr-table">
       <thead><tr><th>Brand</th>${cqrrRowHead()}<th class="n">Impressions</th></tr></thead>
       <tbody>${rows.map((b) => `<tr${b.brand_id === me ? ' class="cqrr-total"' : ''}>
-        <td class="ms-plat cqrr-name">${msEsc(b.name)}</td>${cqrrRowCells(b[CQRR.plat], true)}</tr>`).join('')}</tbody>
+        <td class="ms-plat cqrr-name">${msEsc(b.name)}</td>${cqrrRowCells(b[CQRR.plat], true, CQRR.cmp.reach && CQRR.cmp.reach.status)}</tr>`).join('')}</tbody>
     </table></div>`;
   }
   return msCard(`<span>${cqrrIsEng() ? 'Engagement' : 'Video quality'}, brands side by side<span class="cqrr-sub">${msEsc(cqrrRangeLabel())}</span></span>`, body,
@@ -334,7 +365,11 @@ const CQRR_FOOT = `CQR is the creative quality rating. Each paid video is rated 
 /** The engagement half of the footnote. Instagram follows are named only as Meta reports them. */
 function cqrrEngFoot(d) {
   const ig = d && d.inputs && d.inputs.ig_follows;
-  return `Engagement rate is engagements divided by impressions, over every paid creative.
+  return `Engagement rate is engagements divided by reach, over every paid creative. Reach is the
+  number of different people who saw the ads in that period, as Meta and TikTok report it. It cannot
+  be added up from days or ads, so it is fetched for each preset range every night, and a custom
+  range has no engagement rate. Combined divides all engagements by Meta reach plus TikTok reach,
+  so someone reached on both platforms counts twice.
   On Meta, engagements are post reactions, comments, shares, saves, link clicks${ig ? ', Instagram follows' : ''}
   and Facebook page likes. On TikTok, they are paid likes, comments, shares, follows and destination
   clicks. Not counted: 3-second plays, Post engagement and Clicks (all). TikTok favorites are not
@@ -342,9 +377,10 @@ function cqrrEngFoot(d) {
     ? ' Meta reports Instagram follows from July 2025 only.'
     : ' Meta has not reported Instagram follows for these ads, so they are not included.'}
   Cost per engagement is spend in LKR divided by the same engagements. Only days with engagement
-  data count, for impressions and spend alike; Impressions covered shows how much of the paid
-  delivery that is. Combined adds Meta and TikTok engagements, impressions and spend together. The
-  figure in brackets counts creatives with engagement data.`;
+  data count; Impressions covered shows how much of the paid delivery that is, and below 100% the
+  engagement rate reads low. The figure in brackets counts creatives with engagement data.${
+    d && d.overall && d.overall.tiktok && d.overall.tiktok.reach_basis === 'account'
+      ? ' TikTok reach is for the whole TikTok ad account, because TikTok would not narrow it to these ads.' : ''}`;
 }
 
 function cqrrInner() {

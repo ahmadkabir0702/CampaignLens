@@ -30,10 +30,24 @@ const ENG = [
   { platform: 'tiktok', brand_id: 'lux', creative_id: 'A', campaign: 'Diwali 2026', impr: '100000', spend: '15000', eng_impr: '100000', eng_spend: '15000', eng: '6000' },
 ];
 
-function fakeQuery(rows, span = { first_day: '2025-01-03', last_day: '2026-11-21' }, eng = ENG) {
+// True reach, as the Reach sync stores it.
+const REACH = [
+  { brand_id: 'lux', platform: 'meta', campaign: '', reach: '200000', basis: 'ads', error: null, period_start: '2025-01-01', period_end: '2026-11-24' },
+  { brand_id: 'lux', platform: 'tiktok', campaign: '', reach: '50000', basis: 'ads', error: null, period_start: '2025-01-01', period_end: '2026-11-24' },
+  { brand_id: 'lux', platform: 'meta', campaign: 'Always on', reach: '20000', basis: 'ads', error: null, period_start: '2025-01-01', period_end: '2026-11-24' },
+  // TikTok would not give reach for one campaign.
+  { brand_id: 'lux', platform: 'tiktok', campaign: 'Diwali 2026', reach: null, basis: 'ads', error: 'TikTok: filter not supported', period_start: '2025-01-01', period_end: '2026-11-24' },
+];
+
+function fakeQuery(rows, span = { first_day: '2025-01-03', last_day: '2026-11-21' }, eng = ENG, reach = REACH) {
   const calls = [];
   const q = async (text, params) => {
     calls.push({ text, params });
+    if (/from paid_reach/.test(text)) {
+      if (reach === 'missing') throw Object.assign(new Error('relation "paid_reach" does not exist'), { code: '42P01' });
+      if (/period_start = \$2/.test(text)) return { rows: [] };
+      return { rows: params[1] === 'all_time' ? reach.filter((r) => params[0].includes(r.brand_id)) : [] };
+    }
     if (/first_day/.test(text)) return { rows: [span] };
     if (/eng_ig_follows/.test(text)) return { rows: [{ seen: false }] };
     if (/bool_and/.test(text)) {
@@ -149,48 +163,88 @@ test('the paid_rates tool matches a campaign by part of its name', async () => {
   assert.match(bad.result.error, /YYYY-MM-DD/);
 });
 
-test('engagement rate counts only days with engagement data, on both sides', async () => {
+test('engagement rate is engagements over true reach', async () => {
   R.clearCache();
   const out = await R.forBrand(fakeQuery(ROWS), 'lux', {});
   const m = out.overall.meta;
   assert.equal(out.engagement_ready, true);
-  // (9,000 + 1,000) / (300k + 100k) = 2.5%. All 500k would give 2%.
-  assert.equal(m.paid_engagement_rate, 2.5);
-  // (90,000 + 20,000) / 10,000 engagements
+  assert.equal(out.reach.status, 'ok');
+  assert.equal(out.reach.period, 'all_time');
+  // (9,000 + 1,000) engagements / 200,000 people
+  assert.equal(m.reach, 200000);
+  assert.equal(m.paid_engagement_rate, 5);
+  // Cost per engagement is unchanged: (90,000 + 20,000) / 10,000
   assert.equal(m.cost_per_engagement, 11);
   assert.equal(m.eng_coverage, 80);
-  assert.equal(m.eng_creative_n, 2);
-  assert.equal(m.paid_creative_n, 2);
 });
 
-test('combined engagement adds the platforms; nothing read reads as no figure', async () => {
+test('combined divides all engagements by both reaches added, never an average', async () => {
   R.clearCache();
   const out = await R.forBrand(fakeQuery(ROWS), 'lux', {});
-  const t = out.overall.tiktok, c = out.overall.combined;
-  assert.equal(t.paid_engagement_rate, 6);           // 6,000 / 100k; E has no data and is left out
-  assert.equal(t.eng_coverage, 25);
-  // 16,000 / 500k = 3.2%. The average of 2.5 and 6 would be 4.25.
-  assert.equal(c.paid_engagement_rate, 3.2);
-  assert.equal(c.cost_per_engagement, 7.81);         // 125,000 / 16,000
-  const always = out.campaigns.find((x) => x.name === 'Always on');
-  assert.equal(always.tiktok.paid_engagement_rate, null);
-  assert.equal(always.tiktok.cost_per_engagement, null);
+  assert.equal(out.overall.tiktok.paid_engagement_rate, 12);       // 6,000 / 50,000
+  // 16,000 / 250,000 = 6.4%. The average of 5 and 12 would be 8.5.
+  assert.equal(out.overall.combined.reach, 250000);
+  assert.equal(out.overall.combined.paid_engagement_rate, 6.4);
+  // A campaign with delivery on a platform whose reach failed has no
+  // Combined rate: half a denominator would overstate it.
+  const diwali = out.campaigns.find((x) => x.name === 'Diwali 2026');
+  assert.equal(diwali.tiktok.paid_engagement_rate, null);
+  assert.equal(diwali.combined.paid_engagement_rate, null);
+  assert.equal(out.campaigns.find((x) => x.name === 'Always on').meta.paid_engagement_rate, 5);   // 1,000 / 20,000
 });
 
-test('before 046 is run the CQR figures still come back, without engagement', async () => {
+test('a custom range has no engagement rate; a calendar month is a period', async () => {
+  R.clearCache();
+  const out = await R.forBrand(fakeQuery(ROWS), 'lux', { from: '2026-03-04', to: '2026-04-09' });
+  assert.equal(out.reach.status, 'custom');
+  assert.equal(out.overall.combined.paid_engagement_rate, null);
+  assert.equal(out.overall.combined.cost_per_engagement, 7.81);     // still there
+  assert.equal(R.monthPeriod('2026-02-01', '2026-02-28'), 'month:2026-02');
+  assert.equal(R.monthPeriod('2026-02-01', '2026-02-27'), null);
+  assert.throws(() => R.cleanPeriod('forever'), (e) => e.status === 400);
+});
+
+test('before 046 or 047 is run the CQR figures still come back', async () => {
   R.clearCache();
   const out = await R.forBrand(fakeQuery(ROWS, undefined, 'missing'), 'lux', {});
   assert.equal(out.engagement_ready, false);
   assert.equal(out.overall.combined.cqr_good_rate, 70);
   assert.equal(out.overall.combined.paid_engagement_rate, undefined);
+  R.clearCache();
+  const noReach = await R.forBrand(fakeQuery(ROWS, undefined, ENG, 'missing'), 'lux', {});
+  assert.equal(noReach.reach.status, 'not_ready');
+  assert.equal(noReach.overall.combined.paid_engagement_rate, null);
 });
 
 test('Ask Lens records carry the engagement figures', async () => {
   R.clearCache();
   const out = await R.forBrand(fakeQuery(ROWS), 'lux', {});
   const { records } = RATES.recordsFrom(out);
-  assert.equal(records['rates:all:all:all:combined'].paid_engagement_rate, 3.2);
+  assert.equal(records['rates:all:all:all:combined'].paid_engagement_rate, 6.4);
   assert.equal(records['rates:all:all:always-on:meta'].cost_per_engagement, 20);
   const res = await RATES.tool({ platform: 'combined' }, { brand: 'lux' }, fakeQuery(ROWS));
-  assert.equal(res.result.rows[0].paid_engagement_rate, 3.2);
+  assert.equal(res.result.rows[0].paid_engagement_rate, 6.4);
+  const custom = await RATES.tool({ from: '2026-03-04', to: '2026-04-09', platform: 'combined' }, { brand: 'lux' }, fakeQuery(ROWS));
+  assert.match(custom.result.engagement_rate, /true reach/);
+});
+
+test('a creative\'s engagement rate is over its whole run, only when every day has data', async () => {
+  const CE = require('../server/creative-engagement');
+  const q = async () => ({ rows: [
+    { platform: 'meta', creative_id: 'A', eng: '1000', complete: true, reach: '20000' },
+    { platform: 'tiktok', creative_id: 'A', eng: '3000', complete: true, reach: '30000' },
+    { platform: 'meta', creative_id: 'B', eng: '500', complete: false, reach: '10000' },   // early days never read
+    { platform: 'meta', creative_id: 'C', eng: '500', complete: true, reach: null },       // reach not fetched yet
+  ] });
+  const m = await CE.forBrand(q, 'lux');
+  assert.equal(m.get('A').meta.rate, 5);
+  assert.equal(m.get('A').tiktok.rate, 10);
+  assert.equal(m.get('A').combined.rate, 8);      // 4,000 / 50,000, not the average of 5 and 10
+  assert.equal(m.get('B').meta.rate, null);
+  assert.equal(m.get('C').meta.rate, null);
+  assert.equal(m.get('C').combined.rate, null);
+  const missing = await CE.forBrand(async () => { throw Object.assign(new Error('x'), { code: '42P01' }); }, 'lux');
+  assert.equal(missing.size, 0);
+  const { engFields } = require('../server/chat/toolHandlers');
+  assert.deepEqual(engFields(m.get('A')), { paid_engagement_rate: 8, paid_engagement_by_platform: { meta: 5, tiktok: 10 } });
 });

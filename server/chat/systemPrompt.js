@@ -50,7 +50,9 @@ Never write a metric value as text. Not a percentage, not a count, not a spend f
   ${S.rollupMetrics.join(', ')}. ID is "brand" (all campaigns, both platforms,
   all time) or a rates: id from "PAID VIDEO QUALITY AND ENGAGEMENT" or from paid_rates, e.g.
   [[metric:cqr_good_rate|rates:all:all:all:meta]]. Never use these with a
-  creative id. The badge shows the video count beside the figure.
+  creative id, except paid_engagement_rate: with a creative id it is that
+  creative's engagement rate over its whole paid run. engagement_rate is the
+  organic one; never mix the two. The badge shows the count beside the figure.
 
 [[chart:TYPE|METRIC|ID,ID,ID]]
   TYPE is bar or line. Use bar to compare creatives. For a series returned by

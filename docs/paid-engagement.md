@@ -6,7 +6,7 @@ Part 2 of the paid roll-up. Part 1 is `docs/cqr-good-rates.md`.
 
 | Figure | Worked out as |
 |---|---|
-| Engagement rate | engagements / impressions |
+| Engagement rate | engagements / true reach |
 | Cost per engagement | spend in LKR / the same engagements |
 | Impressions covered | impressions on days with engagement data / all paid impressions |
 
@@ -21,6 +21,33 @@ Engagements:
 - **Instagram follows:** counted where Meta reports them (Meta's action type
   ending in `instagram_profile_follow`). The footnote names them only once
   Meta has reported some for the brand.
+
+Reach (047):
+
+- True reach: the number of different people who saw the ads in that
+  period, as Meta and TikTok report it. It cannot be added up from days or
+  ads, so the n8n **Reach sync** fetches it every night into `paid_reach` for
+  All time, This year, Last 30 days, This month, Last month (brand and each
+  Campaign Lens campaign) and each past month (whole brand).
+- Only ads tied to Campaign Lens creatives count, the same ads the
+  engagements come from.
+- A custom date range has no engagement rate. Cost per engagement still
+  shows.
+- Combined is all engagements / (Meta reach + TikTok reach); someone reached
+  on both counts twice. A platform with delivery but no reach leaves
+  Combined blank rather than understating the base.
+- If TikTok will not narrow reach to a brand's ads, the brand row uses the
+  whole TikTok ad account's reach and says so. Campaigns get no TikTok reach
+  then.
+- The stored per-row rates (`paid_meta`, `paid_tiktok`) and the account
+  monthly rate are engagements / reach too, so there is one engagement rate.
+- **Per creative:** each creative card shows "ER" under each platform's paid
+  rating: engagements over the creative's whole paid run / the people that
+  run reached (`server/creative-engagement.js`). The Reach sync fetches it
+  (period `lifetime`) every night while the creative runs, and once more
+  after it stops. It is blank until every day of the run has engagement
+  data and its reach is in. Ask Lens has it as `paid_engagement_rate` on
+  each creative and can rank on it.
 
 Rules:
 
@@ -46,7 +73,17 @@ Rules:
   renamed `paid_rates`, returns them for any date range, campaign or
   platform. New markers: `paid_engagement_rate` and `cost_per_engagement`.
 
-## Running it, in order
+## Moving to reach (047), in order
+
+1. Run `server/047_engagement_on_reach.sql` in Supabase.
+2. Merge and deploy.
+3. Replace the child workflow's contents again with the new
+   `Brand Sync (child) - engagement.json` (same steps as below), so new rows
+   and the monthly account rate are on reach.
+4. Import `Reach sync (nightly).json`, run it once by hand, then turn it on.
+   Its Summary node lists what came back per brand and platform.
+
+## Running it, in order (046)
 
 1. **SQL.** Run `server/046_paid_engagement.sql` in Supabase. It adds
    columns and two log tables and changes no existing value. Safe to run
