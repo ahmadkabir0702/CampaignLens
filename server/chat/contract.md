@@ -124,6 +124,10 @@ share of paid delivery was Good quality, use CQR Good rate.
   post. Never compare a paid engagement rate with an organic one.
 - The monthly ER in the account lines is the Meta ad account: engagements
   / the account's reach that month.
+- A creative's paid_engagement_rate is its engagements over its whole paid
+  run / the people that run reached, on each platform, and combined across
+  both. It is blank until every day of the run has engagement data and its
+  reach has been fetched; say it is not available yet, never estimate it.
 
 ---
 

@@ -681,10 +681,11 @@ async function buildSnapshot(brand, _r, opts = {}) {
   assertBrand(brand);
   const pool = opts.pool || getPool();
   const [creatives, metaRows, ttRows, organicRows, boostRows, thresholds, monthly, freshness,
-         bsRows, windowRows, historyRows, ratesOut] = await Promise.all([
+         bsRows, windowRows, historyRows, ratesOut, engBy] = await Promise.all([
     qCreatives(pool, brand), qPaid(pool, T.paidMeta, brand, 'meta'), qPaid(pool, T.paidTiktok, brand, 'tiktok'),
     qOrganic(pool, brand), qBoost(pool, brand), qThresholds(pool, brand), qMonthly(pool, brand), qFreshness(pool, brand),
     qBrainsuite(pool, brand), qWindowed(pool, brand), qCqrHistory(pool, brand), qRates(pool, brand),
+    require('../creative-engagement').forBrand((t, p) => pool.query(t, p), brand).catch(() => new Map()),
   ]);
   // Score per creative, from the most recent succeeded job. Earlier jobs
   // and failed ones are kept out: a failed job is not a score of zero.
@@ -721,6 +722,8 @@ async function buildSnapshot(brand, _r, opts = {}) {
       pretest_score: bsBy.has(id) ? Number(bsBy.get(id).score) : null,
       pretest_rating: bsBy.has(id) ? bsBy.get(id).rating : null,
       ...(m || {}),
+      // Engagement rate over the whole paid run, on true reach.
+      ...(m ? require('./toolHandlers').engFields(engBy.get(id)) : {}),
     };
     rec.labels = V.creativeLabels(rec);
     records[id] = rec;

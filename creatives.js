@@ -181,9 +181,12 @@ async function brainsuiteScores(brandId) {
 }
 
 async function buildPayload(brandId) {
-  const [extras, bsBy, staticBands, followersBy, slidesBy] = await Promise.all([
+  const [extras, bsBy, staticBands, followersBy, slidesBy, engBy] = await Promise.all([
     paidExtras(brandId), brainsuiteScores(brandId),
     SR.loadBands(query, brandId), SR.loadFollowers(query, brandId), slidesFor(brandId),
+    // Engagement rate over each creative's whole paid run, on true reach
+    // (server/creative-engagement.js). Empty until 046 and 047 are run.
+    require('./server/creative-engagement').forBrand(query, brandId),
   ]);
   const [brandR, contentR, metaR, ttR, organicR, bestR, boostR, accountR, campR] =
     await Promise.all([
@@ -390,9 +393,13 @@ async function buildPayload(brandId) {
       // both. A creative running on Meta and stopped on TikTok reads as
       // simply "running" otherwise, which is not what is happening.
       paidBy: {
-        meta:   m ? { adStatus: m.adStatus || null, cqr: isStatic ? 'Not Rated' : (m.cqr || null), spend: m.spend || 0 } : null,
-        tiktok: t ? { adStatus: t.adStatus || null, cqr: isStatic ? 'Not Rated' : (t.cqr || null), spend: t.spend || 0 } : null,
+        meta:   m ? { adStatus: m.adStatus || null, cqr: isStatic ? 'Not Rated' : (m.cqr || null), spend: m.spend || 0,
+                      er: ((engBy.get(id) || {}).meta || {}).rate ?? null } : null,
+        tiktok: t ? { adStatus: t.adStatus || null, cqr: isStatic ? 'Not Rated' : (t.cqr || null), spend: t.spend || 0,
+                      er: ((engBy.get(id) || {}).tiktok || {}).rate ?? null } : null,
       },
+      // Whole paid run, both platforms: all engagements over both reaches.
+      paidEr: ((engBy.get(id) || {}).combined || {}).rate ?? null,
 
       // content
       contentHook: c.content_hook || '',

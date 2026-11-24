@@ -41,6 +41,13 @@ Reach (047):
   then.
 - The stored per-row rates (`paid_meta`, `paid_tiktok`) and the account
   monthly rate are engagements / reach too, so there is one engagement rate.
+- **Per creative:** each creative card shows "ER" under each platform's paid
+  rating: engagements over the creative's whole paid run / the people that
+  run reached (`server/creative-engagement.js`). The Reach sync fetches it
+  (period `lifetime`) every night while the creative runs, and once more
+  after it stops. It is blank until every day of the run has engagement
+  data and its reach is in. Ask Lens has it as `paid_engagement_rate` on
+  each creative and can rank on it.
 
 Rules:
 

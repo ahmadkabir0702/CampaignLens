@@ -135,7 +135,7 @@ const schema = {
 
   metricHierarchy: ['cqr', 'hook_rate', 'hold_rate', 'engagement_rate', 'reach', 'video_views'],
   vanityMetrics: ['ctr', 'vtr', 'cpm', 'cpc'],
-  rankableMetrics: ['cqr', 'hook_rate', 'hold_rate', 'engagement_rate', 'reach', 'video_views', 'spend', 'impressions', 'avg_watch_time', 'vtr', 'ctr'],
+  rankableMetrics: ['cqr', 'hook_rate', 'hold_rate', 'engagement_rate', 'paid_engagement_rate', 'reach', 'video_views', 'spend', 'impressions', 'avg_watch_time', 'vtr', 'ctr'],
 
   // Paid video, weighted by impressions, for the brand, a campaign or a
   // date range (server/chat/rates.js). Not creative metrics: their ids are

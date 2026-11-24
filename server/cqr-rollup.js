@@ -295,7 +295,7 @@ async function loadReach(q, brandIds, period) {
       `select brand_id, platform, campaign, reach, basis, error,
               period_start::text as period_start, period_end::text as period_end, fetched_at
          from paid_reach
-        where brand_id = any($1::text[]) and period = $2`, [brandIds, period]);
+        where brand_id = any($1::text[]) and period = $2 and creative_id = ''`, [brandIds, period]);
     return rows;
   } catch (e) {
     if (e && e.code === '42P01') return null;   // paid_reach not there yet
@@ -307,7 +307,8 @@ async function periodForDates(q, brandIds, from, to) {
   try {
     const { rows } = await q(
       `select period from paid_reach
-        where brand_id = any($1::text[]) and campaign = '' and period_start = $2::date and period_end = $3::date
+        where brand_id = any($1::text[]) and campaign = '' and creative_id = ''
+          and period <> 'lifetime' and period_start = $2::date and period_end = $3::date
         order by fetched_at desc limit 1`, [brandIds, from, to]);
     return rows[0] ? rows[0].period : null;
   } catch (e) {

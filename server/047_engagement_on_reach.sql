@@ -7,10 +7,12 @@
 --  would be counted again), so it is fetched from the platforms for each
 --  exact period by the n8n "Reach sync" workflow and kept here.
 --
---  One row per brand, platform, campaign and period:
---    campaign  ''  = the whole brand; otherwise the Campaign Lens campaign
---    period    all_time | this_year | last_30 | this_month | last_month
---              | month:YYYY-MM (whole brand only)
+--  One row per brand, platform, campaign, creative and period:
+--    campaign     ''  = the whole brand; otherwise the Campaign Lens campaign
+--    creative_id  ''  = not one creative; otherwise that creative's whole
+--                 paid run on the platform (period 'lifetime')
+--    period       all_time | this_year | last_30 | this_month | last_month
+--                 | month:YYYY-MM (whole brand only) | lifetime (creatives)
 --  Only ads tied to Campaign Lens creatives are counted, the same ads the
 --  engagements and impressions come from.
 --
@@ -25,6 +27,7 @@ create table if not exists public.paid_reach (
   brand_id     text not null,
   platform     text not null,            -- meta | tiktok
   campaign     text not null default '', -- '' = whole brand
+  creative_id  text not null default '', -- '' = not one creative
   period       text not null,
   period_start date not null,
   period_end   date not null,
@@ -33,10 +36,8 @@ create table if not exists public.paid_reach (
   basis        text,                     -- ads: only the brand's tracked ads; account: the whole ad account
   fetched_at   timestamptz not null default now(),
   error        text,
-  primary key (brand_id, platform, campaign, period)
+  primary key (brand_id, platform, campaign, creative_id, period)
 );
-
-alter table public.paid_reach add column if not exists basis text;
 
 comment on table public.paid_reach is
   'True reach from Meta and TikTok for each brand, Campaign Lens campaign and period (047). Written nightly by the n8n Reach sync.';

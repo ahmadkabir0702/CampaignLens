@@ -227,3 +227,24 @@ test('Ask Lens records carry the engagement figures', async () => {
   const custom = await RATES.tool({ from: '2026-03-04', to: '2026-04-09', platform: 'combined' }, { brand: 'lux' }, fakeQuery(ROWS));
   assert.match(custom.result.engagement_rate, /true reach/);
 });
+
+test('a creative\'s engagement rate is over its whole run, only when every day has data', async () => {
+  const CE = require('../server/creative-engagement');
+  const q = async () => ({ rows: [
+    { platform: 'meta', creative_id: 'A', eng: '1000', complete: true, reach: '20000' },
+    { platform: 'tiktok', creative_id: 'A', eng: '3000', complete: true, reach: '30000' },
+    { platform: 'meta', creative_id: 'B', eng: '500', complete: false, reach: '10000' },   // early days never read
+    { platform: 'meta', creative_id: 'C', eng: '500', complete: true, reach: null },       // reach not fetched yet
+  ] });
+  const m = await CE.forBrand(q, 'lux');
+  assert.equal(m.get('A').meta.rate, 5);
+  assert.equal(m.get('A').tiktok.rate, 10);
+  assert.equal(m.get('A').combined.rate, 8);      // 4,000 / 50,000, not the average of 5 and 10
+  assert.equal(m.get('B').meta.rate, null);
+  assert.equal(m.get('C').meta.rate, null);
+  assert.equal(m.get('C').combined.rate, null);
+  const missing = await CE.forBrand(async () => { throw Object.assign(new Error('x'), { code: '42P01' }); }, 'lux');
+  assert.equal(missing.size, 0);
+  const { engFields } = require('../server/chat/toolHandlers');
+  assert.deepEqual(engFields(m.get('A')), { paid_engagement_rate: 8, paid_engagement_by_platform: { meta: 5, tiktok: 10 } });
+});
