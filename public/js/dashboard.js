@@ -1500,6 +1500,9 @@ function detailSummaryHTML(d) {
     ${cell('Pre-test Score', d.bsScore === null || d.bsScore === undefined ? 'Not scored' : d.bsScore,
            d.bsScore === null || d.bsScore === undefined ? 'dsum-quiet' : '',
            d.bsRating || (d.bsScore === null || d.bsScore === undefined ? '' : 'of 100'))}
+    ${cell('Built for', d.lensIntent || 'Not checked',
+           d.lensIntent ? (d.lensFit == null ? '' : d.lensFit >= 70 ? 'dsum-fit-green' : d.lensFit >= 50 ? 'dsum-fit-amber' : 'dsum-fit-red') : 'dsum-quiet',
+           d.lensIntent && d.lensFit != null ? `fit ${d.lensFit} of 100` : '')}
     ${cell('Paid status', status, statusCls, statusSub)}
   </div>`;
 }
@@ -2905,6 +2908,7 @@ function renderDetail(d) {
       </details>
 
       ${typeof PreTest !== 'undefined' ? PreTest.detailSection(d) : ''}
+      ${typeof PreTest !== 'undefined' && PreTest.lensSection ? PreTest.lensSection(d) : ''}
 
       ${statsHTML}
 

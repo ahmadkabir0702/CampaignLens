@@ -33,10 +33,15 @@ const { getPool } = require('./db');
 // best day.
 // Bumped to 12: a creative on Meta and TikTok rated differently on each is
 // described with both ratings, never one.
+// 13: Funnel fit and the Sound score in the records and digest.
+// 14: CQR Good rate, Hook Good rate and Hold Good rate (PAID VIDEO QUALITY).
+// 15: both together, so a snapshot built on either one alone is rebuilt.
 // 16: engagement rate and cost per engagement in PAID VIDEO QUALITY AND
-// ENGAGEMENT. (15 is the Sound and Funnel fit merge.)
+// ENGAGEMENT.
 // 17: engagement rate on true reach.
-const SNAPSHOT_SCHEMA_VERSION = 17;
+// 18: Funnel fit and Sound together with the engagement fields, so a
+// snapshot built on either one alone is rebuilt.
+const SNAPSHOT_SCHEMA_VERSION = 18;
 
 const T = S.tables, C = S.creative, P = S.paidView, O = S.organicView, OR = S.organicRawCols;
 const OB = S.organicBest, B = S.boost, TH = S.thresholds, CR = S.creator;
@@ -175,6 +180,19 @@ async function qBrainsuite(pool, brand) {
         order by j.${BSJ.createdAt} desc`, [brand]);
     return rows;
   }, 'brainsuite');
+}
+
+// Sound and Funnel fit per creative (migration 045).
+async function qLens(pool, brand) {
+  return soft(async () => {
+    const { rows } = await pool.query(
+      `select creative_id as id, funnel_intent, funnel_fit, sound_score,
+              (funnel -> 'stages' -> 'Awareness' ->> 'score')::int as fit_awareness,
+              (funnel -> 'stages' -> 'Consideration' ->> 'score')::int as fit_consideration,
+              (funnel -> 'stages' -> 'Conversion' ->> 'score')::int as fit_conversion
+         from lens_checks where brand_id = $1 and kind = 'creative' and status = 'succeeded'`, [brand]);
+    return rows;
+  }, 'funnel fit and sound');
 }
 
 // First window against last, per creative, so decline is visible. The view
@@ -505,6 +523,21 @@ function renderDigest(an, insights) {
     L.push('  Always call it the Pre-test Score (CampaignLens Pre-testing). Never name the vendor or tool that produces it.');
   }
 
+  // ---- Funnel fit and Sound -------------------------------------
+  if ((an.lens || []).length) {
+    L.push('');
+    const by = { Awareness: 0, Consideration: 0, Conversion: 0 };
+    for (const l of an.lens) if (by[l.funnel_intent] !== undefined) by[l.funnel_intent] += 1;
+    L.push(`FUNNEL FIT AND SOUND (${an.lens.length} creatives checked)`);
+    L.push(`  Built for: awareness ${by.Awareness}, consideration ${by.Consideration}, conversion ${by.Conversion}.`);
+    const weak = an.lens.filter((l) => l.funnel_fit != null && l.funnel_fit < 50).slice(0, 5);
+    if (weak.length) L.push(`  Weak fit for what they are built for: ${weak.map((l) => `${l.id} (${l.funnel_intent}, ${l.funnel_fit})`).join(', ')}`);
+    const quiet = an.lens.filter((l) => l.sound_score != null && l.sound_score < 50).slice(0, 5);
+    if (quiet.length) L.push(`  Weak sound: ${quiet.map((l) => `${l.id} ${l.sound_score}`).join(', ')}`);
+    L.push('  Funnel fit (0 to 100 per stage) says which stage a creative suits: awareness, consideration or conversion. Sound scores loudness, clipping, whether the voice is clear over music, whether the brand is named early, and whether it works muted.');
+    L.push('  Like the Pre-test Score these judge the creative itself, not its results. Use them to explain results, never rank them against CQR.');
+  }
+
   // ---- Recorded rating changes ---------------------------------
   if ((an.ratingChanges || []).length) {
     L.push('');
@@ -681,12 +714,13 @@ async function buildSnapshot(brand, _r, opts = {}) {
   assertBrand(brand);
   const pool = opts.pool || getPool();
   const [creatives, metaRows, ttRows, organicRows, boostRows, thresholds, monthly, freshness,
-         bsRows, windowRows, historyRows, ratesOut, engBy] = await Promise.all([
+         bsRows, windowRows, historyRows, lensRows, ratesOut, engBy] = await Promise.all([
     qCreatives(pool, brand), qPaid(pool, T.paidMeta, brand, 'meta'), qPaid(pool, T.paidTiktok, brand, 'tiktok'),
     qOrganic(pool, brand), qBoost(pool, brand), qThresholds(pool, brand), qMonthly(pool, brand), qFreshness(pool, brand),
-    qBrainsuite(pool, brand), qWindowed(pool, brand), qCqrHistory(pool, brand), qRates(pool, brand),
+    qBrainsuite(pool, brand), qWindowed(pool, brand), qCqrHistory(pool, brand), qLens(pool, brand), qRates(pool, brand),
     require('../creative-engagement').forBrand((t, p) => pool.query(t, p), brand).catch(() => new Map()),
   ]);
+  const lensBy = new Map(lensRows.map((r) => [r.id, r]));
   // Score per creative, from the most recent succeeded job. Earlier jobs
   // and failed ones are kept out: a failed job is not a score of zero.
   const bsBy = new Map();
@@ -721,6 +755,12 @@ async function buildSnapshot(brand, _r, opts = {}) {
       // before we spent on it", which nothing else here can.
       pretest_score: bsBy.has(id) ? Number(bsBy.get(id).score) : null,
       pretest_rating: bsBy.has(id) ? bsBy.get(id).rating : null,
+      // Funnel fit and Sound: also judgments of the creative itself, not results.
+      built_for: lensBy.has(id) ? lensBy.get(id).funnel_intent : null,
+      fit_awareness: lensBy.has(id) ? lensBy.get(id).fit_awareness : null,
+      fit_consideration: lensBy.has(id) ? lensBy.get(id).fit_consideration : null,
+      fit_conversion: lensBy.has(id) ? lensBy.get(id).fit_conversion : null,
+      sound_score: lensBy.has(id) && lensBy.get(id).sound_score != null ? Number(lensBy.get(id).sound_score) : null,
       ...(m || {}),
       // Engagement rate over the whole paid run, on true reach.
       ...(m ? require('./toolHandlers').engFields(engBy.get(id)) : {}),
@@ -777,6 +817,7 @@ async function buildSnapshot(brand, _r, opts = {}) {
   const an = A.build({ brand, paid, organic, boost: boostRows, thresholds, monthly, freshness, all: allRecs });
   an.fatiguing = fatiguing;
   an.ratingChanges = ratingChanges;
+  an.lens = lensRows;
   an.pretest = [...bsBy.values()]
     .filter((r) => r.score !== null && r.score !== undefined)
     .map((r) => ({ id: r.id, score: Number(r.score), rating: r.rating }))

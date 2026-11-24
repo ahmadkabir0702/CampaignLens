@@ -5,11 +5,12 @@
  *   Creative cards   a Pre-test Score badge, and a section in the detail
  *   Download PDF     a print layout of any report, saved through the browser
  *
- * The video goes from this browser straight to the scoring service's upload
- * storage. Campaign Lens only hands out a one-file upload form and starts
- * the test. Reports are summaries Campaign Lens keeps (numbers only);
- * heatmaps are fetched when a report is opened, because their links expire
- * after an hour.
+ * The video goes from this browser to private temporary storage (or, on a
+ * server without it, straight to the scoring service). Campaign Lens hands
+ * out a one-file upload link and the server does the rest: the Pre-test
+ * Score, plus Sound and Funnel fit. Reports are summaries Campaign Lens keeps
+ * (numbers only); heatmaps are fetched when a report is opened, because
+ * their links expire after an hour.
  *
  * Users never see the scoring vendor's name anywhere in this file.
  */
@@ -31,6 +32,10 @@
   };
   const tone = r => TONE[r] || 'na';
   const TONE_WORD = { pos: 'Strong', warn: 'Mixed', neg: 'Weak', na: 'Not scored' };
+  // Sound and Funnel fit use one colour rule: green 70+, amber 50 to 69, red below 50.
+  const RAG_TONE = { green: 'pos', amber: 'warn', red: 'neg' };
+  const ragTone = r => RAG_TONE[r] || 'na';
+  const ragOf = n => (n == null ? null : n >= 70 ? 'green' : n >= 50 ? 'amber' : 'red');
 
   const STATUS = {
     uploading: 'Uploading', queued: 'Queued', analysing: 'Analysing', succeeded: 'Ready',
@@ -185,6 +190,8 @@
       ${works.length ? `<section class="bs-sec"><h4 class="bs-h">What works</h4>
         <div class="bs-chips">${works.map(k => `<span class="bs-chip">${esc(k.name)}</span>`).join('')}</div></section>` : ''}
 
+      ${opts.lens ? lensHTML(opts.lens, { kind: opts.kind }) : ''}
+
       <section class="bs-sec bs-media" data-job="${esc(opts.jobId || '')}" data-video="${opts.kind === 'pretest' ? '1' : ''}">
         <h4 class="bs-h">Where attention goes</h4>
         <div class="bs-media-body"><div class="bs-media-sk" aria-busy="true"><div class="sk"></div><div class="sk"></div><div class="sk"></div></div></div>
@@ -229,6 +236,136 @@
     }
   }
 
+
+  // ── Sound and Funnel fit (shared by pre-tests and creatives) ───────────────
+  const STAGE_ORDER = ['Awareness', 'Consideration', 'Conversion'];
+
+  function loudChart(ld) {
+    const pts = (ld && ld.series) || [];
+    if (pts.length < 3) return '';
+    const W = 600, H = 120, top = -5, bot = -40;
+    const dur = Math.max(1, pts[pts.length - 1][0]);
+    const x = t => (t / dur) * W;
+    const y = v => ((top - Math.max(bot, Math.min(top, v))) / (top - bot)) * H;
+    const line = pts.map(([t, v]) => `${x(t).toFixed(1)},${y(v).toFixed(1)}`).join(' ');
+    const ticks = [];
+    const step = dur <= 15 ? 3 : dur <= 40 ? 5 : dur <= 90 ? 10 : 30;
+    for (let t = 0; t <= dur; t += step) ticks.push(`<text x="${x(t).toFixed(1)}" y="${H + 14}" text-anchor="middle">${t}s</text>`);
+    return `<figure class="lens-loud">
+      <svg viewBox="0 -4 ${W} ${H + 22}" preserveAspectRatio="none" role="img" aria-label="Loudness over the video">
+        <rect class="lens-loud-band" x="0" y="${y(-12).toFixed(1)}" width="${W}" height="${(y(-16) - y(-12)).toFixed(1)}"/>
+        <polyline class="lens-loud-line" points="${line}"/>
+        ${ticks.join('')}
+      </svg>
+      <figcaption>Loudness through the video. The shaded band is the platform level, -16 to -12 LUFS.</figcaption>
+    </figure>`;
+  }
+
+  function checkRow(c) {
+    const t = c.result === 'pass' ? 'pos' : c.result === 'partial' ? 'warn' : c.result === 'fail' ? 'neg' : 'na';
+    return `<li class="bs-fix t-${t}">
+      <div class="bs-fix-head"><span class="bs-dot t-${t}"></span>
+        <span class="bs-fix-name">${esc(c.name)}</span>
+        <span class="bs-fix-val">${esc(c.value)}</span></div>
+      ${c.fix ? `<div class="bs-fix-tip">${esc(c.fix)}</div>` : ''}
+      ${c.target ? `<div class="bs-fix-mark">Aim for ${esc(c.target)}</div>` : ''}
+    </li>`;
+  }
+
+  function lensHTML(l, opts = {}) {
+    if (!l || l.status === 'none') return '';
+    if (l.status === 'running') {
+      return `<section class="bs-sec lens-sec"><h4 class="bs-h">Funnel fit and sound</h4>
+        <div class="bs-quiet">Being worked out. Usually ready within a few minutes.</div></section>`;
+    }
+    if (l.status === 'failed') {
+      return `<section class="bs-sec lens-sec"><h4 class="bs-h">Funnel fit and sound</h4>
+        <div class="bs-quiet">Could not be worked out for this video${l.error ? `: ${esc(l.error)}` : '.'}</div></section>`;
+    }
+    const f = l.funnel, s = l.sound;
+    let out = '';
+    if (f && f.stages) {
+      const cards = STAGE_ORDER.filter(k => f.stages[k]).map((k, i) => {
+        const st = f.stages[k];
+        const t = ragTone(st.rag);
+        const built = k === f.intent;
+        return `<div class="lens-stage${built ? ' is-built' : ''}">
+          <div class="lens-stage-head"><span class="lens-stage-name">${esc(k)}</span>
+            ${built ? '<span class="lens-tag">Built for</span>' : ''}
+            <span class="lens-stage-num t-${t}">${st.score == null ? '–' : st.score}</span></div>
+          <span class="bs-bar-track"><span class="bs-bar-fill grow-x t-${t}" style="--i:${i};width:${st.score == null ? 0 : Math.max(2, st.score)}%"></span></span>
+          <div class="lens-stage-word t-${t}">${esc(st.word)}</div>
+          ${(st.helps || []).length ? `<div class="lens-k">Helps</div><ul class="lens-list">${st.helps.map(h => `<li>${esc(h)}</li>`).join('')}</ul>` : ''}
+          ${(st.gaps || []).length ? `<div class="lens-k">To fit better</div><ul class="lens-list is-gap">${st.gaps.map(g => `<li>${esc(g.fix || g.name)}</li>`).join('')}</ul>` : ''}
+        </div>`;
+      }).join('');
+      const found = [
+        (f.reasons || []).length ? `<span class="lens-found"><b>Reasons to buy:</b> ${f.reasons.map(esc).join(', ')}</span>` : '',
+        f.offer ? `<span class="lens-found"><b>Offer:</b> ${esc(f.offer)}</span>` : '',
+        f.ctaText ? `<span class="lens-found"><b>Call to action:</b> ${esc(f.ctaText)}</span>` : '',
+      ].filter(Boolean).join('');
+      out += `<section class="bs-sec lens-sec"><h4 class="bs-h">Funnel fit</h4>
+        <p class="lens-verdict">${esc(f.verdict)}</p>
+        <div class="lens-stages">${cards}</div>
+        ${found ? `<div class="lens-founds">${found}</div>` : ''}
+        <div class="bs-sec-hint">${f.basis === 'full'
+          ? 'Uses the Pre-test Score checks and the video analysis.'
+          : opts.kind === 'pretest' ? 'From the video analysis. It firms up when the Pre-test Score is ready.'
+          : 'From the video analysis only. This creative has no Pre-test Score to add to it.'}
+          Green 70 and above, amber 50 to 69, red below 50.</div>
+      </section>`;
+    }
+    if (s) {
+      const t = ragTone(s.rag);
+      out += `<section class="bs-sec lens-sec"><h4 class="bs-h">Sound
+          ${s.score != null ? `<span class="bs-score t-${t} lens-h-score">${s.score}</span><span class="lens-h-word t-${t}">${esc(s.word)}</span>` : ''}</h4>
+        ${s.note ? `<div class="bs-quiet">${esc(s.note)}</div>` : ''}
+        ${(s.checks || []).length ? `<ul class="bs-fixes">${s.checks.map(checkRow).join('')}</ul>` : ''}
+        ${loudChart(s.loudness)}
+      </section>`;
+    }
+    return out;
+  }
+
+  // A tracked creative's own section in the panel.
+  function lensSection(d) {
+    if (!d || (!d.lensIntent && d.lensSound == null)) return '';
+    const head = d.lensIntent
+      ? `Built for ${d.lensIntent.toLowerCase()}${d.lensFit != null ? ` · fit ${d.lensFit}` : ''}${d.lensSound != null ? ` · sound ${d.lensSound}` : ''}`
+      : `Sound ${d.lensSound}`;
+    return `<details class="org-details bs-detail lens-detail" style="margin-top:12px;" ontoggle="PreTest.loadLens(this, ${jsq(d.id)})">
+      <summary class="org-summary">Funnel fit and sound <span style="color:var(--c-muted);font-size:10px;">${esc(head)} ▼</span></summary>
+      <div class="org-content">${lineSkeleton(3)}</div>
+    </details>`;
+  }
+
+  const lensCache = new Map();
+  async function loadLens(el, id) {
+    if (!el.open) return;
+    const box = el.querySelector('.org-content');
+    if (!box || box.dataset.loadedFor === id) return;
+    try {
+      let r = lensCache.get(id);
+      if (!r) {
+        r = await api(`/api/lens/creative/${encodeURIComponent(id)}`);
+        if (r.status === 'succeeded') lensCache.set(id, r);
+      }
+      box.innerHTML = r.status === 'none'
+        ? '<div class="organic-empty">Not worked out for this creative yet.</div>'
+        : `<div class="bs-report">${lensHTML(r, { kind: 'creative' })}</div>`;
+      box.dataset.loadedFor = id;
+    } catch (e) {
+      box.innerHTML = `<div class="organic-empty">Could not load the funnel fit and sound: ${esc(e.message)}</div>`;
+    }
+  }
+
+  // The small chip on a card: what it is built for, coloured by how well it fits.
+  function lensChip(d) {
+    if (!d || !d.lensIntent) return '';
+    const t = ragTone(ragOf(d.lensFit));
+    return `<span class="bs-badge lens-chip t-${t}" title="Built for ${esc(d.lensIntent.toLowerCase())}${d.lensFit != null ? `, fit ${d.lensFit} of 100` : ''}">${esc(d.lensIntent)}${d.lensFit != null ? ` <b>${d.lensFit}</b>` : ''}</span>`;
+  }
+
   // ── Download PDF ───────────────────────────────────────────────────────────
   // Builds a print-only copy of the report with its own header, then opens
   // the browser's print dialog, where "Save as PDF" is the destination. No
@@ -253,6 +390,7 @@
   async function downloadPdf(btn) {
     const host = btn.closest('[data-pdf-root]');
     const report = host && host.querySelector('.bs-report');
+    // A report with only Sound and Funnel fit (the Pre-test Score failed) still prints.
     if (!report) return;
     btn.disabled = true;
     btn.textContent = 'Preparing…';
@@ -401,7 +539,7 @@
       : !brandReady ? `<div class="bs-banner">${esc(d.brand ? d.brand.name : 'This brand')} has no pre-test category yet. You can still choose one in the form.</div>` : '';
 
     const rows = list.map(p => {
-      const open = p.status === 'succeeded';
+      const open = p.status === 'succeeded' || !!(p.lens && p.lens.status === 'succeeded');
       const score = p.totalScore != null && open
         ? `<span class="bs-score t-${tone(p.totalRating)}">${Math.round(p.totalScore)}</span>` : '<span class="bs-quiet">–</span>';
       const extra = p.status === 'failed' && p.error ? `<div class="bs-row-err">${esc(p.error)}</div>`
@@ -412,6 +550,8 @@
         <td>${esc(p.contentOrigin === 'Creator' ? 'Others Say' : 'Brand Say')}</td>
         <td>${esc(p.requestedBy || '')}<div class="bs-row-sub">${esc(when(p.createdAt))}</div></td>
         <td>${statusCell(p)}</td>
+        <td>${p.lens && p.lens.builtFor ? `<span class="bs-score t-${ragTone(ragOf(p.lens.fit))}" title="Fit ${esc(p.lens.fit)} of 100">${esc(p.lens.fit)}</span> <span class="lens-built">${esc(p.lens.builtFor)}</span>`
+          : p.lens && p.lens.status === 'running' ? '<span class="bs-quiet">Working</span>' : '<span class="bs-quiet">–</span>'}</td>
         <td class="bs-num">${score}</td>
       </tr>`;
     }).join('');
@@ -430,7 +570,7 @@
       <div class="bs-page-head">${facts}${list.length ? newBtn : ''}</div>
       ${warn}
       ${list.length ? `<div class="bs-card"><table class="bs-list">
-        <thead><tr><th>Asset</th><th>Placement</th><th>Type</th><th>Run by</th><th>Status</th><th class="bs-num">Score</th></tr></thead>
+        <thead><tr><th>Asset</th><th>Placement</th><th>Type</th><th>Run by</th><th>Status</th><th>Built for</th><th class="bs-num">Score</th></tr></thead>
         <tbody>${rows}</tbody></table></div>`
       : `<div class="bs-card bs-empty">
           <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M9 3h6M10 3v6L4.5 19a1.5 1.5 0 0 0 1.3 2h12.4a1.5 1.5 0 0 0 1.3-2L14 9V3"/><path d="M7.5 14h9"/></svg>
@@ -471,12 +611,13 @@
             ${p.status === 'succeeded' ? `<div class="bs-expiry">Deleted automatically on ${esc(when(p.expiresAt))} (${esc(timeLeft(p.expiresAt))})</div>` : ''}
           </div>
           <div class="bs-head-actions">
-            ${p.status === 'succeeded' ? pdfButton() : ''}
+            ${p.status === 'succeeded' || (p.lensReport && p.lensReport.status === 'succeeded') ? pdfButton() : ''}
             <button class="close-btn" data-press onclick="PreTest.closeReport()" aria-label="Close">×</button>
           </div>
         </div>
-        ${p.status === 'succeeded' ? reportHTML(p.summary, { jobId: p.id, kind: 'pretest' })
-          : `<div class="organic-empty">${esc(STATUS[p.status] || p.status)}${p.error ? `: ${esc(p.error)}` : ''}</div>`}
+        ${p.status === 'succeeded' ? reportHTML(p.summary, { jobId: p.id, kind: 'pretest', lens: p.lensReport })
+          : `<div class="organic-empty">Pre-test Score: ${esc(STATUS[p.status] || p.status)}${p.error ? `: ${esc(p.error)}` : ''}</div>
+             ${p.lensReport ? `<div class="bs-report" style="margin-top:16px">${lensHTML(p.lensReport, { kind: 'pretest' })}</div>` : ''}`}
         ${p.canManage && p.status === 'succeeded' ? `<div class="modal-actions">
           <button class="modal-btn modal-cancel bs-danger" onclick="PreTest.remove(${jsq(p.id)})">Delete report now</button></div>` : ''}
       </div>`;
@@ -615,12 +756,18 @@
     if (!state.busy) pickFile(e.dataTransfer && e.dataTransfer.files && e.dataTransfer.files[0]);
   }
 
-  // Straight to the scoring service's storage: the form fields first, the file last.
+  // Stored mode: one PUT of the raw file to a signed link (type and size are
+  // part of the signature). Direct mode: a form post to the scoring
+  // service's storage, the form fields first and the file last.
   function upload(form, file, onProgress) {
     return new Promise((resolve, reject) => {
-      const fd = new FormData();
-      for (const [k, v] of Object.entries(form.fields)) fd.append(k, v);
-      fd.append('file', file, file.name);
+      const put = form.method === 'PUT';
+      let fd = null;
+      if (!put) {
+        fd = new FormData();
+        for (const [k, v] of Object.entries(form.fields)) fd.append(k, v);
+        fd.append('file', file, file.name);
+      }
       const xhr = new XMLHttpRequest();
       state.xhr = xhr;
       let host = '';
@@ -637,13 +784,14 @@
             body: JSON.stringify({ where: 'pretest-upload', message: msg }) }).catch(() => {});
         } catch (e) { /* never a second error */ }
       };
-      xhr.open('POST', form.url);
+      xhr.open(put ? 'PUT' : 'POST', form.url);
+      if (put) for (const [k, v] of Object.entries(form.headers || {})) xhr.setRequestHeader(k, v);
       xhr.upload.onprogress = e => { if (e.lengthComputable) onProgress(e.loaded / e.total * 100); };
       xhr.onload = () => {
         state.xhr = null; done();
         if (xhr.status >= 200 && xhr.status < 300) resolve();
         else {
-          const expired = /expired|Policy/i.test(xhr.responseText || '');
+          const expired = /expired|Policy|Request has expired/i.test(xhr.responseText || '');
           const err = new Error(expired ? 'upload window expired' : `the upload failed (HTTP ${xhr.status})`);
           err.expired = expired || xhr.status === 403;
           if (!err.expired) report(`HTTP ${xhr.status} from ${host}: ${String(xhr.responseText || '').slice(0, 300)}`);
@@ -656,14 +804,14 @@
         setTimeout(() => {
           done();
           const msg = blocked
-            ? `the browser blocked the upload to ${host || 'the scoring service'} (${blocked})`
-            : `the connection to ${host || 'the scoring service'} dropped during the upload`;
+            ? `the browser blocked the upload to ${host || 'storage'} (${blocked})`
+            : `the connection to ${host || 'storage'} dropped during the upload`;
           report(`${msg}; online=${navigator.onLine}; size=${file.size}`);
           reject(new Error(msg));
         }, 50);
       };
       xhr.onabort = () => { state.xhr = null; done(); const e = new Error('the upload was stopped'); e.aborted = true; reject(e); };
-      xhr.send(fd);
+      xhr.send(put ? file : fd);
     });
   }
 
@@ -718,7 +866,7 @@
       state.busy = false;
       $('bsPretestModal').style.display = 'none';
       resetForm();
-      notice(`"${assetName}" is being scored. It usually takes about 5 minutes; this page updates on its own.`);
+      notice(`"${assetName}" is being scored. It usually takes about 5 to 10 minutes; this page updates on its own.`);
       if (state.page !== 'pretests' && typeof setNav === 'function') setNav('pretests');
       else refresh({ quiet: true });
     } catch (err) {
@@ -759,6 +907,12 @@
 
   // ── Creative cards and detail ──────────────────────────────────────────────
   function cardBadge(d) {
+    const chip = lensChip(d);
+    const bs = bsBadge(d);
+    return chip || bs ? `<span class="card-badges">${chip}${bs}</span>` : '';
+  }
+
+  function bsBadge(d) {
     if (!d || !d.bsStatus) return '';
     if (d.bsStatus === 'succeeded' && d.bsScore != null) {
       return `<span class="bs-badge t-${tone(d.bsRating)}" title="Pre-test Score: ${Math.round(d.bsScore)} of 100">Pre-test <b>${Math.round(d.bsScore)}</b></span>`;
@@ -825,6 +979,7 @@
   function onBrandChange(page) {
     state.data = null;
     creativeCache.clear();
+    lensCache.clear();
     if (page === 'pretests') refresh();
   }
 
@@ -837,6 +992,7 @@
   window.PreTest = {
     onPage, onBrandChange, refresh, openForm, closeForm, submit, pickFile, dragOver, dragLeave, drop, onChannel,
     openReport, closeReport, remove, cardBadge, detailSection, loadCreative, downloadPdf,
+    lensSection, loadLens,
     // Kept for any old button still calling the previous modal.
     reportHTML,
   };

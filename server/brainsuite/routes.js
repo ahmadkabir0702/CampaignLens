@@ -12,6 +12,7 @@
  *   GET    /api/pretest-scores/creative/:id    a creative's Pre-test Score
  *   GET    /api/pretest-scores/jobs/:id/media  fresh image and video links
  *   GET    /api/pretest-scores/usage           this month's tests (internal users)
+ *   GET    /api/lens/creative/:id              a creative's Sound and Funnel fit
  *
  * Nothing sent from here names the scoring vendor: the vendor's weblink is
  * kept in the database but never sent, and stored error text is scrubbed.
@@ -19,6 +20,7 @@
 const { query, assertBrandAllowed } = require('../../db');
 const store = require('./store');
 const service = require('./service');
+const lensStore = require('../lens/store');
 const { BUSINESS_GROUPS, CATEGORIES, LANGUAGES, CHANNELS } = require('./briefing');
 
 const { HttpError } = service;
@@ -81,7 +83,18 @@ function publicRow(row, result) {
     totalScore: result ? Number(result.total_score) : (row.total_score != null ? Number(row.total_score) : null),
     totalRating: result ? result.total_rating : (row.total_rating || null),
     summary: result ? result.summary : undefined,
+    // Sound and Funnel fit: the short form for the list.
+    lens: row.lens ? {
+      status: row.lens.status, builtFor: row.lens.funnel_intent || null,
+      fit: row.lens.funnel_fit, sound: row.lens.sound_score,
+    } : null,
   };
+}
+
+// The full Sound and Funnel fit for one report. Only what the screen draws.
+function publicLens(l) {
+  if (!l) return null;
+  return { status: l.status, error: scrub(l.error), sound: l.sound, funnel: l.funnel, updatedAt: l.updated_at };
 }
 
 module.exports = function mountBrainsuite(app) {
@@ -133,7 +146,9 @@ module.exports = function mountBrainsuite(app) {
       const row = await loadPretest(req);
       const result = row.status === 'succeeded' ? await store.getResult(row.id) : null;
       const { rows } = await query(`select display_name from app_users where username = $1`, [row.requested_by]);
-      res.json({ ...publicRow({ ...row, requested_by_name: rows[0] && rows[0].display_name }, result), canManage: canManage(req, row) });
+      const lens = await lensStore.get({ kind: 'pretest', pretestId: row.id }).catch(() => null);
+      res.json({ ...publicRow({ ...row, requested_by_name: rows[0] && rows[0].display_name }, result),
+        lensReport: publicLens(lens), canManage: canManage(req, row) });
     } catch (err) { send(res, err, 'get pretest'); }
   });
 
@@ -161,6 +176,20 @@ module.exports = function mountBrainsuite(app) {
         summary: j.status === 'succeeded' ? j.summary : null,
       });
     } catch (err) { send(res, err, 'creative score'); }
+  });
+
+  // A tracked creative's Sound and Funnel fit.
+  app.get('/api/lens/creative/:creativeId', async (req, res) => {
+    try {
+      const { rows } = await query(`select brand_id from creatives where creative_id = $1`, [req.params.creativeId]);
+      if (!rows.length) throw new HttpError(404, 'Creative not found.');
+      assertBrandAllowed(req.session, rows[0].brand_id);
+      const l = await lensStore.get({ kind: 'creative', creativeId: req.params.creativeId });
+      res.json(l ? publicLens(l) : { status: 'none' });
+    } catch (err) {
+      if (err.code === '42P01') return res.json({ status: 'none' });
+      send(res, err, 'lens creative');
+    }
   });
 
   app.get('/api/pretest-scores/jobs/:id/media', async (req, res) => {
