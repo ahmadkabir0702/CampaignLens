@@ -100,7 +100,7 @@ function brief(r) {
     cqr_good_rate: r.cqr_good_rate, hook_good_rate: r.hook_good_rate, hold_good_rate: r.hold_good_rate,
     rated_share: r.rated_share, videos_rated: r.rated_n, videos: r.video_n,
     ...(r.paid_engagement_rate !== undefined ? {
-      paid_engagement_rate: r.paid_engagement_rate, cost_per_engagement_lkr: r.cost_per_engagement,
+      paid_engagement_rate: r.paid_engagement_rate, reach: r.reach, cost_per_engagement_lkr: r.cost_per_engagement,
       impressions_covered: r.eng_coverage, creatives_with_engagement: r.eng_creative_n, creatives: r.paid_creative_n,
     } : {}),
   };
@@ -113,7 +113,7 @@ function brief(r) {
 async function tool(args, ctx, q) {
   let res;
   try {
-    res = await R.forBrand(q, ctx.brand, { from: args.from, to: args.to });
+    res = await R.forBrand(q, ctx.brand, { from: args.from, to: args.to, period: args.period });
   } catch (e) {
     if (e.status === 400) return { result: { error: e.message }, records: {} };
     throw e;
@@ -151,6 +151,9 @@ async function tool(args, ctx, q) {
   return {
     result: {
       range: rangeLabel(res.from, res.to),
+      ...(res.reach && res.reach.status !== 'ok' ? { engagement_rate: res.reach.status === 'custom'
+        ? 'Not available for this range: engagement rate is on true reach, which exists only for the periods all_time, this_year, last_30, this_month, last_month and single calendar months. Say so; do not estimate it.'
+        : 'True reach for this period has not been fetched yet. Say engagement rate is not available yet.' } : {}),
       rows: shown,
       ...(shown.length < rows.length ? { trimmed: 'Only the combined rows are listed. Ask again with a platform for Meta or TikTok.' } : {}),
       note: empty

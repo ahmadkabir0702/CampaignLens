@@ -99,9 +99,14 @@ share of paid delivery was Good quality, use CQR Good rate.
 
 ## Engagement rate and cost per engagement (paid)
 
-- **Engagement rate**: engagements / impressions, for the brand, a campaign
-  or a date range. It covers every paid creative, photos and carousels
-  included, not only video.
+- **Engagement rate**: engagements / reach, for the brand or a campaign. It
+  covers every paid creative, photos and carousels included, not only video.
+- **Reach** is true reach: the number of different people who saw the ads in
+  that period, as Meta and TikTok report it. It cannot be added up from days
+  or ads, so it exists only for the periods fetched each night: all time,
+  this year, last 30 days, this month, last month, and single calendar
+  months. A custom date range has no engagement rate: say so, never
+  estimate one.
 - **Cost per engagement**: spend in LKR / the same engagements.
 - Meta engagements: post reactions, comments, shares, saves, link clicks,
   Instagram follows where Meta reports them, and Facebook page likes.
@@ -109,15 +114,16 @@ share of paid delivery was Good quality, use CQR Good rate.
   clicks. TikTok favorites are not available and are not counted.
 - Not counted: 3-second plays, Post engagement, Clicks (all). Do not offer
   any of those as an engagement figure.
-- Only days with engagement data count, for impressions and spend alike.
-  "Impressions covered" is how much of the delivery that is; when it is
-  low, say the figure rests on part of the delivery.
-- Combined adds engagements, impressions and spend across Meta and TikTok.
-  It is not an average of the two rates.
+- Only days with engagement data count. "Impressions covered" is how much
+  of the delivery that is; below 100% the engagement rate reads low, so say
+  the figure rests on part of the delivery.
+- Combined is all engagements / (Meta reach + TikTok reach). Someone
+  reached on both platforms counts twice. It is not an average of the two
+  rates.
 - This is a different figure from the organic engagement_rate of a single
   post. Never compare a paid engagement rate with an organic one.
-- The monthly ER in the account lines is the Meta ad account, on the same
-  formula.
+- The monthly ER in the account lines is the Meta ad account: engagements
+  / the account's reach that month.
 
 ---
 

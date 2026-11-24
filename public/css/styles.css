@@ -1067,6 +1067,8 @@ select:focus,.search-input:focus,.modal-input:focus{outline:none;border-color:va
 .cqrr-ctl .so-seg-btn{height:34px}
 .cqrr-cmp-btn{border:1px solid var(--line);border-radius:var(--r-btn);height:34px}
 .cqrr-segs{display:flex;flex-wrap:wrap;gap:8px}
+.cqrr-why{font:400 12.5px/18px var(--font);color:var(--ink-500);margin:-4px 0 10px}
+.cqrr-scroll + .cqrr-why{margin:10px 0 0}
 .cqrr-sub{font-weight:400;color:var(--ink-400);margin-left:6px}
 .cqrr-scroll{overflow-x:auto;-webkit-overflow-scrolling:touch}
 .cqrr-table td.n{white-space:nowrap}
