@@ -121,9 +121,9 @@ const tools = [
   },
 
   {
-    name: 'cqr_rates',
+    name: 'paid_rates',
     description:
-      'CQR Good rate, Hook Good rate and Hold Good rate for paid video, weighted by impressions, for a date range, a campaign or a platform. The all-time brand and campaign figures are already in PAID VIDEO QUALITY; call this for a date range or a campaign not listed there.',
+      'Paid figures for a date range, a campaign or a platform: CQR Good rate, Hook Good rate and Hold Good rate (paid video, weighted by impressions), and engagement rate and cost per engagement (every paid creative). The all-time brand and campaign figures are already in PAID VIDEO QUALITY AND ENGAGEMENT; call this for a date range or a campaign not listed there.',
     input_schema: {
       type: 'object',
       properties: {

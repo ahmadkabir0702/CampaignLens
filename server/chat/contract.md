@@ -97,6 +97,28 @@ weigh every rated video by its impressions.
 The CQR mix in TOTALS counts creatives one each. When someone asks what
 share of paid delivery was Good quality, use CQR Good rate.
 
+## Engagement rate and cost per engagement (paid)
+
+- **Engagement rate**: engagements / impressions, for the brand, a campaign
+  or a date range. It covers every paid creative, photos and carousels
+  included, not only video.
+- **Cost per engagement**: spend in LKR / the same engagements.
+- Meta engagements: post reactions, comments, shares, saves, link clicks,
+  Instagram follows where Meta reports them, and Facebook page likes.
+  TikTok engagements: paid likes, comments, shares, follows and destination
+  clicks. TikTok favorites are not available and are not counted.
+- Not counted: 3-second plays, Post engagement, Clicks (all). Do not offer
+  any of those as an engagement figure.
+- Only days with engagement data count, for impressions and spend alike.
+  "Impressions covered" is how much of the delivery that is; when it is
+  low, say the figure rests on part of the delivery.
+- Combined adds engagements, impressions and spend across Meta and TikTok.
+  It is not an average of the two rates.
+- This is a different figure from the organic engagement_rate of a single
+  post. Never compare a paid engagement rate with an organic one.
+- The monthly ER in the account lines is the Meta ad account, on the same
+  formula.
+
 ---
 
 ## Strong and Weak

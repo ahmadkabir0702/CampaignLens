@@ -140,7 +140,7 @@ const schema = {
   // Paid video, weighted by impressions, for the brand, a campaign or a
   // date range (server/chat/rates.js). Not creative metrics: their ids are
   // "brand" or rates:..., never a creative id.
-  rollupMetrics: ['cqr_good_rate', 'hook_good_rate', 'hold_good_rate', 'rated_share'],
+  rollupMetrics: ['cqr_good_rate', 'hook_good_rate', 'hold_good_rate', 'rated_share', 'paid_engagement_rate', 'cost_per_engagement'],
 
   metricDisplay: {
     cqr: { label: 'CQR', type: 'cqr' },
@@ -148,6 +148,8 @@ const schema = {
     hook_good_rate: { label: 'Hook Good rate', type: 'pct', decimals: 0 },
     hold_good_rate: { label: 'Hold Good rate', type: 'pct', decimals: 0 },
     rated_share: { label: 'Impressions rated', type: 'pct', decimals: 0 },
+    paid_engagement_rate: { label: 'Engagement rate', type: 'pct', decimals: 2 },
+    cost_per_engagement: { label: 'Cost per engagement', type: 'currency', decimals: 2 },
     hook_rate: { label: 'Hook rate', type: 'pct', decimals: 1 },
     hold_rate: { label: 'Hold rate', type: 'pct', decimals: 1 },
     engagement_rate: { label: 'Engagement rate', type: 'pct', decimals: 2 },

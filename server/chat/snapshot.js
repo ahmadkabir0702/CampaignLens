@@ -33,7 +33,9 @@ const { getPool } = require('./db');
 // best day.
 // Bumped to 12: a creative on Meta and TikTok rated differently on each is
 // described with both ratings, never one.
-const SNAPSHOT_SCHEMA_VERSION = 14;
+// 16: engagement rate and cost per engagement in PAID VIDEO QUALITY AND
+// ENGAGEMENT. (15 is the Sound and Funnel fit merge.)
+const SNAPSHOT_SCHEMA_VERSION = 16;
 
 const T = S.tables, C = S.creative, P = S.paidView, O = S.organicView, OR = S.organicRawCols;
 const OB = S.organicBest, B = S.boost, TH = S.thresholds, CR = S.creator;
@@ -384,35 +386,45 @@ function compactLine(c) {
   return `${c.id} | ${cqrWords(c)} | h${fmtPct(c.hook_rate)} | ${fmtPct(c.hold_rate)} | ${(c.platforms || []).map((x) => V.label('platform', x)).join('+')} | ${V.label('type', c.type) || ''} | ${attrs} | ${c.is_active ? 'A' : 'S'}`;
 }
 
-/** Renders the analytics object. No computation happens here. */
 /**
- * PAID VIDEO QUALITY: the impression-weighted rates. The counts above are
+ * PAID VIDEO QUALITY AND ENGAGEMENT: the impression-weighted rates. The counts above are
  * one vote per creative; these weigh each video by how much it ran, so the
  * two can differ and both are right. The assistant is told which is which.
  */
 function ratesDigest(L, rates) {
-  if (!rates || !rates.out || !rates.out.overall.combined.impressions) return;
+  if (!rates || !rates.out) return;
   const { out, slugs } = rates;
+  const oc = out.overall.combined;
+  if (!oc.impressions && !oc.paid_impressions) return;
   const p = (v) => (v === null || v === undefined ? 'n/a' : `${Math.round(v)}%`);
-  const line = (f) => f && f.impressions
+  const er = (f) => {
+    if (!out.engagement_ready || !f || !f.paid_impressions) return '';
+    if (!f.eng_impressions) return ' | engagement: no data yet';
+    return ` | engagement rate ${f.paid_engagement_rate}%, cost per engagement LKR ${f.cost_per_engagement ?? 'n/a'}, impressions covered ${p(f.eng_coverage)}`;
+  };
+  const line = (f) => (f && f.impressions
     ? `CQR Good ${p(f.cqr_good_rate)} (${f.cqr_good_n} of ${f.rated_n} videos), hook Good ${p(f.hook_good_rate)}, hold Good ${p(f.hold_good_rate)}, impressions rated ${p(f.rated_share)}`
-    : 'no paid video delivery';
+    : 'no paid video delivery') + er(f);
   L.push('');
-  L.push('PAID VIDEO QUALITY (weighted by impressions, all time; the same figures as Media Summary)');
+  L.push('PAID VIDEO QUALITY AND ENGAGEMENT (weighted by impressions, all time; the same figures as Media Summary)');
   L.push('  CQR Good rate = impressions on videos rated Good / impressions on videos with a CQR grade. Hook Good rate and Hold Good rate use the hook or hold grade over the same base. Impressions rated = share of paid video impressions on rated videos (under 10,000 impressions is not rated).');
   L.push('  Combined adds Meta and TikTok impressions; it is not an average of the two. These differ from the CQR mix counts above, which count each creative once: say "weighted by impressions" when using these.');
   for (const [k, lab] of [['combined', 'Combined'], ['meta', 'Meta'], ['tiktok', 'TikTok']]) {
     L.push(`  ${lab} [rates:all:all:all:${k}]: ${line(out.overall[k])}`);
   }
-  const camps = out.campaigns.filter((c) => c.combined.impressions > 0).slice(0, 10);
+  if (out.engagement_ready) {
+    L.push(`  Engagement rate = engagements / impressions, over every paid creative (not only video). Cost per engagement = spend in LKR / engagements. Meta engagements: reactions, comments, shares, saves, link clicks${out.inputs && out.inputs.ig_follows ? ', Instagram follows' : ''}, page likes. TikTok: paid likes, comments, shares, follows, destination clicks. TikTok favorites are not available. Only days with engagement data count; "impressions covered" is how much of the delivery that is.`);
+  }
+  const camps = out.campaigns.filter((c) => (c.combined.impressions || c.combined.paid_impressions) > 0).slice(0, 10);
   if (camps.length) {
     L.push('  By campaign, combined, most impressions first:');
     for (const c of camps) L.push(`    ${c.name} [rates:all:all:${slugs[c.name]}:combined]: ${line(c.combined)}`);
-    if (out.campaigns.length > camps.length) L.push(`    ${out.campaigns.length - camps.length} more campaigns: use cqr_rates.`);
+    if (out.campaigns.length > camps.length) L.push(`    ${out.campaigns.length - camps.length} more campaigns: use paid_rates.`);
   }
-  L.push('  Reference with [[metric:cqr_good_rate|ID]] using the id in square brackets (swap combined for meta or tiktok for one platform), or ID "brand" for the combined brand figure. For a date range, call cqr_rates.');
+  L.push('  Reference with [[metric:cqr_good_rate|ID]], [[metric:paid_engagement_rate|ID]] or [[metric:cost_per_engagement|ID]] using the id in square brackets (swap combined for meta or tiktok for one platform), or ID "brand" for the combined brand figure. For a date range, call paid_rates.');
 }
 
+/** Renders the analytics object. No computation happens here. */
 function renderDigest(an, insights) {
   const label = S.brandLabels[an.brand] || an.brand;
   const L = [];
@@ -802,7 +814,9 @@ async function buildSnapshot(brand, _r, opts = {}) {
     const all = rated.records['rates:all:all:all:combined'];
     if (all) {
       for (const k of ['cqr_good_rate', 'hook_good_rate', 'hold_good_rate', 'rated_share',
-                       'cqr_good_n', 'hook_good_n', 'hold_good_n', 'rated_n', 'video_n']) records.brand[k] = all[k];
+                       'cqr_good_n', 'hook_good_n', 'hold_good_n', 'rated_n', 'video_n',
+                       'paid_engagement_rate', 'cost_per_engagement', 'eng_coverage',
+                       'eng_creative_n', 'paid_creative_n']) if (all[k] !== undefined) records.brand[k] = all[k];
       records.brand.scope_label = all.scope_label;
     }
   }

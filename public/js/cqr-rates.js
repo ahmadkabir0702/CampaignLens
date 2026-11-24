@@ -1,5 +1,6 @@
 /**
- * Media Summary: CQR Good rate, Hook Good rate and Hold Good rate.
+ * Media Summary: CQR Good rate, Hook Good rate and Hold Good rate, and
+ * engagement rate and cost per engagement.
  *
  * Paid video, weighted by impressions, from /api/cqr-rates
  * (server/cqr-rollup.js). The rest of Media Summary is built in the
@@ -17,6 +18,7 @@
 const CQRR = {
   range: 'all', from: '', to: '',
   plat: 'combined',
+  measure: 'quality',
   compare: false,
   data: null, key: null, loading: false, error: null,
   cmp: null, cmpKey: null, cmpLoading: false, cmpError: null,
@@ -28,6 +30,7 @@ const CQRR_RANGES = [
   ['lastMonth', 'Last month'], ['thisYear', 'This year'], ['custom', 'Custom'],
 ];
 const CQRR_PLATS = [['combined', 'Combined'], ['meta', 'Meta'], ['tiktok', 'TikTok']];
+const CQRR_MEASURES = [['quality', 'Video quality'], ['engagement', 'Engagement']];
 
 const cqrrIso = (d) => `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
 
@@ -128,6 +131,7 @@ function cqrrSetDate(which, v) {
   cqrrAfterRender();
 }
 function cqrrSetPlat(v) { CQRR.plat = v; cqrrPaint(); }
+function cqrrSetMeasure(v) { CQRR.measure = v; cqrrPaint(); }
 function cqrrToggleCompare() { CQRR.compare = !CQRR.compare; cqrrPaint(); cqrrAfterRender(); }
 
 // ---------------------------------------------------------------------
@@ -164,6 +168,43 @@ function cqrrCells(f, withImpr) {
 const CQRR_HEAD = `<th class="n">CQR Good rate</th><th class="n">Hook Good rate</th>
   <th class="n">Hold Good rate</th><th class="n">Impressions rated</th>`;
 
+// ---- Engagement --------------------------------------------------------
+function cqrrEr(v) {
+  if (v === null || v === undefined) return '–';
+  if (v > 0 && v < 0.01) return '<0.01%';
+  return `${Number(v).toFixed(2)}%`;
+}
+function cqrrLkr(v) {
+  if (v === null || v === undefined) return '–';
+  return `LKR ${Number(v) >= 1000 ? fmtN(Number(v)) : Number(v).toFixed(2)}`;
+}
+// Engagements in full up to a million: "1K" hides most of a small number.
+const cqrrCount = (v) => (Number(v) < 1e6 ? Number(v || 0).toLocaleString('en-US') : fmtN(Number(v)));
+const cqrrCreatives = (n, d) => `(${n} of ${d} creative${d === 1 ? '' : 's'})`;
+
+/** Engagement figures for one row, after its label cell. */
+function cqrrEngCells(f, withImpr) {
+  if (!f || !f.paid_impressions) {
+    return `<td class="n cqrr-none" colspan="${withImpr ? 5 : 4}">No paid delivery in this range</td>`;
+  }
+  if (!f.eng_impressions) {
+    return `<td class="n cqrr-none" colspan="${withImpr ? 5 : 4}">No engagement data for these days yet</td>`;
+  }
+  return `<td class="n" data-k="Engagement rate"><span><span class="cqrr-v">${cqrrEr(f.paid_engagement_rate)}</span><span class="cqrr-n">${cqrrCreatives(f.eng_creative_n, f.paid_creative_n)}</span></span></td>`
+    + `<td class="n" data-k="Cost per engagement"><span class="cqrr-v">${cqrrLkr(f.cost_per_engagement)}</span></td>`
+    + `<td class="n" data-k="Engagements">${cqrrCount(f.engagements)}</td>`
+    + `<td class="n" data-k="Impressions covered">${cqrrPct(f.eng_coverage)}</td>`
+    + (withImpr ? `<td class="n" data-k="Impressions">${fmtN(f.paid_impressions)}</td>` : '');
+}
+
+const CQRR_ENG_HEAD = `<th class="n">Engagement rate</th><th class="n">Cost per engagement</th>
+  <th class="n">Engagements</th><th class="n">Impressions covered</th>`;
+
+const cqrrIsEng = () => CQRR.measure === 'engagement';
+const cqrrImpr = (f) => (f ? (cqrrIsEng() ? f.paid_impressions : f.impressions) || 0 : 0);
+const cqrrRowCells = (f, withImpr) => (cqrrIsEng() ? cqrrEngCells(f, withImpr) : cqrrCells(f, withImpr));
+const cqrrRowHead = () => (cqrrIsEng() ? CQRR_ENG_HEAD : CQRR_HEAD);
+
 function cqrrRangeLabel() {
   const r = CQRR_RANGES.find(([v]) => v === CQRR.range);
   if (CQRR.range !== 'custom') return r ? r[1] : '';
@@ -196,7 +237,10 @@ function cqrrControls() {
     </div>` : ''}
     <div class="ms-fgroup">
       <span class="ms-flabel">Tables below</span>
-      ${seg(CQRR_PLATS, CQRR.plat, 'cqrrSetPlat')}
+      <div class="cqrr-segs">
+        ${seg(CQRR_MEASURES, CQRR.measure, 'cqrrSetMeasure')}
+        ${seg(CQRR_PLATS, CQRR.plat, 'cqrrSetPlat')}
+      </div>
     </div>
     ${d && d.can_compare ? `<button type="button" class="so-seg-btn cqrr-cmp-btn${CQRR.compare ? ' active' : ''}"
         onclick="cqrrToggleCompare()">${CQRR.compare ? 'Hide brand comparison' : 'Compare brands'}</button>` : ''}
@@ -204,34 +248,54 @@ function cqrrControls() {
   ${bad ? `<div class="cqrr-err">The start date is after the end date.</div>` : ''}`;
 }
 
-function cqrrSummary(d) {
+function cqrrScope(d) {
   const camp = (typeof msFilters !== 'undefined' && msFilters.campaign !== 'all') ? msFilters.campaign : null;
-  let src = d.overall, scope = 'All campaigns';
-  if (camp) {
-    const c = d.campaigns.find((x) => x.name === camp);
-    src = c || { meta: null, tiktok: null, combined: null };
-    scope = camp;
-  }
+  if (!camp) return { camp, src: d.overall, scope: 'All campaigns' };
+  const c = d.campaigns.find((x) => x.name === camp);
+  return { camp, src: c || { meta: null, tiktok: null, combined: null }, scope: camp };
+}
+
+function cqrrSummary(d) {
+  const { camp, src, scope } = cqrrScope(d);
   const row = (label, f, strong) => `<tr${strong ? ' class="cqrr-total"' : ''}>
     <td class="ms-plat">${label}</td>${cqrrCells(f)}</tr>`;
-  return msCard(`<span>${msEsc(scope)}<span class="cqrr-sub">${msEsc(cqrrRangeLabel())}</span></span>`,
+  return msCard(`<span>Video quality: ${msEsc(scope)}<span class="cqrr-sub">${msEsc(cqrrRangeLabel())}</span></span>`,
     `<div class="cqrr-scroll"><table class="ms-table cqrr-table">
       <thead><tr><th>Platform</th>${CQRR_HEAD}</tr></thead>
       <tbody>${row('Meta', src.meta)}${row('TikTok', src.tiktok)}${row('Combined', src.combined, true)}</tbody>
     </table></div>`,
-    camp ? 'Follows the Campaign filter above' : 'Rates weighted by impressions');
+    camp ? 'Follows the Campaign filter above' : 'Paid video, weighted by impressions');
+}
+
+function cqrrEngagement(d) {
+  const { camp, src, scope } = cqrrScope(d);
+  const title = `<span>Engagement: ${msEsc(scope)}<span class="cqrr-sub">${msEsc(cqrrRangeLabel())}</span></span>`;
+  if (!d.engagement_ready) {
+    return msCard(title, `<div class="ms-bar-empty">Engagement figures appear once the engagement data has been loaded.</div>`);
+  }
+  const row = (label, f, strong) => `<tr${strong ? ' class="cqrr-total"' : ''}>
+    <td class="ms-plat">${label}</td>${cqrrEngCells(f)}</tr>`;
+  return msCard(title,
+    `<div class="cqrr-scroll"><table class="ms-table cqrr-table">
+      <thead><tr><th>Platform</th>${CQRR_ENG_HEAD}</tr></thead>
+      <tbody>${row('Meta', src.meta)}${row('TikTok', src.tiktok)}${row('Combined', src.combined, true)}</tbody>
+    </table></div>`,
+    camp ? 'Follows the Campaign filter above' : 'Every paid creative');
 }
 
 function cqrrCampaigns(d) {
   const camp = (typeof msFilters !== 'undefined' && msFilters.campaign !== 'all') ? msFilters.campaign : null;
   if (camp || d.campaigns.length < 2) return '';
   const pl = CQRR_PLATS.find(([v]) => v === CQRR.plat)[1];
-  const rows = d.campaigns.filter((c) => c[CQRR.plat] && c[CQRR.plat].impressions > 0);
-  if (!rows.length) return msCard('By campaign', `<div class="ms-bar-empty">No ${msEsc(pl)} paid video delivery in this range.</div>`, pl);
-  return msCard('By campaign',
+  const what = cqrrIsEng() ? 'Engagement' : 'Video quality';
+  if (cqrrIsEng() && !d.engagement_ready) return '';
+  const rows = d.campaigns.filter((c) => cqrrImpr(c[CQRR.plat]) > 0)
+    .sort((a, b) => cqrrImpr(b[CQRR.plat]) - cqrrImpr(a[CQRR.plat]));
+  if (!rows.length) return msCard(`${what} by campaign`, `<div class="ms-bar-empty">No ${msEsc(pl)} paid ${cqrrIsEng() ? '' : 'video '}delivery in this range.</div>`, pl);
+  return msCard(`${what} by campaign`,
     `<div class="cqrr-scroll"><table class="ms-table cqrr-table">
-      <thead><tr><th>Campaign</th>${CQRR_HEAD}<th class="n">Impressions</th></tr></thead>
-      <tbody>${rows.map((c) => `<tr><td class="ms-plat cqrr-name">${msEsc(c.name)}</td>${cqrrCells(c[CQRR.plat], true)}</tr>`).join('')}</tbody>
+      <thead><tr><th>Campaign</th>${cqrrRowHead()}<th class="n">Impressions</th></tr></thead>
+      <tbody>${rows.map((c) => `<tr><td class="ms-plat cqrr-name">${msEsc(c.name)}</td>${cqrrRowCells(c[CQRR.plat], true)}</tr>`).join('')}</tbody>
     </table></div>`, `${pl}, most impressions first`);
 }
 
@@ -243,14 +307,16 @@ function cqrrCompare() {
   else if (!CQRR.cmp || CQRR.cmpLoading && CQRR.cmpKey !== cqrrQuery({ compare: 1 })) body = `<div class="ms-bar-empty">Loading the brands…</div>`;
   else {
     const me = typeof BRAND_ID !== 'undefined' ? BRAND_ID : '';
-    const rows = CQRR.cmp.brands.slice().sort((a, b) => (b[CQRR.plat].impressions || 0) - (a[CQRR.plat].impressions || 0));
-    body = `<div class="cqrr-scroll"><table class="ms-table cqrr-table">
-      <thead><tr><th>Brand</th>${CQRR_HEAD}<th class="n">Impressions</th></tr></thead>
+    const rows = CQRR.cmp.brands.slice().sort((a, b) => cqrrImpr(b[CQRR.plat]) - cqrrImpr(a[CQRR.plat]));
+    body = cqrrIsEng() && !CQRR.cmp.engagement_ready
+      ? `<div class="ms-bar-empty">Engagement figures appear once the engagement data has been loaded.</div>`
+      : `<div class="cqrr-scroll"><table class="ms-table cqrr-table">
+      <thead><tr><th>Brand</th>${cqrrRowHead()}<th class="n">Impressions</th></tr></thead>
       <tbody>${rows.map((b) => `<tr${b.brand_id === me ? ' class="cqrr-total"' : ''}>
-        <td class="ms-plat cqrr-name">${msEsc(b.name)}</td>${cqrrCells(b[CQRR.plat], true)}</tr>`).join('')}</tbody>
+        <td class="ms-plat cqrr-name">${msEsc(b.name)}</td>${cqrrRowCells(b[CQRR.plat], true)}</tr>`).join('')}</tbody>
     </table></div>`;
   }
-  return msCard(`<span>Brands side by side<span class="cqrr-sub">${msEsc(cqrrRangeLabel())}</span></span>`, body,
+  return msCard(`<span>${cqrrIsEng() ? 'Engagement' : 'Video quality'}, brands side by side<span class="cqrr-sub">${msEsc(cqrrRangeLabel())}</span></span>`, body,
     `${pl}, same dates and rules for every brand`);
 }
 
@@ -265,20 +331,37 @@ const CQRR_FOOT = `CQR is the creative quality rating. Each paid video is rated 
   counts once on each. The figure in brackets counts videos rather than impressions. Campaign is
   the campaign the video was added under in Campaign Lens.`;
 
+/** The engagement half of the footnote. Instagram follows are named only as Meta reports them. */
+function cqrrEngFoot(d) {
+  const ig = d && d.inputs && d.inputs.ig_follows;
+  return `Engagement rate is engagements divided by impressions, over every paid creative.
+  On Meta, engagements are post reactions, comments, shares, saves, link clicks${ig ? ', Instagram follows' : ''}
+  and Facebook page likes. On TikTok, they are paid likes, comments, shares, follows and destination
+  clicks. Not counted: 3-second plays, Post engagement and Clicks (all). TikTok favorites are not
+  available from TikTok's ads reporting, so they are left out.${ig
+    ? ' Meta reports Instagram follows from July 2025 only.'
+    : ' Meta has not reported Instagram follows for these ads, so they are not included.'}
+  Cost per engagement is spend in LKR divided by the same engagements. Only days with engagement
+  data count, for impressions and spend alike; Impressions covered shows how much of the paid
+  delivery that is. Combined adds Meta and TikTok engagements, impressions and spend together. The
+  figure in brackets counts creatives with engagement data.`;
+}
+
 function cqrrInner() {
   const d = CQRR.data;
   let main;
   if (CQRR.error && CQRR.key === cqrrQuery()) main = msCard('CQR Good rate', `<div class="cqrr-err">${msEsc(CQRR.error)}</div>`);
   else if (!d || d.brand_id !== (typeof BRAND_ID !== 'undefined' ? BRAND_ID : '')) {
     main = msCard('CQR Good rate', `<div class="ms-bar-empty">Loading…</div>`);
-  } else if (!d.overall.combined.impressions) {
-    main = msCard('CQR Good rate', `<div class="ms-bar-empty">No paid video delivery in this range.</div>`);
+  } else if (!d.overall.combined.impressions && !d.overall.combined.paid_impressions) {
+    main = msCard('CQR Good rate', `<div class="ms-bar-empty">No paid delivery in this range.</div>`);
   } else {
-    main = `<div class="ms-grid cols-1${CQRR.loading ? ' cqrr-busy' : ''}">${cqrrSummary(d)}${cqrrCampaigns(d)}${cqrrCompare()}</div>`;
+    main = `<div class="ms-grid cols-1${CQRR.loading ? ' cqrr-busy' : ''}">${cqrrSummary(d)}${cqrrEngagement(d)}${cqrrCampaigns(d)}${cqrrCompare()}</div>`;
   }
   const span = d && d.span && d.span.first_day
     ? ` Paid delivery on file runs from ${new Date(`${d.span.first_day}T00:00:00`).toLocaleDateString('en-GB', { day: 'numeric', month: 'short', year: 'numeric' })} to ${new Date(`${d.span.last_day}T00:00:00`).toLocaleDateString('en-GB', { day: 'numeric', month: 'short', year: 'numeric' })}.` : '';
-  return `${cqrrControls()}${main}<div class="ms-foot">${CQRR_FOOT}${span}</div>`;
+  const engFoot = d && d.engagement_ready ? `<div class="ms-foot">${cqrrEngFoot(d)}</div>` : '';
+  return `${cqrrControls()}${main}<div class="ms-foot">${CQRR_FOOT}${span}</div>${engFoot}`;
 }
 
 function cqrrPaint() {
@@ -291,9 +374,9 @@ function cqrrPaint() {
 /** The section, for msRenderBody. Drawn from what is held, then refreshed. */
 function msSectionCqrRates() {
   return `<div class="ms-sec">
-    <div class="ms-sec-h">Paid video quality</div>
-    <div class="ms-note">Weighted by impressions, with its own dates. Of the filters above, only
-      Campaign applies here.</div>
+    <div class="ms-sec-h">Paid quality and engagement</div>
+    <div class="ms-note">Weighted by impressions, with its own dates. Video quality covers paid video;
+      engagement covers every paid creative. Of the filters above, only Campaign applies here.</div>
     <div id="ms-cqr">${cqrrInner()}</div>
   </div>`;
 }
