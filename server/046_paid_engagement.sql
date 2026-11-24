@@ -1,5 +1,5 @@
 -- =====================================================================
---  046_paid_engagement.sql — engagement rate and cost per engagement
+--  046_paid_engagement.sql : engagement rate and cost per engagement
 --
 --  Paid engagement, counted the same way on every row:
 --
