@@ -72,6 +72,8 @@ function publicRow(row, result) {
     assetName: row.asset_name || row.file_name,
     fileName: row.file_name,
     campaign: (row.briefing && row.briefing.projectName) || null,
+    // What the person said the video is for. Null on older pre-tests.
+    objective: row.objective || null,
     contentOrigin: row.briefing && row.briefing.contentOrigin,
     keyMessage: row.briefing && row.briefing.intendedMessages ? row.briefing.intendedMessages[0] : null,
     ctaOverlay: row.briefing && row.briefing.platformCTAOverlay
@@ -83,12 +85,26 @@ function publicRow(row, result) {
     totalScore: result ? Number(result.total_score) : (row.total_score != null ? Number(row.total_score) : null),
     totalRating: result ? result.total_rating : (row.total_rating || null),
     summary: result ? result.summary : undefined,
-    // Sound and Funnel fit: the short form for the list.
+    // Sound and Funnel fit: the short form for the list. builtFor is the
+    // objective when one was chosen, else what the video reads as.
     lens: row.lens ? {
       status: row.lens.status, builtFor: row.lens.funnel_intent || null,
       fit: row.lens.funnel_fit, sound: row.lens.sound_score,
     } : null,
+    // The video analysis has not finished yet, so the report is not final.
+    lensPending: lensPending(row, row.lens),
   };
+}
+
+// A stored-mode pre-test whose Sound and Funnel fit are still on their way.
+// The worker writes that row once, at the end (or as failed after its last
+// attempt), so no row within the first half hour means it is still working.
+const LENS_WAIT_MS = 30 * 60 * 1000;
+function lensPending(row, lens) {
+  if (lens || !row.upload_key) return false;
+  if (!['queued', 'analysing', 'succeeded'].includes(row.status)) return false;
+  const since = new Date(row.started_at || row.created_at).getTime();
+  return Date.now() - since < LENS_WAIT_MS;
 }
 
 // The full Sound and Funnel fit for one report. Only what the screen draws.
@@ -146,8 +162,17 @@ module.exports = function mountBrainsuite(app) {
       const row = await loadPretest(req);
       const result = row.status === 'succeeded' ? await store.getResult(row.id) : null;
       const { rows } = await query(`select display_name from app_users where username = $1`, [row.requested_by]);
-      const lens = await lensStore.get({ kind: 'pretest', pretestId: row.id }).catch(() => null);
-      res.json({ ...publicRow({ ...row, requested_by_name: rows[0] && rows[0].display_name }, result),
+      const ref = { kind: 'pretest', pretestId: row.id, brandId: row.brand_id };
+      let lens = await lensStore.get(ref).catch(() => null);
+      // The report is only shown once it is final. If the score landed a
+      // moment ago and the funnel has not been re-worked with the scored
+      // checks yet (or was worked out by an older version), do it now.
+      if (result && lens && lens.status === 'succeeded' && lens.funnel
+          && (lens.funnel.basis !== 'full' || lens.funnel.version !== 2)) {
+        await require('../lens/service').refreshFunnel(ref);
+        lens = await lensStore.get(ref).catch(() => lens);
+      }
+      res.json({ ...publicRow({ ...row, requested_by_name: rows[0] && rows[0].display_name, lens }, result),
         lensReport: publicLens(lens), canManage: canManage(req, row) });
     } catch (err) { send(res, err, 'get pretest'); }
   });

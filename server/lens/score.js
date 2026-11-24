@@ -5,10 +5,11 @@
  * minutes after the video analysis).
  *
  * Inputs
- *   a        the video analysis (Gemini fields, plus product_screen_pct)
- *   loud     ffmpeg loudness: { integrated, truePeak, series: [[t, M]] } or null
- *   bs       the Pre-test Score summary (brainsuite_results.summary) or null
- *   meta     { brand, duration, isStatic }
+ *   a          the video analysis (Gemini fields, plus product_screen_pct)
+ *   loud       ffmpeg loudness: { integrated, truePeak, series: [[t, M]] } or null
+ *   bs         the Pre-test Score summary (brainsuite_results.summary) or null
+ *   meta       { brand, duration, isStatic }
+ *   objective  for a pre-test, the objective chosen at upload, or null
  *
  * Every check returns { id, name, value, target, score, result, weight, fix }.
  * score is 1 (pass), 0.5 (partly), 0 (miss) or null (not applicable).
@@ -111,11 +112,7 @@ function scoreSound({ a = {}, loud = null, bs = null, meta = {} }) {
         said >= 0 && said <= 5 ? 1 : said > 5 ? 0.5 : 0, 2,
         'Say the brand name early in the voiceover, ideally within the first 5 seconds.'));
     }
-    const bsOff = kpiScore(bs, 'idealAudioSetting');
-    const off = bsOff != null ? bsOff : (a.captions ? 1 : a.has_text_overlay ? 0.5 : 0);
-    checks.push(check('sound_off', 'Works with the sound off',
-      bsOff != null ? (bsOff >= 1 ? 'yes' : bsOff > 0 ? 'partly' : 'no') : a.captions ? 'captions' : a.has_text_overlay ? 'some on-screen text' : 'no captions',
-      'captions for the key lines', off, 2, 'Add captions or on-screen text for the key lines; most feed video is watched muted.'));
+    checks.push(soundOffCheck(kpiScore(bs, 'idealAudioSetting'), a));
   }
   const score = weighted(checks);
   return {
@@ -124,6 +121,31 @@ function scoreSound({ a = {}, loud = null, bs = null, meta = {} }) {
       // Down-sampled to one point a second for the chart.
       series: loud.series.filter((_, i) => i % 10 === 0).map(([t, m]) => [Math.round(t), m]) },
   };
+}
+
+// The scored check when there is one, else the analysis' own reading.
+function soundOffCheck(bsOff, a) {
+  const off = bsOff != null ? bsOff : (a.captions ? 1 : a.has_text_overlay ? 0.5 : 0);
+  return check('sound_off', 'Works with the sound off',
+    bsOff != null ? (bsOff >= 1 ? 'yes' : bsOff > 0 ? 'partly' : 'no') : a.captions ? 'captions' : a.has_text_overlay ? 'some on-screen text' : 'no captions',
+    'captions for the key lines', off, 2, 'Add captions or on-screen text for the key lines; most feed video is watched muted.');
+}
+
+/**
+ * The Sound score again once the scored checks are in. Loudness, clipping,
+ * voice and brand do not change (they came from the file, which is gone by
+ * now); only "works with the sound off" can, because the scored check takes
+ * over from the analysis. Returns the same object when nothing changes.
+ */
+function refreshSound(sound, bs, a = {}) {
+  if (!sound || !Array.isArray(sound.checks)) return sound;
+  const bsOff = kpiScore(bs, 'idealAudioSetting');
+  const i = sound.checks.findIndex(c => c.id === 'sound_off');
+  if (bsOff == null || i < 0) return sound;
+  const checks = sound.checks.slice();
+  checks[i] = soundOffCheck(bsOff, a);
+  const score = weighted(checks);
+  return { ...sound, checks, score, rag: rag(score), word: score == null ? 'Not scored' : SOUND_WORD[rag(score)] };
 }
 
 // ── Funnel fit ───────────────────────────────────────────────────────────────
@@ -181,14 +203,23 @@ const SIG = {
   voice_clear: { name: 'Voice clear over the music', fromSound: 'voice_clear', fix: 'Lower the music under the voice.' },
 };
 
+// What each stage is judged on, and how much each check counts. Branding
+// leads awareness. Consideration is about the product and the reasons to
+// choose it, so it carries one light branding check: people still need to
+// know whose product it is. Conversion is about the ask.
 const STAGES = {
   Awareness: [['brand_early', 3], ['brand_attention', 3], ['engaging_open', 2], ['memorable', 2], ['short', 2],
               ['brand_end', 1], ['sound_off', 1], ['brand_said', 1]],
   Consideration: [['reasons', 3], ['product_time', 2], ['message_fit', 2], ['product_early', 1], ['readable', 1],
-                  ['story_length', 1], ['sound_off', 1], ['voice_clear', 1]],
+                  ['story_length', 1], ['sound_off', 1], ['voice_clear', 1], ['brand_attention', 1]],
   Conversion: [['cta', 3], ['direct_action', 2], ['offer', 2], ['urgency', 1], ['product_end', 1], ['brand_end', 1],
                ['product_early', 1], ['short', 1]],
 };
+const OBJECTIVES = Object.keys(STAGES);
+
+// The Sound score counts for this share of every stage score: poor audio
+// hurts whatever the video is for. The rest is the stage's own checks.
+const SOUND_SHARE = 0.15;
 
 function signal(key, { a, bs, sound, meta }) {
   const s = SIG[key];
@@ -215,9 +246,24 @@ function intentOf(a) {
   return { intent: 'Awareness', why: 'it builds the brand rather than making an offer' };
 }
 
-function scoreFunnel({ a = {}, bs = null, sound = null, meta = {} }) {
+/**
+ * The three stage scores, and which one the video is judged on.
+ *
+ *   objective  what the person running a pre-test said the video is for
+ *              (Awareness, Consideration or Conversion), or null. When it is
+ *              given, that stage is the headline (`focus`). When it is not
+ *              (tracked creatives, older pre-tests) the headline is what the
+ *              video reads as (`intent`).
+ *
+ * Each stage score is its own checks, with the Sound score counting for
+ * SOUND_SHARE when the video has sound. The overall Pre-test Score is not
+ * mixed in: it weighs every video the same way whatever it is for, which is
+ * the thing these scores exist to get away from. Its individual checks still
+ * feed the stages they belong to.
+ */
+function scoreFunnel({ a = {}, bs = null, sound = null, meta = {}, objective = null }) {
   const ctx = { a, bs, sound, meta };
-  const total = bs && bs.total && bs.total.score != null ? Number(bs.total.score) : null;
+  const soundScore = sound && sound.score != null ? Number(sound.score) : null;
   const stages = {};
   for (const [stage, items] of Object.entries(STAGES)) {
     let n = 0, d = 0;
@@ -227,38 +273,57 @@ function scoreFunnel({ a = {}, bs = null, sound = null, meta = {} }) {
       if (!sg) continue;
       n += sg.v * w; d += w;
       const kpi = SIG[key].kpi;
-      parts.push({ key, name: SIG[key].name, v: sg.v, w,
+      parts.push({ key, name: SIG[key].name, v: sg.v, w, kpi: kpi || null,
         fix: sg.src === 'pretest' && TIPS[kpi] ? TIPS[kpi] : SIG[key].fix });
     }
     const own = d ? (100 * n) / d : null;
-    // A weak creative should not look like a strong fit for some stage by
-    // default, so the overall Pre-test Score counts for a quarter when there is one.
-    const score = own == null ? null : Math.round(total == null ? own : 0.75 * own + 0.25 * total);
+    const score = own == null ? null
+      : Math.round(soundScore == null ? own : (1 - SOUND_SHARE) * own + SOUND_SHARE * soundScore);
     stages[stage] = {
       score, rag: rag(score), word: score == null ? 'Not enough to judge' : FIT_WORD[rag(score)],
       helps: parts.filter(p => p.v >= 1).sort((x, y) => y.w - x.w).slice(0, 3).map(p => p.name),
       gaps: parts.filter(p => p.v < 1).sort((x, y) => (1 - y.v) * y.w - (1 - x.v) * x.w).slice(0, 3)
         .map(p => ({ name: p.name, fix: p.fix })),
       checked: parts.length,
+      // Everything that went into the score, heaviest first, so the number can be explained.
+      checks: [...parts].sort((x, y) => y.w - x.w).map(p => ({
+        name: p.name, weight: p.w, kpi: p.kpi, result: p.v >= 1 ? 'pass' : p.v > 0 ? 'partial' : 'fail' })),
+      own: own == null ? null : Math.round(own),
     };
   }
   const { intent, why } = intentOf(a);
+  const declared = OBJECTIVES.includes(objective) ? objective : null;
+  const focus = declared || intent;
   const scored = Object.entries(stages).filter(([, v]) => v.score != null);
   const best = scored.length ? scored.sort((x, y) => y[1].score - x[1].score)[0][0] : null;
   const top = best ? stages[best].score : null;
-  const mine = stages[intent];
+  const mine = stages[focus];
   const lower = s => s.toLowerCase();
+  const an = s => (s === 'Awareness' ? 'an' : 'a');
   const tip = g => (g && g.fix ? ` Biggest gain: ${g.fix.charAt(0).toLowerCase()}${g.fix.slice(1)}` : '');
   let verdict;
-  if (top == null) verdict = 'Not enough information to judge the funnel fit yet.';
-  else if (top < AMBER) verdict = `Reads as ${intent === 'Awareness' ? 'an' : 'a'} ${lower(intent)} ad because ${why}, but it is not a strong fit for any stage yet.${tip(mine.gaps[0])}`;
+  if (declared) {
+    if (mine.score == null) verdict = `Not enough information to judge the fit for ${lower(declared)} yet.`;
+    else {
+      const word = { green: 'A strong fit', amber: 'A fair fit', red: 'A weak fit' }[mine.rag];
+      verdict = `${word} for ${lower(declared)}.${mine.rag === 'green' ? '' : tip(mine.gaps[0])}`;
+      // Only said when another stage is clearly ahead and is itself at least fair.
+      if (best && best !== declared && top >= AMBER && top - mine.score >= 10) {
+        verdict += ` As it stands it works better as ${an(best)} ${lower(best)} asset (${top}).`;
+      }
+    }
+  } else if (top == null) verdict = 'Not enough information to judge the funnel fit yet.';
+  else if (top < AMBER) verdict = `Reads as ${an(intent)} ${lower(intent)} ad because ${why}, but it is not a strong fit for any stage yet.${tip(mine.gaps[0])}`;
   else if (mine.score != null && mine.score >= GREEN) verdict = `Built for ${lower(intent)} (${why}) and fits it well.`;
   else if (mine.score != null && (best === intent || top - mine.score <= 5)) verdict = `Built for ${lower(intent)} (${why}), but only a fair fit.${tip(mine.gaps[0])}`;
-  else verdict = `Reads as ${intent === 'Awareness' ? 'an' : 'a'} ${lower(intent)} ad (${why}), but its strongest fit is ${lower(best)}.${tip(mine.gaps[0])}`;
+  else verdict = `Reads as ${an(intent)} ${lower(intent)} ad (${why}), but its strongest fit is ${lower(best)}.${tip(mine.gaps[0])}`;
 
   return {
-    version: 1,
+    version: 2,
+    objective: declared, focus,
     intent, intentWhy: why, best, verdict, stages,
+    soundShare: soundScore == null ? 0 : Math.round(SOUND_SHARE * 100),
+    soundScore,
     basis: bs ? 'full' : 'analysis',
     reasons: Array.isArray(a.reasons) ? a.reasons.slice(0, 6) : [],
     offer: String(a.offer || '').trim() || null,
@@ -266,4 +331,4 @@ function scoreFunnel({ a = {}, bs = null, sound = null, meta = {} }) {
   };
 }
 
-module.exports = { scoreSound, scoreFunnel, rag, voiceLift, kpiScore, intentOf, GREEN, AMBER, normName };
+module.exports = { scoreSound, refreshSound, scoreFunnel, rag, voiceLift, kpiScore, intentOf, GREEN, AMBER, normName, OBJECTIVES, SOUND_SHARE };

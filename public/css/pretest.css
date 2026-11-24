@@ -208,6 +208,24 @@ figcaption{font:400 12.5px/18px var(--font);color:var(--ink-600);margin-top:4px}
 .bs-detail .lens-stage.is-built{box-shadow:inset 0 0 0 1.5px var(--navy)}
 @media (max-width:760px){.lens-stages{grid-template-columns:1fr}}
 
+/* ---------- Pre-test report judged on its objective --------------------
+   The headline is the score for the objective. The other two objectives
+   sit beside it as small chips; the overall score that treats every video
+   alike is one line further down, opened on demand. */
+.bs-hero-others{display:flex;flex-wrap:wrap;gap:6px;margin-top:8px}
+.bs-hero-other{display:inline-flex;align-items:center;gap:6px;height:26px;padding:0 10px;border-radius:7px;
+  background:var(--white);font:400 13px var(--font);color:var(--ink-600)}
+.bs-hero-other b{font-weight:600;color:var(--tone);font-variant-numeric:tabular-nums}
+.bs-all > .bs-sec-hint{margin:0 16px 14px}
+.bs-overall > .bs-cols{margin:0 16px 16px}
+.bs-overall .bs-sec{background:var(--white)}
+.lens-made .bs-table td:nth-child(2){color:var(--ink-900)}
+/* Shown instead of a report until every part of it is in. */
+.bs-wait{background:var(--canvas-2);border-radius:var(--r-card);padding:28px 24px;display:flex;flex-direction:column;
+  align-items:flex-start;gap:6px;font:400 14px/21px var(--font);color:var(--ink-600)}
+.bs-wait-title{font:600 18px/24px var(--font);color:var(--ink-900)}
+.bs-wait p{margin:0;max-width:56ch}
+
 /* ---------- YouTube field, PDF button ------------------------------ */
 .bs-field[hidden]{display:none}
 .bs-head-actions{display:flex;align-items:flex-start;gap:8px;flex:none}
@@ -260,6 +278,8 @@ figcaption{font:400 12.5px/18px var(--font);color:var(--ink-600);margin-top:4px}
   #pt-print .lens-stages{grid-template-columns:repeat(3,1fr);gap:8px;break-inside:avoid;page-break-inside:avoid}
   #pt-print .lens-stage{background:#fff}
   #pt-print .lens-loud{break-inside:avoid;page-break-inside:avoid}
+  #pt-print .bs-hero-other{background:#fff}
+  #pt-print .bs-overall .bs-sec{background:#fff}
 }
 
 

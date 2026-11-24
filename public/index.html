@@ -122,7 +122,7 @@
     <div class="bs-form-head">
       <div>
         <h3 class="modal-title" id="bs-form-title">New pre-test</h3>
-        <p class="modal-desc" id="bs-form-desc">Scores the video for attention, branding and recall. Usually ready in about 5 minutes.</p>
+        <p class="modal-desc" id="bs-form-desc">Scores the video against its objective. Usually ready in about 5 minutes.</p>
       </div>
       <button class="close-btn" data-press onclick="PreTest.closeForm()" aria-label="Close">×</button>
     </div>
@@ -141,6 +141,14 @@
       <div class="bs-grid">
         <div class="bs-field bs-span2"><span class="field-label">Asset name</span>
           <input type="text" id="bs-asset-name" class="modal-input" maxlength="120" placeholder="e.g. Glow hero 15s" required></div>
+        <div class="bs-field bs-span2"><span class="field-label">Objective</span>
+          <select id="bs-objective" class="modal-input">
+            <option value="">Choose what this video is for</option>
+            <option value="Awareness">Awareness</option>
+            <option value="Consideration">Consideration</option>
+            <option value="Conversion">Conversion</option>
+          </select>
+          <span class="bs-hint">The report scores the video for this job. Awareness: be noticed and remembered. Consideration: give reasons to choose the product. Conversion: get people to act now.</span></div>
         <div class="bs-field"><span class="field-label">Campaign (optional)</span>
           <input type="text" id="bs-campaign" class="modal-input" maxlength="80" list="bs-campaigns" placeholder="e.g. Lux Glow 2026">
           <datalist id="bs-campaigns"></datalist></div>

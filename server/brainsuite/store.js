@@ -159,6 +159,9 @@ async function listPretests(brandId, limit = 100) {
   const { rows } = await query(
     `select j.id, j.status, j.channel, j.asset_name, j.file_name, j.requested_by, j.error,
             j.created_at, j.started_at, j.completed_at, j.expires_at, j.briefing,
+            -- through to_jsonb so the list still loads before migration 048 has run
+            to_jsonb(j) ->> 'objective' as objective,
+            to_jsonb(j) ->> 'upload_key' as upload_key,
             coalesce(u.display_name, j.requested_by) as requested_by_name,
             r.total_score, r.total_rating
        from brainsuite_jobs j

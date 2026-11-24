@@ -33,6 +33,15 @@ async function get(ref) {
   return rows[0] || null;
 }
 
+// The stage a row is judged on: the objective chosen for a pre-test, or what
+// the video reads as when none was given. funnel_intent and funnel_fit hold
+// that stage and its score.
+const focusOf = funnel => (funnel ? funnel.focus || funnel.intent : null);
+const fitOf = funnel => {
+  const k = focusOf(funnel);
+  return k && funnel.stages && funnel.stages[k] ? funnel.stages[k].score : null;
+};
+
 /** Insert or replace the row for one creative or pre-test. */
 async function save(ref, f) {
   const funnel = f.funnel || null;
@@ -43,8 +52,8 @@ async function save(ref, f) {
     f.sound ? JSON.stringify(f.sound) : null,
     funnel ? JSON.stringify(funnel) : null,
     f.sound && f.sound.score != null ? f.sound.score : null,
-    funnel ? funnel.intent : null,
-    funnel && funnel.stages[funnel.intent] ? funnel.stages[funnel.intent].score : null,
+    focusOf(funnel),
+    fitOf(funnel),
     f.error || null, f.costUsd == null ? null : f.costUsd, f.expiresAt || null,
   ];
   const conflict = ref.kind === 'creative' ? `(creative_id) where kind = 'creative'` : `(pretest_id) where kind = 'pretest'`;
@@ -68,12 +77,32 @@ async function save(ref, f) {
   return rows[0];
 }
 
-/** Only the funnel, after the Pre-test Score arrives. */
-async function saveFunnel(id, funnel) {
+/**
+ * The funnel, after the Pre-test Score arrives. Sound is written too when the
+ * scored checks changed it; pass null to leave it as it is.
+ */
+async function saveFunnel(id, funnel, sound = null) {
   await query(
-    `update lens_checks set funnel = $2, funnel_intent = $3, funnel_fit = $4, updated_at = now() where id = $1`,
-    [id, JSON.stringify(funnel), funnel.intent,
-     funnel.stages[funnel.intent] ? funnel.stages[funnel.intent].score : null]);
+    `update lens_checks set funnel = $2, funnel_intent = $3, funnel_fit = $4,
+            sound = coalesce($5, sound), sound_score = coalesce($6, sound_score), updated_at = now()
+      where id = $1`,
+    [id, JSON.stringify(funnel), focusOf(funnel), fitOf(funnel),
+     sound ? JSON.stringify(sound) : null, sound && sound.score != null ? sound.score : null]);
+}
+
+/**
+ * The objective chosen for a pre-test, or null. Tracked creatives have none.
+ * Read through to_jsonb so it also works before migration 048 has run.
+ */
+async function objectiveFor(ref) {
+  if (!ref || ref.kind !== 'pretest' || !ref.pretestId) return null;
+  try {
+    const { rows } = await query(
+      `select to_jsonb(j) ->> 'objective' as objective from brainsuite_jobs j where j.id = $1`, [ref.pretestId]);
+    return rows[0] ? rows[0].objective || null : null;
+  } catch (e) {
+    return null;
+  }
 }
 
 /** The latest Pre-test Score summary for a creative or a pre-test, or null. */
@@ -120,4 +149,4 @@ async function removeForPretest(pretestId) {
   await query(`delete from lens_checks where kind = 'pretest' and pretest_id = $1`, [pretestId]);
 }
 
-module.exports = { slimAnalysis, get, save, saveFunnel, pretestSummary, forBrand, expire, removeForPretest, ANALYSIS_KEYS };
+module.exports = { slimAnalysis, get, save, saveFunnel, pretestSummary, objectiveFor, forBrand, expire, removeForPretest, ANALYSIS_KEYS, focusOf, fitOf };

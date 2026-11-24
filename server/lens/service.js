@@ -20,7 +20,7 @@ const path = require('path');
 
 const store = require('./store');
 const ffmpeg = require('./ffmpeg');
-const { scoreSound, scoreFunnel } = require('./score');
+const { scoreSound, refreshSound, scoreFunnel } = require('./score');
 const { query } = require('../../db');
 
 const TTL_HOURS = Number(process.env.PRETEST_TTL_HOURS || 72);
@@ -39,10 +39,10 @@ async function checksFor({ ref, filePath, analysis, isStatic = false, duration =
     duration = duration || info.duration || (a.duration ? Number(a.duration) : null);
     if (info.hasAudio) loud = await ffmpeg.loudness(filePath);
   }
-  const bs = await store.pretestSummary(ref);
+  const [bs, objective] = await Promise.all([store.pretestSummary(ref), store.objectiveFor(ref)]);
   const meta = { duration, isStatic };
   const sound = scoreSound({ a, loud, bs, meta });
-  const funnel = scoreFunnel({ a, bs, sound, meta });
+  const funnel = scoreFunnel({ a, bs, sound, meta, objective });
   return { a, sound, funnel };
 }
 
@@ -75,18 +75,21 @@ async function runForStatic({ creativeId, brandId, analysis }) {
 
 /**
  * Re-work the funnel once the Pre-test Score has arrived. Called by the
- * scoring poll. Sound does not change; the funnel does, because the scored
- * checks replace the analysis' own reading where both exist.
+ * scoring poll. The scored checks replace the analysis' own reading where
+ * both exist, in the funnel and in the one Sound check they cover (works
+ * with the sound off). A pre-test's report is only shown after this has run,
+ * so nobody sees the numbers move.
  */
 async function refreshFunnel(ref) {
   try {
     const row = await store.get(ref);
     if (!row || row.status !== 'succeeded' || !row.analysis) return null;
-    const bs = await store.pretestSummary(ref);
+    const [bs, objective] = await Promise.all([store.pretestSummary(ref), store.objectiveFor(ref)]);
     if (!bs) return null;
     const a = row.analysis;
-    const funnel = scoreFunnel({ a, bs, sound: row.sound, meta: { duration: a.duration ? Number(a.duration) : null, isStatic: !a.duration } });
-    await store.saveFunnel(row.id, funnel);
+    const sound = refreshSound(row.sound, bs, a);
+    const funnel = scoreFunnel({ a, bs, sound, objective, meta: { duration: a.duration ? Number(a.duration) : null, isStatic: !a.duration } });
+    await store.saveFunnel(row.id, funnel, sound !== row.sound ? sound : null);
     return funnel;
   } catch (e) {
     console.error(`[lens] refresh ${ref.creativeId || ref.pretestId}: ${e.message}`);
