@@ -265,7 +265,13 @@ async function get_lineage(args, ctx) {
   };
 }
 
-const handlers = { rank_creatives, get_creative, get_series, compare_creatives, get_lineage };
+// Weighted paid video rates: the same figures as Media Summary.
+async function cqr_rates(args, ctx) {
+  const pool = ctx.pool || getPool();
+  return require('./rates').tool(args, ctx, (text, params) => pool.query(text, params));
+}
+
+const handlers = { rank_creatives, get_creative, get_series, compare_creatives, get_lineage, cqr_rates };
 
 /**
  * Search the whole archive, not just the year the brand data covers.

@@ -220,11 +220,22 @@ module.exports = function mountChatRoutes(app) {
     if (!ids.length) return res.json({ records: {} });
 
     try {
-      const out = await handlers.compare_creatives(
-        { creative_ids: ids.length === 1 ? [ids[0], ids[0]] : ids },
-        { brand, rangeDays: validRange(req.query.rangeDays), pool: getPool() },
-      );
-      res.json({ records: out.records });
+      const RATES = require('./rates');
+      const records = {};
+      const rateIds = ids.filter(RATES.isRatesId);
+      const creativeIds = ids.filter((id) => !RATES.isRatesId(id));
+      if (rateIds.length) {
+        const pool = getPool();
+        Object.assign(records, await RATES.resolveIds((t, p) => pool.query(t, p), brand, rateIds));
+      }
+      if (creativeIds.length) {
+        const out = await handlers.compare_creatives(
+          { creative_ids: creativeIds.length === 1 ? [creativeIds[0], creativeIds[0]] : creativeIds },
+          { brand, rangeDays: validRange(req.query.rangeDays), pool: getPool() },
+        );
+        Object.assign(records, out.records);
+      }
+      res.json({ records });
     } catch (err) {
       res.status(500).json({ error: 'Could not resolve those records.' });
     }

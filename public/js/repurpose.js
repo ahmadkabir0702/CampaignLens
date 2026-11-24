@@ -275,7 +275,7 @@
       LIST = await api('GET', '/api/repurpose');
       if (LIST.today) TODAY = LIST.today;
     } catch (e) {
-      el.innerHTML = `<div class="sg-wrap"><div class="load-msg load-msg-error">Couldn't load repurposing requests. ${esc(e.message)}
+      el.innerHTML = `<div class="sg-wrap"><div class="load-msg load-msg-error">Couldn't load repurposing requests. ${esc((typeof connectionMessage === 'function' ? connectionMessage(e) : e.message))}
         <button class="load-retry" onclick="Repurpose.render()">Try again</button></div></div>`;
       return;
     }

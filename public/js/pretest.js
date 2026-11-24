@@ -499,7 +499,7 @@
       state.data = await api('/api/pretests');
       renderPage();
     } catch (e) {
-      if (!quiet) page.innerHTML = `<div class="content"><div class="load-msg load-msg-error">Couldn't load pre-tests. ${esc(e.message)}
+      if (!quiet) page.innerHTML = `<div class="content"><div class="load-msg load-msg-error">Couldn't load pre-tests. ${esc((typeof connectionMessage === 'function' ? connectionMessage(e) : e.message))}
         <button class="load-retry" onclick="PreTest.refresh()">Try again</button></div></div>`;
     } finally {
       state.loading = false;
@@ -623,7 +623,7 @@
       </div>`;
       loadMedia(box);
     } catch (e) {
-      box.innerHTML = `<div class="cm-body"><div class="load-msg load-msg-error">Couldn't load the report. ${esc(e.message)}</div>
+      box.innerHTML = `<div class="cm-body"><div class="load-msg load-msg-error">Couldn't load the report. ${esc((typeof connectionMessage === 'function' ? connectionMessage(e) : e.message))}</div>
         <div class="modal-actions"><button class="modal-btn" onclick="PreTest.closeReport()">Close</button></div></div>`;
     }
   }

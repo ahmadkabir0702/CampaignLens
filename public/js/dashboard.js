@@ -78,16 +78,122 @@
     }
   }
 
-  window.fetch = async function (input, init) {
-    const res = await realFetch(input, init);
+  // ── Dropped requests and new versions ─────────────────────────────────
+  // A request can fail for reasons that clear in a second: a deploy
+  // switching servers, a restart, a phone or laptop changing networks.
+  // Those used to show "Failed to fetch" until someone refreshed. Reads
+  // (GET) are retried a few times, quietly, before anything is shown.
+  // Writes are never retried here: sending one twice could save it twice.
+  const RETRY_WAITS = [600, 1800, 4000];
+  const RETRY_STATUS = new Set([502, 503, 504]);
+  const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+  let seenVersion = null;
+  let updateShown = false;
+
+  function sameOrigin(url) {
+    try { return new URL(url, location.href).origin === location.origin; } catch (e) { return false; }
+  }
+
+  function waitForOnline(ms) {
+    if (navigator.onLine !== false) return Promise.resolve();
+    return new Promise((r) => {
+      const done = () => { window.removeEventListener('online', done); r(); };
+      window.addEventListener('online', done);
+      setTimeout(done, ms);
+    });
+  }
+
+  // The page was built by an older deploy than the server now answering.
+  // Offer a refresh rather than let old code talk to a new server.
+  function showUpdate() {
+    if (updateShown) return;
+    updateShown = true;
+    const bar = document.createElement('div');
+    bar.className = 'app-update';
+    bar.setAttribute('role', 'status');
+    bar.innerHTML = '<span>Campaign Lens has been updated. Refresh to load the latest version.</span>'
+      + '<button type="button" class="app-update-btn">Refresh</button>'
+      + '<button type="button" class="app-update-x" aria-label="Later">×</button>';
+    bar.querySelector('.app-update-btn').onclick = () => location.reload();
+    bar.querySelector('.app-update-x').onclick = () => bar.remove();
+    (document.body || document.documentElement).appendChild(bar);
+  }
+
+  function noteVersion(res) {
     try {
-      const url = typeof input === 'string' ? input
-        : (input && typeof input.url === 'string' ? input.url : '');
+      const v = res.headers.get('x-app-version');
+      if (!v) return;
+      if (!seenVersion) seenVersion = v;
+      else if (v !== seenVersion) showUpdate();
+    } catch (e) { /* header unreadable: nothing to do */ }
+  }
+
+  // Shown in the admin page's Errors table, so a pattern can be seen.
+  let reported = 0;
+  function report(url, what) {
+    if (reported >= 5) return;
+    reported += 1;
+    try {
+      realFetch('/api/client-error', {
+        method: 'POST', headers: { 'Content-Type': 'application/json' }, keepalive: true,
+        body: JSON.stringify({ where: 'load', message: `${what} on ${String(url).split('?')[0]}; online=${navigator.onLine}; visible=${document.visibilityState}` }),
+      }).catch(() => {});
+    } catch (e) { /* never a second error */ }
+  }
+
+  window.fetch = async function (input, init) {
+    const url = typeof input === 'string' ? input
+      : (input && typeof input.url === 'string' ? input.url : String(input || ''));
+    const method = String((init && init.method) || (input && input.method) || 'GET').toUpperCase();
+    const retryable = (method === 'GET' || method === 'HEAD') && sameOrigin(url) && !(init && init.signal && init.signal.aborted);
+    let res;
+    for (let attempt = 0; ; attempt++) {
+      try {
+        res = await realFetch(input, init);
+      } catch (err) {
+        // A cancelled request (navigating away, a superseded search) is not a failure.
+        if (!retryable || (err && err.name === 'AbortError') || attempt >= RETRY_WAITS.length) {
+          if (retryable && !(err && err.name === 'AbortError')) report(url, `dropped after ${attempt + 1} tries`);
+          throw err;
+        }
+        await waitForOnline(10000);
+        await sleep(RETRY_WAITS[attempt]);
+        continue;
+      }
+      if (retryable && RETRY_STATUS.has(res.status) && attempt < RETRY_WAITS.length) {
+        await sleep(RETRY_WAITS[attempt]);
+        continue;
+      }
+      if (retryable && RETRY_STATUS.has(res.status)) report(url, `HTTP ${res.status} after ${attempt + 1} tries`);
+      break;
+    }
+    try {
+      noteVersion(res);
       if (res.status === 401 && url.indexOf('/api/') !== -1) announce();
     } catch (e) { /* never let this break the call it is wrapping */ }
     return res;
   };
+
+  // A page woken from sleep, or a connection back after dropping, gets a
+  // second chance at a load that failed instead of sitting on the error.
+  function retryFailedLoad() {
+    if (document.querySelector('.load-msg-error .load-retry') && typeof loadData === 'function' && !isLoading) loadData();
+  }
+  window.addEventListener('online', retryFailedLoad);
+  document.addEventListener('visibilitychange', () => { if (document.visibilityState === 'visible') retryFailedLoad(); });
 })();
+
+/** Plain words for a request that never reached the server. */
+function connectionMessage(err) {
+  const m = String((err && err.message) || '');
+  // Only a request that never got an answer. Other errors keep their own text.
+  if (err && err.name === 'TypeError' && /failed to fetch|networkerror|network error|load failed/i.test(m)) {
+    return navigator.onLine === false
+      ? 'You appear to be offline. It will load again when the connection is back.'
+      : 'The connection to Campaign Lens dropped. Try again in a moment.';
+  }
+  return m;
+}
 
 /** The message to show in place when a panel could not load. */
 function panelError(res, data) {
@@ -443,7 +549,10 @@ async function loadData() {
   HUB.shownFor = null;
   try {
     const response = await fetch('/api/dashboard-data?lite=1');
-    if (!response.ok) throw new Error("Backend connection failed.");
+    if (!response.ok) {
+      throw new Error(response.status === 401 ? 'Your session has ended. Sign in again.'
+        : response.status >= 500 ? 'The server had a problem. Try again in a moment.' : 'Backend connection failed.');
+    }
     const data = await response.json();
     ACCOUNT_OVERVIEW = data.account;
     CAMPAIGNS        = data.campaigns;
@@ -484,13 +593,13 @@ async function loadData() {
     render();
   } catch(err) {
     document.getElementById('kpi-row').innerHTML =
-      `<div class="load-msg load-msg-error">Couldn't load campaign data. ${escapeHtml(err.message)}
+      `<div class="load-msg load-msg-error">Couldn't load campaign data. ${escapeHtml(connectionMessage(err))}
          <button class="load-retry" onclick="loadData()">Try again</button></div>`;
     document.getElementById('card-grid').innerHTML = '';
     document.getElementById('grid-count').textContent = '';
     const kp = document.getElementById('page-kpi');
     if (currentPage === 'kpi' && kp) kp.innerHTML =
-      `<div class="load-msg load-msg-error">Couldn't load campaign data. ${escapeHtml(err.message)}
+      `<div class="load-msg load-msg-error">Couldn't load campaign data. ${escapeHtml(connectionMessage(err))}
         <button class="load-retry" onclick="loadData()">Try again</button></div>`;
     console.error(err);
   } finally {
@@ -531,7 +640,7 @@ function withLibrary(page, draw) {
     if (currentPage === page) draw();
   }).catch(err => {
     if (currentPage !== page || !el) return;
-    el.innerHTML = `<div class="load-msg load-msg-error">${escapeHtml(err.message)}
+    el.innerHTML = `<div class="load-msg load-msg-error">${escapeHtml(connectionMessage(err))}
       <button class="load-retry" onclick="render()">Try again</button></div>`;
   });
 }
@@ -800,7 +909,7 @@ async function loadHub() {
   } catch (err) {
     if (seq !== HUB.seq) return;
     console.error('[hub]', err);
-    if (grid) grid.innerHTML = `<div class="load-msg load-msg-error">Couldn't load the creatives. ${escapeHtml(err.message)}
+    if (grid) grid.innerHTML = `<div class="load-msg load-msg-error">Couldn't load the creatives. ${escapeHtml(connectionMessage(err))}
       <button class="load-retry" onclick="render()">Try again</button></div>`;
   } finally {
     clearTimeout(slow);

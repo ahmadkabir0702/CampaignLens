@@ -108,7 +108,7 @@
       draw();
     } catch (e) {
       const box = overlay().querySelector('.cp-list');
-      if (box) box.innerHTML = `<div class="load-msg load-msg-error">Couldn't load campaigns. ${esc(e.message)}</div>`;
+      if (box) box.innerHTML = `<div class="load-msg load-msg-error">Couldn't load campaigns. ${esc((typeof connectionMessage === 'function' ? connectionMessage(e) : e.message))}</div>`;
     }
   }
 

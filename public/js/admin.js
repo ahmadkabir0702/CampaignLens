@@ -69,7 +69,7 @@
     el.innerHTML = skeleton();
     try { S.data = await api('GET', '/api/admin/overview'); }
     catch (e) {
-      el.innerHTML = `<div class="ad-wrap"><div class="load-msg load-msg-error">Couldn't load the admin page. ${esc(e.message)}
+      el.innerHTML = `<div class="ad-wrap"><div class="load-msg load-msg-error">Couldn't load the admin page. ${esc((typeof connectionMessage === 'function' ? connectionMessage(e) : e.message))}
         <button class="load-retry" onclick="Admin.render()">Try again</button></div></div>`;
       return;
     }
