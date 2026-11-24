@@ -116,11 +116,17 @@
     </div>`;
   }
 
-  function reportHTML(s, opts = {}) {
-    if (!s || !s.total) return '<div class="organic-empty">No report.</div>';
-    const t = tone(s.total.rating);
-    const here = s.channel;
+  const fixRow = k => `<li class="bs-fix t-${tone(k.rating)}">
+      <div class="bs-fix-head"><span class="bs-dot t-${tone(k.rating)}"></span>
+        <span class="bs-fix-name">${esc(k.name)}</span>
+        <span class="bs-fix-val">${esc(k.display)}</span></div>
+      ${k.tip ? `<div class="bs-fix-tip">${esc(k.tip)}</div>` : ''}
+      ${passMark(k.norm) ? `<div class="bs-fix-mark">${esc(passMark(k.norm))}</div>` : ''}
+    </li>`;
 
+  // The pieces of a scored summary, built once and laid out by either report.
+  function summaryParts(s, opts = {}) {
+    const here = s.channel;
     const placements = Object.entries(s.placements || {})
       .filter(([, p]) => p.total != null)
       .sort((a, b) => b[1].total - a[1].total);
@@ -143,20 +149,30 @@
       current: p === here, note: p === here ? 'tested for' : '', i,
     })).join('');
 
-    const fixRows = fixes.map(k => `<li class="bs-fix t-${tone(k.rating)}">
-        <div class="bs-fix-head"><span class="bs-dot t-${tone(k.rating)}"></span>
-          <span class="bs-fix-name">${esc(k.name)}</span>
-          <span class="bs-fix-val">${esc(k.display)}</span></div>
-        ${k.tip ? `<div class="bs-fix-tip">${esc(k.tip)}</div>` : ''}
-        ${passMark(k.norm) ? `<div class="bs-fix-mark">${esc(passMark(k.norm))}</div>` : ''}
-      </li>`).join('');
-
     const groups = {};
     for (const k of s.kpis || []) (groups[k.category] = groups[k.category] || []).push(k);
     const allRows = Object.entries(groups).map(([cat, ks]) => `
       <tr class="bs-cat-row"><th colspan="3">${esc(cat)}</th></tr>
       ${ks.map(k => `<tr><td><span class="bs-dot t-${tone(k.rating)}"></span>${esc(k.name)}</td>
         <td class="bs-num">${esc(k.display)}</td><td class="bs-quiet">${esc(passMark(k.norm))}</td></tr>`).join('')}`).join('');
+
+    const messageHint = noMessage ? `<div class="bs-sec-hint">${opts.kind === 'pretest'
+      ? 'Strategic Fit needs a key message. Add one when you run the next pre-test.'
+      : 'Strategic Fit needs a key message, which added creatives do not have.'}</div>` : '';
+    const media = `<section class="bs-sec bs-media" data-job="${esc(opts.jobId || '')}" data-video="${opts.kind === 'pretest' ? '1' : ''}">
+        <h4 class="bs-h">Where attention goes</h4>
+        <div class="bs-media-body"><div class="bs-media-sk" aria-busy="true"><div class="sk"></div><div class="sk"></div><div class="sk"></div></div></div>
+      </section>`;
+    const all = `<details class="bs-all"><summary>All ${(s.kpis || []).length} checks and their pass marks</summary>
+        <table class="bs-table"><tbody>${allRows}</tbody></table></details>`;
+    return { here, best, worst, fixes, works, catBars, placeBars, messageHint, media, all };
+  }
+
+  function reportHTML(s, opts = {}) {
+    if (!s || !s.total) return '<div class="organic-empty">No report.</div>';
+    const t = tone(s.total.rating);
+    const { here, best, worst, fixes, works, catBars, placeBars, messageHint, media, all } = summaryParts(s, opts);
+    const fixRows = fixes.map(fixRow).join('');
 
     return `<div class="bs-report">
       <div class="bs-hero">
@@ -177,11 +193,7 @@
       </div>
 
       <div class="bs-cols">
-        <section class="bs-sec"><h4 class="bs-h">By category</h4>${catBars}
-          ${noMessage ? `<div class="bs-sec-hint">${opts.kind === 'pretest'
-            ? 'Strategic Fit needs a key message. Add one when you run the next pre-test.'
-            : 'Strategic Fit needs a key message, which added creatives do not have.'}</div>` : ''}
-        </section>
+        <section class="bs-sec"><h4 class="bs-h">By category</h4>${catBars}${messageHint}</section>
         <section class="bs-sec"><h4 class="bs-h">By placement</h4>${placeBars}</section>
       </div>
 
@@ -192,14 +204,105 @@
 
       ${opts.lens ? lensHTML(opts.lens, { kind: opts.kind }) : ''}
 
-      <section class="bs-sec bs-media" data-job="${esc(opts.jobId || '')}" data-video="${opts.kind === 'pretest' ? '1' : ''}">
-        <h4 class="bs-h">Where attention goes</h4>
-        <div class="bs-media-body"><div class="bs-media-sk" aria-busy="true"><div class="sk"></div><div class="sk"></div><div class="sk"></div></div></div>
-      </section>
+      ${media}
 
-      <details class="bs-all"><summary>All ${(s.kpis || []).length} checks and their pass marks</summary>
-        <table class="bs-table"><tbody>${allRows}</tbody></table></details>
+      ${all}
 
+    </div>`;
+  }
+
+  // ── The pre-test report, judged on its objective ───────────────────────────
+  // One final report. The headline is the score for the objective chosen at
+  // upload (or, on a pre-test with none, for what the video reads as). The
+  // other two objectives sit beside it, Sound is part of every score, and the
+  // overall score that treats every video alike moves down into the detail.
+  //   p.lensReport  Sound and the three objective scores (always present here)
+  //   p.summary     the scored checks, or nothing when scoring did not finish
+  function objectiveReportHTML(p) {
+    const l = p.lensReport, f = l.funnel, s = p.summary && p.summary.total ? p.summary : null;
+    const focus = f.focus || f.intent;
+    const st = f.stages[focus] || {};
+    const t = ragTone(st.rag);
+    const low = String(focus).toLowerCase();
+    const others = STAGE_ORDER.filter(k => k !== focus && f.stages[k] && f.stages[k].score != null);
+    const parts = s ? summaryParts(s, { jobId: p.id, kind: 'pretest' }) : null;
+
+    // Scored checks to improve, split by whether they count toward this objective.
+    const mine = new Set((st.checks || []).map(c => c.kpi).filter(Boolean));
+    const fixesIn = parts ? parts.fixes.filter(k => mine.has(k.id)) : [];
+    const fixesOut = parts ? parts.fixes.filter(k => !mine.has(k.id)) : [];
+
+    const RESULT = { pass: ['pos', 'Pass'], partial: ['warn', 'Partly'], fail: ['neg', 'Miss'] };
+    const made = (st.checks || []).length ? `<details class="bs-all lens-made"><summary>What went into the ${esc(low)} score</summary>
+        <table class="bs-table"><tbody>
+          ${st.checks.map(c => `<tr><td><span class="bs-dot t-${(RESULT[c.result] || ['na'])[0]}"></span>${esc(c.name)}</td>
+            <td>${esc((RESULT[c.result] || ['', ''])[1])}</td><td class="bs-quiet">${c.weight >= 3 ? 'Counts most' : c.weight === 2 ? 'Counts more' : 'Counts'}</td></tr>`).join('')}
+          ${f.soundShare && f.soundScore != null ? `<tr><td><span class="bs-dot t-${ragTone(ragOf(f.soundScore))}"></span>Sound score</td>
+            <td>${esc(f.soundScore)}</td><td class="bs-quiet">${esc(f.soundShare)}% of the score</td></tr>` : ''}
+        </tbody></table>
+        <div class="bs-sec-hint">${f.soundShare ? `These checks make up ${100 - f.soundShare}% of the score and Sound makes up ${f.soundShare}%.` : 'These checks make up the score.'}
+          The same video gets a different score for each objective because each one is judged on different checks.</div>
+      </details>` : '';
+
+    const overall = s ? `<details class="bs-all bs-overall"><summary>Overall quality check: ${s.total.score == null ? 'not scored' : `${Math.round(s.total.score)} of 100`}${s.total.score == null ? '' : ` · ${esc(TONE_WORD[tone(s.total.rating)])}`}</summary>
+        <div class="bs-sec-hint">The general score for ${esc(PLACEMENT[parts.here] || parts.here)}. It weighs every video the same way whatever its objective, so it is not the headline here.</div>
+        <div class="bs-cols">
+          <section class="bs-sec"><h4 class="bs-h">By category</h4>${parts.catBars}${parts.messageHint}</section>
+          <section class="bs-sec"><h4 class="bs-h">By placement</h4>${parts.placeBars}</section>
+        </div>
+      </details>` : '';
+
+    return `<div class="bs-report">
+      ${!s ? `<div class="bs-banner">The scored checks did not finish${p.error ? ` (${esc(String(p.error).replace(/\.$/, ''))})` : ''}. This report uses the video analysis alone, so it is a rougher read. Run the pre-test again for the full report.</div>` : ''}
+      <div class="bs-hero">
+        <div class="bs-total t-${t}">
+          <svg class="bs-ring" viewBox="0 0 96 96" aria-hidden="true">
+            <circle class="bs-ring-bg" cx="48" cy="48" r="42"/>
+            <circle class="bs-ring-fg" cx="48" cy="48" r="42"
+              style="stroke-dashoffset:${(263.9 * (1 - Math.max(0, Math.min(100, st.score || 0)) / 100)).toFixed(1)}"/>
+          </svg>
+          <div class="bs-total-num">${st.score == null ? '–' : esc(st.score)}</div>
+          <div class="bs-total-sub">${esc(st.word || '')}</div>
+        </div>
+        <div class="bs-hero-text">
+          <div class="bs-hero-title">${esc(focus)} score, out of 100</div>
+          <div class="bs-hero-line">${esc(f.verdict)}</div>
+          ${!f.objective ? `<div class="bs-hero-line bs-quiet">No objective was set for this pre-test, so it is scored for what the video reads as.</div>` : ''}
+          ${others.length ? `<div class="bs-hero-others">${others.map(k => `<span class="bs-hero-other">${esc(k)} <b class="t-${ragTone(f.stages[k].rag)}">${esc(f.stages[k].score)}</b></span>`).join('')}</div>` : ''}
+        </div>
+      </div>
+
+      ${lensHTML(l, { kind: 'pretest', inReport: true, part: 'funnel' })}
+
+      ${made}
+
+      ${lensHTML(l, { kind: 'pretest', inReport: true, part: 'sound' })}
+
+      ${fixesIn.length ? `<section class="bs-sec"><h4 class="bs-h">What to improve for ${esc(low)}</h4>
+        <ul class="bs-fixes">${fixesIn.map(fixRow).join('')}</ul></section>` : ''}
+      ${fixesOut.length ? `<section class="bs-sec"><h4 class="bs-h">Other checks to improve</h4>
+        <div class="bs-sec-hint" style="margin:-4px 0 10px">Not part of the ${esc(low)} score. Worth fixing after the ones above.</div>
+        <ul class="bs-fixes">${fixesOut.map(fixRow).join('')}</ul></section>` : ''}
+
+      ${parts && parts.works.length ? `<section class="bs-sec"><h4 class="bs-h">What works</h4>
+        <div class="bs-chips">${parts.works.map(k => `<span class="bs-chip">${esc(k.name)}</span>`).join('')}</div></section>` : ''}
+
+      ${parts ? parts.media : ''}
+
+      ${overall}
+
+      ${parts ? parts.all : ''}
+
+    </div>`;
+  }
+
+  // Shown instead of a report until every part of it is in.
+  function waitingHTML(p) {
+    const finishing = p.status === 'succeeded';
+    return `<div class="bs-wait" role="status">
+      <span class="bs-status is-running"><i></i>${finishing ? 'Finishing the report' : 'Scoring'}</span>
+      <div class="bs-wait-title">${finishing ? 'Almost there' : 'About 5 minutes'}</div>
+      <p>The full report appears here in one go when it is ready${p.objective ? `, scored for ${esc(p.objective.toLowerCase())}` : ''}. Nothing is shown before then, so the numbers you see are final.</p>
     </div>`;
   }
 
@@ -283,15 +386,19 @@
         <div class="bs-quiet">Could not be worked out for this video${l.error ? `: ${esc(l.error)}` : '.'}</div></section>`;
     }
     const f = l.funnel, s = l.sound;
+    // opts.inReport: inside the pre-test report, whose headline already
+    // carries the verdict. opts.part: only 'funnel' or only 'sound'.
+    const want = part => !opts.part || opts.part === part;
     let out = '';
-    if (f && f.stages) {
+    if (f && f.stages && want('funnel')) {
+      const focus = f.focus || f.intent;
       const cards = STAGE_ORDER.filter(k => f.stages[k]).map((k, i) => {
         const st = f.stages[k];
         const t = ragTone(st.rag);
-        const built = k === f.intent;
+        const built = k === focus;
         return `<div class="lens-stage${built ? ' is-built' : ''}">
           <div class="lens-stage-head"><span class="lens-stage-name">${esc(k)}</span>
-            ${built ? '<span class="lens-tag">Built for</span>' : ''}
+            ${built ? `<span class="lens-tag">${f.objective ? 'Objective' : 'Built for'}</span>` : ''}
             <span class="lens-stage-num t-${t}">${st.score == null ? '–' : st.score}</span></div>
           <span class="bs-bar-track"><span class="bs-bar-fill grow-x t-${t}" style="--i:${i};width:${st.score == null ? 0 : Math.max(2, st.score)}%"></span></span>
           <div class="lens-stage-word t-${t}">${esc(st.word)}</div>
@@ -304,18 +411,19 @@
         f.offer ? `<span class="lens-found"><b>Offer:</b> ${esc(f.offer)}</span>` : '',
         f.ctaText ? `<span class="lens-found"><b>Call to action:</b> ${esc(f.ctaText)}</span>` : '',
       ].filter(Boolean).join('');
-      out += `<section class="bs-sec lens-sec"><h4 class="bs-h">Funnel fit</h4>
-        <p class="lens-verdict">${esc(f.verdict)}</p>
+      out += `<section class="bs-sec lens-sec"><h4 class="bs-h">${opts.inReport ? 'All three objectives' : 'Funnel fit'}</h4>
+        ${opts.inReport ? '' : `<p class="lens-verdict">${esc(f.verdict)}</p>`}
         <div class="lens-stages">${cards}</div>
         ${found ? `<div class="lens-founds">${found}</div>` : ''}
         <div class="bs-sec-hint">${f.basis === 'full'
-          ? 'Uses the Pre-test Score checks and the video analysis.'
-          : opts.kind === 'pretest' ? 'From the video analysis. It firms up when the Pre-test Score is ready.'
+          ? (opts.kind === 'pretest' ? 'Uses the scored checks and the video analysis.' : 'Uses the Pre-test Score checks and the video analysis.')
+          : opts.kind === 'pretest' ? 'From the video analysis alone.'
           : 'From the video analysis only. This creative has no Pre-test Score to add to it.'}
+          ${f.soundShare ? `Sound counts for ${esc(f.soundShare)}% of each score.` : ''}
           Green 70 and above, amber 50 to 69, red below 50.</div>
       </section>`;
     }
-    if (s) {
+    if (s && want('sound')) {
       const t = ragTone(s.rag);
       out += `<section class="bs-sec lens-sec"><h4 class="bs-h">Sound
           ${s.score != null ? `<span class="bs-score t-${t} lens-h-score">${s.score}</span><span class="lens-h-word t-${t}">${esc(s.word)}</span>` : ''}</h4>
@@ -507,10 +615,14 @@
     }
   }
 
+  // Still being worked on: the scored checks, or the video analysis that
+  // finishes the report. Nothing is shown for a pre-test until both are in.
+  const isWaiting = p => RUNNING.has(p.status) || (p.status === 'succeeded' && !!p.lensPending);
+
   // Re-check while anything is running and the page is open; stop otherwise.
   function schedule() {
     clearTimeout(state.timer);
-    const running = state.data && state.data.pretests.some(p => RUNNING.has(p.status));
+    const running = state.data && state.data.pretests.some(isWaiting);
     if (running && state.page === 'pretests' && !document.hidden) {
       state.timer = setTimeout(() => refresh({ quiet: true }), REFRESH_MS);
     }
@@ -519,6 +631,7 @@
 
   function statusCell(p) {
     const label = STATUS[p.status] || p.status;
+    if (p.status === 'succeeded' && p.lensPending) return '<span class="bs-status is-running"><i></i>Finishing</span>';
     if (RUNNING.has(p.status)) return `<span class="bs-status is-running"><i></i>${esc(label)}</span>`;
     if (p.status === 'failed') return `<span class="bs-status t-neg"><i></i>${esc(label)}</span>`;
     if (p.status === 'expired') return `<span class="bs-status bs-quiet"><i></i>${esc(label)}</span>`;
@@ -538,20 +651,32 @@
       : !s.queue ? '<div class="bs-banner">Background processing is off on this server (no Redis), so pre-tests cannot run.</div>'
       : !brandReady ? `<div class="bs-banner">${esc(d.brand ? d.brand.name : 'This brand')} has no pre-test category yet. You can still choose one in the form.</div>` : '';
 
+    const dash = '<span class="bs-quiet">–</span>';
     const rows = list.map(p => {
-      const open = p.status === 'succeeded' || !!(p.lens && p.lens.status === 'succeeded');
-      const score = p.totalScore != null && open
-        ? `<span class="bs-score t-${tone(p.totalRating)}">${Math.round(p.totalScore)}</span>` : '<span class="bs-quiet">–</span>';
+      const lensDone = !!(p.lens && p.lens.status === 'succeeded');
+      // A report opens only once it is final: no half report while the
+      // scored checks or the video analysis are still on their way.
+      const open = !isWaiting(p) && (p.status === 'succeeded' || (p.status === 'failed' && lensDone));
+      // The headline number is the score for the objective. A report with
+      // no objective score (run before this, or on a server without storage)
+      // keeps the overall score.
+      const fit = open && lensDone && p.lens.fit != null ? p.lens.fit : null;
+      const score = fit != null
+        ? `<span class="bs-score t-${ragTone(ragOf(fit))}" title="Score for ${esc(String(p.lens.builtFor || 'the objective').toLowerCase())}, out of 100">${esc(fit)}</span>`
+        : open && p.totalScore != null
+          ? `<span class="bs-score t-${tone(p.totalRating)}" title="Overall quality check, out of 100">${Math.round(p.totalScore)}</span>` : dash;
+      const objective = p.objective ? esc(p.objective)
+        : open && lensDone && p.lens.builtFor ? `${esc(p.lens.builtFor)}<div class="bs-row-sub">not set, reads as</div>` : dash;
       const extra = p.status === 'failed' && p.error ? `<div class="bs-row-err">${esc(p.error)}</div>`
-        : p.status === 'succeeded' ? `<div class="bs-row-sub">${esc(timeLeft(p.expiresAt))}</div>` : '';
+        : p.status === 'succeeded' && open ? `<div class="bs-row-sub">${esc(timeLeft(p.expiresAt))}</div>`
+        : isWaiting(p) && p.status !== 'uploading' ? '<div class="bs-row-sub">Scoring, about 5 minutes. The report opens when it is final.</div>' : '';
       return `<tr class="${open ? 'is-open' : ''}" ${open ? `tabindex="0" data-press onclick="PreTest.openReport(${jsq(p.id)})" onkeydown="if(event.key==='Enter')PreTest.openReport(${jsq(p.id)})"` : ''}>
         <td><div class="bs-row-name">${esc(p.assetName)}</div>${extra}</td>
         <td>${esc(p.channelLabel)}</td>
         <td>${esc(p.contentOrigin === 'Creator' ? 'Others Say' : 'Brand Say')}</td>
         <td>${esc(p.requestedBy || '')}<div class="bs-row-sub">${esc(when(p.createdAt))}</div></td>
         <td>${statusCell(p)}</td>
-        <td>${p.lens && p.lens.builtFor ? `<span class="bs-score t-${ragTone(ragOf(p.lens.fit))}" title="Fit ${esc(p.lens.fit)} of 100">${esc(p.lens.fit)}</span> <span class="lens-built">${esc(p.lens.builtFor)}</span>`
-          : p.lens && p.lens.status === 'running' ? '<span class="bs-quiet">Working</span>' : '<span class="bs-quiet">–</span>'}</td>
+        <td>${objective}</td>
         <td class="bs-num">${score}</td>
       </tr>`;
     }).join('');
@@ -570,7 +695,7 @@
       <div class="bs-page-head">${facts}${list.length ? newBtn : ''}</div>
       ${warn}
       ${list.length ? `<div class="bs-card"><table class="bs-list">
-        <thead><tr><th>Asset</th><th>Placement</th><th>Type</th><th>Run by</th><th>Status</th><th>Built for</th><th class="bs-num">Score</th></tr></thead>
+        <thead><tr><th>Asset</th><th>Placement</th><th>Type</th><th>Run by</th><th>Status</th><th>Objective</th><th class="bs-num">Score</th></tr></thead>
         <tbody>${rows}</tbody></table></div>`
       : `<div class="bs-card bs-empty">
           <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M9 3h6M10 3v6L4.5 19a1.5 1.5 0 0 0 1.3 2h12.4a1.5 1.5 0 0 0 1.3-2L14 9V3"/><path d="M7.5 14h9"/></svg>
@@ -582,47 +707,68 @@
   }
 
   // ── Report modal ───────────────────────────────────────────────────────────
-  async function openReport(id) {
+  async function openReport(id, { quiet = false } = {}) {
     state.reportId = id;
+    clearTimeout(state.reportTimer);
     const modal = document.getElementById('bsReportModal');
     const box = document.getElementById('bs-report-content');
-    box.innerHTML = reportSkeleton();
+    if (!quiet) box.innerHTML = reportSkeleton();
     modal.style.display = 'flex';
     try {
       const p = await api(`/api/pretests/${encodeURIComponent(id)}`);
       if (state.reportId !== id) return;
-      const meta = [p.channelLabel, p.contentOrigin === 'Creator' ? 'Others Say' : 'Brand Say',
+      const l = p.lensReport;
+      const scored = !!(l && l.status === 'succeeded' && l.funnel && l.funnel.stages);
+      const waiting = isWaiting(p);
+      // Final only: scored and analysed, or one of the two has ended for good.
+      const ready = !waiting && (p.status === 'succeeded' || (p.status === 'failed' && scored));
+      const type = p.contentOrigin === 'Creator' ? 'Others Say' : 'Brand Say';
+      const meta = [p.objective ? `Objective: ${p.objective}` : '', p.channelLabel, type,
         `run by ${p.requestedBy || 'unknown'}`, when(p.completedAt || p.createdAt)].filter(Boolean);
       const brandName = state.data && state.data.brand ? state.data.brand.name : '';
       const pdf = {
         title: p.assetName,
-        lines: [brandName, p.campaign, p.channelLabel, p.contentOrigin === 'Creator' ? 'Others Say' : 'Brand Say',
+        lines: [brandName, p.campaign, p.objective ? `Objective: ${p.objective}` : '', p.channelLabel, type,
           p.ctaOverlay ? `CTA overlay: ${p.ctaOverlay === 'yes' ? 'yes' : 'no'}` : '',
           `Run by ${p.requestedBy || 'unknown'}`, `Scored ${when(p.completedAt || p.createdAt)}`].filter(Boolean),
         keyMessage: p.keyMessage,
         fileName: `Pre-test - ${p.assetName} - ${fileDate(p.completedAt || p.createdAt)}`,
       };
+      const body = waiting ? waitingHTML(p)
+        // Judged on its objective: the report for every pre-test with Sound and the objective scores.
+        : ready && scored ? objectiveReportHTML(p)
+        // No objective scores (run before they existed, or they could not be worked out): the overall report.
+        : p.status === 'succeeded' ? reportHTML(p.summary, { jobId: p.id, kind: 'pretest', lens: l })
+        : `<div class="organic-empty">Pre-test: ${esc(STATUS[p.status] || p.status)}${p.error ? `: ${esc(p.error)}` : ''}</div>`;
       box.innerHTML = `<div class="cm-body" data-pdf-root data-pdf-meta="${pdfMeta(pdf)}">
         <div class="detail-header">
           <div>
             <div class="detail-title">${esc(p.assetName)}</div>
             <div class="detail-meta">${esc(meta.join(' · '))}</div>
             ${p.keyMessage ? `<div class="detail-meta">Key message: ${esc(p.keyMessage)}</div>` : ''}
-            ${p.status === 'succeeded' ? `<div class="bs-expiry">Deleted automatically on ${esc(when(p.expiresAt))} (${esc(timeLeft(p.expiresAt))})</div>` : ''}
+            ${ready && p.status === 'succeeded' ? `<div class="bs-expiry">Deleted automatically on ${esc(when(p.expiresAt))} (${esc(timeLeft(p.expiresAt))})</div>` : ''}
           </div>
           <div class="bs-head-actions">
-            ${p.status === 'succeeded' || (p.lensReport && p.lensReport.status === 'succeeded') ? pdfButton() : ''}
+            ${ready ? pdfButton() : ''}
             <button class="close-btn" data-press onclick="PreTest.closeReport()" aria-label="Close">×</button>
           </div>
         </div>
-        ${p.status === 'succeeded' ? reportHTML(p.summary, { jobId: p.id, kind: 'pretest', lens: p.lensReport })
-          : `<div class="organic-empty">Pre-test Score: ${esc(STATUS[p.status] || p.status)}${p.error ? `: ${esc(p.error)}` : ''}</div>
-             ${p.lensReport ? `<div class="bs-report" style="margin-top:16px">${lensHTML(p.lensReport, { kind: 'pretest' })}</div>` : ''}`}
-        ${p.canManage && p.status === 'succeeded' ? `<div class="modal-actions">
+        ${body}
+        ${p.canManage && ready && p.status === 'succeeded' ? `<div class="modal-actions">
           <button class="modal-btn modal-cancel bs-danger" onclick="PreTest.remove(${jsq(p.id)})">Delete report now</button></div>` : ''}
       </div>`;
-      loadMedia(box);
+      if (waiting) {
+        // Look again shortly, quietly, for as long as this report stays open.
+        state.reportTimer = setTimeout(() => { if (state.reportId === id) openReport(id, { quiet: true }); }, REFRESH_MS);
+      } else {
+        loadMedia(box);
+      }
     } catch (e) {
+      // A quiet re-check that failed leaves the waiting panel as it is and tries again.
+      if (quiet) {
+        state.reportTimer = setTimeout(() => { if (state.reportId === id) openReport(id, { quiet: true }); }, REFRESH_MS);
+        return;
+      }
       box.innerHTML = `<div class="cm-body"><div class="load-msg load-msg-error">Couldn't load the report. ${esc((typeof connectionMessage === 'function' ? connectionMessage(e) : e.message))}</div>
         <div class="modal-actions"><button class="modal-btn" onclick="PreTest.closeReport()">Close</button></div></div>`;
     }
@@ -630,6 +776,7 @@
 
   function closeReport() {
     state.reportId = null;
+    clearTimeout(state.reportTimer);
     const modal = document.getElementById('bsReportModal');
     if (modal) modal.style.display = 'none';
     const v = modal && modal.querySelector('video');
@@ -667,7 +814,7 @@
     fillSelect($('bs-category'), b.category ? cats : [['', 'Choose a category'], ...cats], b.category || '');
     const camps = (typeof CAMPAIGNS !== 'undefined' && CAMPAIGNS) || [];
     $('bs-campaigns').innerHTML = camps.map(c => `<option value="${esc(c)}">`).join('');
-    $('bs-form-desc').textContent = `For ${b.name || 'this brand'}. Scores the video for attention, branding and recall. Usually ready in about 5 minutes.`;
+    $('bs-form-desc').textContent = `For ${b.name || 'this brand'}. Scores the video against its objective. Usually ready in about 5 minutes.`;
     $('bsPretestModal').style.display = 'flex';
     if (typeof enhanceSelectsIn === 'function') enhanceSelectsIn('bsPretestModal');
     if (typeof repaintFilterDropdowns === 'function') repaintFilterDropdowns();
@@ -822,6 +969,7 @@
     if (!state.file) { setError('Choose a video to test.'); return; }
     const assetName = $('bs-asset-name').value.trim();
     if (!assetName) { setError('Give the asset a name.'); $('bs-asset-name').focus(); return; }
+    if (!$('bs-objective').value) { setError('Choose an objective: what this video is for.'); return; }
     const words = $('bs-key-message').value.trim().split(/\s+/).filter(Boolean).length;
     if (words > 50) { setError(`The key message is ${words} words. Keep it to 50 or fewer.`); return; }
     if (!$('bs-business-group').value || !$('bs-category').value) { setError('Choose a business group and category.'); return; }
@@ -832,6 +980,7 @@
     const file = state.file;
     const fields = {
       asset_name: assetName,
+      objective: $('bs-objective').value,
       campaign: $('bs-campaign').value.trim(),
       channel: $('bs-channel').value,
       content_type: $('bs-content-type').value,

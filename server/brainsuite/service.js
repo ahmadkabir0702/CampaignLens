@@ -23,6 +23,7 @@ const { enqueue, getConnection } = require('./queue');
 const { query } = require('../../db');
 
 const r2 = require('../lens/r2');
+const { OBJECTIVES } = require('../lens/score');
 
 const TTL_HOURS = Number(process.env.PRETEST_TTL_HOURS || 72);
 const DAILY_CAP = Number(process.env.BS_DAILY_CAP || 40);
@@ -105,6 +106,12 @@ async function createPretest({ brandId, username, fields }) {
   if (fileBytes > 500 * 1024 * 1024) throw new HttpError(400, 'Videos must be 500 MB or smaller.');
   const assetName = String(fields.asset_name || '').trim();
   if (!assetName) throw new HttpError(400, 'Give the asset a name.');
+  // What the video is for. The report's headline is the score for this.
+  // Never part of the briefing: the scoring service refuses unknown fields.
+  const objective = String(fields.objective || '').trim() || null;
+  if (objective && !OBJECTIVES.includes(objective)) {
+    throw new HttpError(400, 'Choose an objective: Awareness, Consideration or Conversion.');
+  }
 
   let briefing;
   try {
@@ -136,6 +143,7 @@ async function createPretest({ brandId, username, fields }) {
       channel: briefing.channel, briefing, assetName, fileName, fileBytes,
     });
     await store.updateJob(row.id, { upload_key: key });
+    await saveObjective(row.id, objective);
     return { row, upload: await r2.uploadLink(key, t.type, fileBytes) };
   }
 
@@ -145,7 +153,21 @@ async function createPretest({ brandId, username, fields }) {
     bsJobId: bsJob.id, kind: 'pretest', brandId, requestedBy: username, status: 'uploading',
     channel: briefing.channel, briefing, assetName, fileName, fileBytes: fileBytes || null,
   });
+  await saveObjective(row.id, objective);
   return { row, upload: { method: 'POST', url: asset.uploadUrl, fields: asset.fields } };
+}
+
+// Written on its own so a database that has not had migration 048 yet still
+// runs pre-tests: the objective is then simply not kept, and the report
+// falls back to what the video reads as.
+async function saveObjective(id, objective) {
+  if (!objective) return;
+  try {
+    await store.updateJob(id, { objective });
+  } catch (e) {
+    if (e.code !== '42703') throw e;
+    console.warn('[brainsuite] objective not saved: run server/048_pretest_objective.sql');
+  }
 }
 
 // Upload links expire (5 minutes direct, 15 stored). A fresh one for the same file.
@@ -471,6 +493,7 @@ function settings() {
     queue: !!getConnection(),
     ttlHours: TTL_HOURS, dailyCap: DAILY_CAP,
     channels: CHANNELS,
+    objectives: OBJECTIVES,
     uploadMode: uploadMode(),
   };
 }

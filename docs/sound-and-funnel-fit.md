@@ -9,7 +9,9 @@ Colours follow one rule everywhere: green 70 and above, amber 50 to 69, red belo
 
 ## How it fits with the Pre-test Score
 
-The Pre-test Score is unchanged and stays the headline number. Our results sit beside it in their own table (`lens_checks`) and never change it.
+The Pre-test Score is never changed by anything here. Our results sit in their own table (`lens_checks`).
+
+On tracked creatives the Pre-test Score stays the headline, with Funnel fit and Sound beside it. On pre-tests the headline is the score for the objective (see "Pre-tests are judged on their objective" below).
 
 | | Tracked creative | Pre-test |
 |---|---|---|
@@ -19,15 +21,34 @@ The Pre-test Score is unchanged and stays the headline number. Our results sit b
 | Sound | ffmpeg on the file the worker already has | ffmpeg on the uploaded file |
 | Funnel fit | From the Pre-test Score checks when there is a score, else from the analysis alone | Same |
 
-The Pre-test Score arrives about five minutes after the analysis. When it does, Funnel fit is worked out again with the scored checks, which take over from the analysis' own reading where both exist.
+The Pre-test Score arrives about five minutes after the analysis. When it does, Funnel fit is worked out again with the scored checks, which take over from the analysis' own reading where both exist. The same goes for the one Sound check they cover, "Works with the sound off".
 
-Funnel fit reads the scored checks (brand and product in the first seconds, attention on the brand, reading time, an engaging opening, sound-off, call to action) plus the analysis (reasons to buy, offer, call to action, direct action, urgency, length). It also says what the ad is built for: an offer with a direct ask reads as conversion, reasons to choose the product as consideration, anything else as awareness. When a Pre-test Score exists it counts for a quarter of each stage, so a weak creative cannot look like a strong fit by default.
+Funnel fit reads the scored checks (brand and product in the first seconds, attention on the brand, reading time, an engaging opening, sound-off, call to action) plus the analysis (reasons to buy, offer, call to action, direct action, urgency, length). It also says what the ad reads as: an offer with a direct ask reads as conversion, reasons to choose the product as consideration, anything else as awareness.
+
+How each stage score is made:
+
+- Its own checks, weighted (the lists are `STAGES` in `server/lens/score.js`). Awareness leads with branding. Consideration is about the product and the reasons to choose it, with one light branding check. Conversion is about the ask.
+- The Sound score counts for 15% of every stage (`SOUND_SHARE`) when the video has sound. Poor audio hurts whatever the video is for.
+- The overall Pre-test Score is not mixed in. It weighs every video the same way whatever it is for. Its individual checks still feed the stages they belong to.
+
+## Pre-tests are judged on their objective
+
+The person uploading a pre-test picks its objective: Awareness, Consideration or Conversion. The report is built around that choice.
+
+- **Headline.** The score for the chosen objective, out of 100, with the other two objectives shown smaller beside it. If another objective scores clearly higher, the report says so.
+- **What went into it.** Every check behind the headline score is listed with its result and how much it counts.
+- **What to improve.** Scored checks to fix are split in two: the ones that count toward this objective, then the rest.
+- **Overall quality check.** The overall Pre-test Score, with its category and placement breakdown, is one line lower down that opens on demand. It is kept because it is the standard number, but it is not the headline.
+- **One final report.** Nothing is shown while a pre-test is still being scored or analysed. The list says Queued, Analysing or Finishing, and the report opens once every part is in, so the numbers never move after someone has seen them.
+- **If scoring does not finish.** The report is built from the video analysis alone and says so at the top.
+
+The objective is kept in `brainsuite_jobs.objective` (migration 048) and is never sent to the scoring service. A pre-test with no objective (run before this) is scored for what the video reads as. Tracked creatives have no objective yet, so they keep "built for".
 
 All thresholds are in `server/lens/score.js`.
 
 ## Setup
 
-1. **Database.** Run `server/045_lens_checks.sql` in the Supabase SQL editor **before** deploying. It adds `lens_checks`, two columns on `brainsuite_jobs`, and the `v_creative_tests` view.
+1. **Database.** Run `server/045_lens_checks.sql` in the Supabase SQL editor **before** deploying. It adds `lens_checks`, two columns on `brainsuite_jobs`, and the `v_creative_tests` view. Then run `server/048_pretest_objective.sql`, which adds the objective column. Pre-tests still run without 048, but the objective is not kept.
 2. **Cloudflare R2** (free tier):
    1. Create a bucket, for example `campaignlens-pretests`. Leave public access off.
    2. Bucket settings, CORS policy:
