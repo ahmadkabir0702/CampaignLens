@@ -26,6 +26,9 @@
     hook_good_rate:  { label: 'Hook Good rate',  type: 'pct', decimals: 0, rollup: true, n: 'hook_good_n', d: 'rated_n' },
     hold_good_rate:  { label: 'Hold Good rate',  type: 'pct', decimals: 0, rollup: true, n: 'hold_good_n', d: 'rated_n' },
     rated_share:     { label: 'Impressions rated', type: 'pct', decimals: 0, rollup: true, n: 'rated_n', d: 'video_n' },
+    // Every paid creative, not only video: the count is of creatives.
+    paid_engagement_rate: { label: 'Engagement rate', type: 'pct', decimals: 2, rollup: true, n: 'eng_creative_n', d: 'paid_creative_n', unit: 'creative' },
+    cost_per_engagement:  { label: 'Cost per engagement', type: 'currency', decimals: 2, rollup: true },
   };
 
   var PLATFORMS = {
@@ -55,11 +58,11 @@
     if (!def) return String(value);
     if (def.type === 'pct') {
       // A part is never rounded up to the whole or a sliver down to none.
-      if (def.rollup && n > 0 && n < 1) return '<1%';
-      if (def.rollup && n < 100 && n >= 99.5) return '>99%';
+      if (def.rollup && !def.decimals && n > 0 && n < 1) return '<1%';
+      if (def.rollup && !def.decimals && n < 100 && n >= 99.5) return '>99%';
       return n.toFixed(def.decimals) + '%';
     }
-    if (def.type === 'currency') return formatCount(n) + ' ' + CURRENCY;
+    if (def.type === 'currency') return (def.decimals && n < 1000 ? n.toFixed(def.decimals) : formatCount(n)) + ' ' + CURRENCY;
     if (def.type === 'seconds') return n.toFixed(def.decimals) + 's';
     return formatCount(n);
   }
@@ -117,13 +120,18 @@
   Store.prototype.get = function (id) { return this.records[id] || null; };
   Store.prototype.fetchMissing = function (ids, ctx) {
     var self = this;
+    // A second marker for an id already on its way waits for that same
+    // request, rather than resolving at once with nothing to show.
+    var waiting = ids.filter(function (id) { return self.pending[id]; }).map(function (id) { return self.pending[id]; });
     var need = ids.filter(function (id) { return id !== 'brand' && !self.records[id] && !self.pending[id]; });
-    if (!need.length) return Promise.resolve();
-    need.forEach(function (id) { self.pending[id] = true; });
-    return fetch('/api/chat/records?brand=' + encodeURIComponent(ctx.brand) + '&ids=' + encodeURIComponent(need.join(',')), { credentials: 'same-origin' })
+    if (!need.length) return Promise.all(waiting).then(function () {});
+    var done = function () { need.forEach(function (id) { delete self.pending[id]; }); };
+    var req = fetch('/api/chat/records?brand=' + encodeURIComponent(ctx.brand) + '&ids=' + encodeURIComponent(need.join(',')), { credentials: 'same-origin' })
       .then(function (r) { return r.ok ? r.json() : { records: {} }; })
-      .then(function (d) { self.merge(d.records); need.forEach(function (id) { delete self.pending[id]; }); })
-      .catch(function () { need.forEach(function (id) { delete self.pending[id]; }); });
+      .then(function (d) { self.merge(d.records); done(); })
+      .catch(done);
+    need.forEach(function (id) { self.pending[id] = req; });
+    return Promise.all(waiting.concat([req])).then(function () {});
   };
 
   // ---- Creative chip -------------------------------------------
@@ -303,11 +311,14 @@
     if (def.rollup) b.appendChild(count);
     function fill(r) {
       b.querySelector('.al-badge-value').textContent = formatMetric(marker.metric, r ? r[marker.metric] : null);
-      if (def.rollup && r && r[def.d] != null) {
-        count.textContent = '(' + r[def.n] + ' of ' + r[def.d] + ' video' + (Number(r[def.d]) === 1 ? '' : 's') + ')';
+      if (def.rollup && def.d && r && r[def.d] != null) {
+        var unit = def.unit || 'video';
+        count.textContent = '(' + r[def.n] + ' of ' + r[def.d] + ' ' + unit + (Number(r[def.d]) === 1 ? '' : 's') + ')';
       }
       b.title = metricLabel(marker.metric) + (def.rollup
-        ? ', ' + ((r && r.scope_label) || 'all campaigns, Meta and TikTok combined, all time') + ', weighted by impressions'
+        ? (r && !r.scope_label && marker.id !== 'brand' && marker.id.indexOf('rates:') !== 0
+            ? ' for ' + (r.name || marker.id) + ', over its whole paid run'
+            : ', ' + ((r && r.scope_label) || 'all campaigns, Meta and TikTok combined, all time') + ', weighted by impressions')
         : (marker.id === 'brand' ? ', brand average' : ' for ' + (r ? r.name : marker.id)));
     }
     fill(rec);

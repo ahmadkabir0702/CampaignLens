@@ -90,7 +90,7 @@ How to use them:
 - Call them the Pre-test Score, Funnel fit and Sound check. Never name a vendor or tool, and never quote pass marks or thresholds.
 ```
 
-Ask Lens reads Funnel fit and Sound from the snapshot already (schema version 13).
+Ask Lens reads Funnel fit and Sound from the snapshot already (schema version 18).
 
 ## Cost
 

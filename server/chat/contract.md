@@ -97,6 +97,38 @@ weigh every rated video by its impressions.
 The CQR mix in TOTALS counts creatives one each. When someone asks what
 share of paid delivery was Good quality, use CQR Good rate.
 
+## Engagement rate and cost per engagement (paid)
+
+- **Engagement rate**: engagements / reach, for the brand or a campaign. It
+  covers every paid creative, photos and carousels included, not only video.
+- **Reach** is true reach: the number of different people who saw the ads in
+  that period, as Meta and TikTok report it. It cannot be added up from days
+  or ads, so it exists only for the periods fetched each night: all time,
+  this year, last 30 days, this month, last month, and single calendar
+  months. A custom date range has no engagement rate: say so, never
+  estimate one.
+- **Cost per engagement**: spend in LKR / the same engagements.
+- Meta engagements: post reactions, comments, shares, saves, link clicks,
+  Instagram follows where Meta reports them, and Facebook page likes.
+  TikTok engagements: paid likes, comments, shares, follows and destination
+  clicks. TikTok favorites are not available and are not counted.
+- Not counted: 3-second plays, Post engagement, Clicks (all). Do not offer
+  any of those as an engagement figure.
+- Only days with engagement data count. "Impressions covered" is how much
+  of the delivery that is; below 100% the engagement rate reads low, so say
+  the figure rests on part of the delivery.
+- Combined is all engagements / (Meta reach + TikTok reach). Someone
+  reached on both platforms counts twice. It is not an average of the two
+  rates.
+- This is a different figure from the organic engagement_rate of a single
+  post. Never compare a paid engagement rate with an organic one.
+- The monthly ER in the account lines is the Meta ad account: engagements
+  / the account's reach that month.
+- A creative's paid_engagement_rate is its engagements over its whole paid
+  run / the people that run reached, on each platform, and combined across
+  both. It is blank until every day of the run has engagement data and its
+  reach has been fetched; say it is not available yet, never estimate it.
+
 ---
 
 ## Strong and Weak

@@ -121,13 +121,14 @@ const tools = [
   },
 
   {
-    name: 'cqr_rates',
+    name: 'paid_rates',
     description:
-      'CQR Good rate, Hook Good rate and Hold Good rate for paid video, weighted by impressions, for a date range, a campaign or a platform. The all-time brand and campaign figures are already in PAID VIDEO QUALITY; call this for a date range or a campaign not listed there.',
+      'Paid figures for a date range, a campaign or a platform: CQR Good rate, Hook Good rate and Hold Good rate (paid video, weighted by impressions), and engagement rate (engagements / true reach) and cost per engagement (every paid creative). The all-time brand and campaign figures are already in PAID VIDEO QUALITY AND ENGAGEMENT; call this for a date range or a campaign not listed there.',
     input_schema: {
       type: 'object',
       properties: {
-        from: { type: 'string', description: 'First day, YYYY-MM-DD. Omit for no start.' },
+        period: { type: 'string', enum: ['all_time', 'this_year', 'last_30', 'this_month', 'last_month'], description: 'A preset period. Use this rather than from/to whenever it fits: engagement rate needs it.' },
+        from: { type: 'string', description: 'First day, YYYY-MM-DD. Omit for no start. A whole calendar month (first to last day) also has engagement rate.' },
         to: { type: 'string', description: 'Last day, YYYY-MM-DD. Omit for no end.' },
         campaign: { type: 'string', description: 'Campaign name, partial match. Omit for all campaigns.' },
         platform: { type: 'string', enum: ['combined', 'meta', 'tiktok'], description: 'Omit for all three.' },

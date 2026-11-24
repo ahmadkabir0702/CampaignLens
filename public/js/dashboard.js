@@ -1513,6 +1513,16 @@ function detailSummaryHTML(d) {
  * with its share of the delivery. Null when there is one rating to show.
  */
 const PAID_LABEL = { meta: 'Meta', tiktok: 'TikTok' };
+
+/**
+ * Engagement rate on the card, under the platform's paid rating: over the
+ * whole paid run, on true reach. Nothing when there is no rate yet (no
+ * reach fetched, or some days of the run without engagement data).
+ */
+function paidErHTML(er) {
+  if (er === null || er === undefined) return '';
+  return `<div class="card-cqr-stats" title="Engagements divided by the people reached, over the whole paid run">ER ${Number(er).toFixed(2)}%</div>`;
+}
 function paidSplitHTML(d) {
   const rs = (d.paidRatings || []).filter(r => r && r.cqr);
   if (rs.length < 2 || new Set(rs.map(r => r.cqr)).size < 2) return null;
@@ -1692,7 +1702,7 @@ function cardHTML(d) {
     // "Not rated yet" and "no numbers have arrived" are different things,
     // and the card said the first for both. A platform with no organic row
     // at all has not been measured, which is not a verdict on the post.
-    const row = (label, v, o, hideState) => `<div class="card-cqr-row">
+    const row = (label, v, o, hideState, extra) => `<div class="card-cqr-row">
         <div class="card-cqr-main">
           <span class="card-cqr-plat">${label}</span>
           ${isGrade(v)
@@ -1700,7 +1710,7 @@ function cardHTML(d) {
             : (hideState ? ''
               : `<span class="card-cqr-state" title="${escapeHtml(STATE_WHY[v] || '')}">${
                   v ? stateShort(v) : (o ? 'Not rated yet' : 'No numbers yet')}</span>`)}
-        </div>
+        </div>${extra || ''}
       </div>`;
 
     // When no platform has a rating and they all give the same reason, the
@@ -1745,7 +1755,7 @@ function cardHTML(d) {
     //
     const paidVals = [['meta', 'Meta'], ['tiktok', 'TikTok']]
       .filter(([k]) => (d.paidBy || {})[k])
-      .map(([k, label]) => row(label, d.paidBy[k].cqr, null, false)).join('');
+      .map(([k, label]) => row(label, d.paidBy[k].cqr, null, false, paidErHTML(d.paidBy[k].er))).join('');
 
     const validating = validationStrip(d, ORG_PLATFORMS
       .filter(pl => d[pl.link] || d[pl.key]).map(pl => pl.label));

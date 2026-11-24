@@ -99,17 +99,21 @@ function brief(r) {
     id: r.id, campaign: r.campaign || 'All campaigns', platform: r.platform,
     cqr_good_rate: r.cqr_good_rate, hook_good_rate: r.hook_good_rate, hold_good_rate: r.hold_good_rate,
     rated_share: r.rated_share, videos_rated: r.rated_n, videos: r.video_n,
+    ...(r.paid_engagement_rate !== undefined ? {
+      paid_engagement_rate: r.paid_engagement_rate, reach: r.reach, cost_per_engagement_lkr: r.cost_per_engagement,
+      impressions_covered: r.eng_coverage, creatives_with_engagement: r.eng_creative_n, creatives: r.paid_creative_n,
+    } : {}),
   };
 }
 
 /**
- * The cqr_rates tool. Brand comes from the session. Campaign is a partial
+ * The paid_rates tool. Brand comes from the session. Campaign is a partial
  * match on the Campaign Lens campaign name.
  */
 async function tool(args, ctx, q) {
   let res;
   try {
-    res = await R.forBrand(q, ctx.brand, { from: args.from, to: args.to });
+    res = await R.forBrand(q, ctx.brand, { from: args.from, to: args.to, period: args.period });
   } catch (e) {
     if (e.status === 400) return { result: { error: e.message }, records: {} };
     throw e;
@@ -122,7 +126,7 @@ async function tool(args, ctx, q) {
     const hit = res.campaigns.filter((c) => c.name.toLowerCase().includes(needle)).slice(0, 3);
     if (!hit.length) {
       return {
-        result: { error: 'No campaign with paid video delivery matches that name in this range.',
+        result: { error: 'No campaign with paid delivery matches that name in this range.',
                   campaigns: res.campaigns.slice(0, 12).map((c) => c.name) },
         records: {},
       };
@@ -139,19 +143,22 @@ async function tool(args, ctx, q) {
       rows.push(brief(records[id]));
     }
   }
-  const empty = rows.every((r) => !r.videos);
+  const empty = rows.every((r) => !r.videos && !r.creatives);
   // Results stay small. Several campaigns on three platforms is too much,
   // so the platform split goes first and the combined rows stay.
   let shown = rows;
-  if (JSON.stringify(rows).length > 1100) shown = rows.filter((r) => r.platform === 'combined');
+  if (JSON.stringify(rows).length > 1300) shown = rows.filter((r) => r.platform === 'combined');
   return {
     result: {
       range: rangeLabel(res.from, res.to),
+      ...(res.reach && res.reach.status !== 'ok' ? { engagement_rate: res.reach.status === 'custom'
+        ? 'Not available for this range: engagement rate is on true reach, which exists only for the periods all_time, this_year, last_30, this_month, last_month and single calendar months. Say so; do not estimate it.'
+        : 'True reach for this period has not been fetched yet. Say engagement rate is not available yet.' } : {}),
       rows: shown,
       ...(shown.length < rows.length ? { trimmed: 'Only the combined rows are listed. Ask again with a platform for Meta or TikTok.' } : {}),
       note: empty
-        ? 'No paid video delivery in this range.'
-        : 'Show each figure with [[metric:cqr_good_rate|ID]], [[metric:hook_good_rate|ID]], [[metric:hold_good_rate|ID]] or [[metric:rated_share|ID]], using the row id. The badge shows the video count beside it.',
+        ? 'No paid delivery in this range.'
+        : 'Show each figure with [[metric:NAME|ID]] using the row id. NAME: cqr_good_rate, hook_good_rate, hold_good_rate, rated_share, paid_engagement_rate or cost_per_engagement. A null engagement figure means no engagement data for those days.',
     },
     records: keep,
   };

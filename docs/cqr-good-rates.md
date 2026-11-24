@@ -1,7 +1,7 @@
 # CQR Good rate, Hook Good rate and Hold Good rate
 
-Part 1 of the paid roll-up. Part 2 (engagement rate and cost per engagement)
-follows separately.
+Part 1 of the paid roll-up. Part 2, engagement rate and cost per engagement,
+is in `docs/paid-engagement.md`.
 
 ## What the figures are
 
@@ -43,7 +43,7 @@ its full paid run. Nothing is re-rated and no benchmark changes.
 **Ask Lens** reads the same code, so the two never disagree:
 
 - The all-time brand and campaign figures are in the brand data.
-- A new `cqr_rates` tool works them out for a date range, a campaign or a
+- A new `paid_rates` tool works them out for a date range, a campaign or a
   platform.
 - New markers: `cqr_good_rate`, `hook_good_rate`, `hold_good_rate`,
   `rated_share`. Each badge shows the video count beside the figure.
@@ -60,7 +60,7 @@ Results are kept for five minutes, since paid data lands once a day.
 
 - `server/cqr-rollup.js`: the figures.
 - `public/js/cqr-rates.js`: the Media Summary section.
-- `server/chat/rates.js`: Ask Lens records and the `cqr_rates` tool.
+- `server/chat/rates.js`: Ask Lens records and the `paid_rates` tool.
 - `tests/cqr-rollup.test.js`.
 
 No database change: it reads `v_paid_meta_scored`, `v_paid_tiktok_scored`,

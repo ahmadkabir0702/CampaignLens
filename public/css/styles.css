@@ -1066,6 +1066,9 @@ select:focus,.search-input:focus,.modal-input:focus{outline:none;border-color:va
   border-radius:var(--r-btn);padding:0 9px;background:var(--white);color:var(--ink-900)}
 .cqrr-ctl .so-seg-btn{height:34px}
 .cqrr-cmp-btn{border:1px solid var(--line);border-radius:var(--r-btn);height:34px}
+.cqrr-segs{display:flex;flex-wrap:wrap;gap:8px}
+.cqrr-why{font:400 12.5px/18px var(--font);color:var(--ink-500);margin:-4px 0 10px}
+.cqrr-scroll + .cqrr-why{margin:10px 0 0}
 .cqrr-sub{font-weight:400;color:var(--ink-400);margin-left:6px}
 .cqrr-scroll{overflow-x:auto;-webkit-overflow-scrolling:touch}
 .cqrr-table td.n{white-space:nowrap}
@@ -1083,6 +1086,9 @@ select:focus,.search-input:focus,.modal-input:focus{outline:none;border-color:va
 @media (max-width:768px){
   .cqrr-ctl{align-items:stretch}
   .cqrr-ctl .ms-fgroup,.cqrr-ctl .kfi-select{width:100%}
+  .cqrr-segs{flex-direction:column}
+  #ms-cqr .ms-card-head{flex-direction:column;align-items:flex-start;gap:2px}
+  #ms-cqr .ms-card-note{text-align:left}
   .cqrr-ctl .so-seg{display:flex}
   .cqrr-ctl .so-seg-btn{flex:1}
   .cqrr-cmp-btn{width:100%}

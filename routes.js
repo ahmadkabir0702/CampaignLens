@@ -1317,7 +1317,7 @@ app.get('/api/brands', async (req, res) => {
     try {
       if (!noAgency(req, res)) return;
       const brand = resolveBrand(req);
-      const out = await CQRR.forBrand(query, brand, { from: req.query.from, to: req.query.to });
+      const out = await CQRR.forBrand(query, brand, { from: req.query.from, to: req.query.to, period: req.query.period });
       res.json({ ...out, can_compare: canCompareBrands(req.session) && (req.session.brands || []).length > 1 });
     } catch (err) {
       sendError(res, 'cqr-rates', err);
@@ -1336,7 +1336,7 @@ app.get('/api/brands', async (req, res) => {
       const { rows: names } = await query(
         `select brand_id, name from brands where brand_id = any($1) and is_active = true order by name`, [ids]);
       if (!names.length) return res.json({ from: null, to: null, brands: [] });
-      const out = await CQRR.forBrands(query, names.map((n) => n.brand_id), { from: req.query.from, to: req.query.to });
+      const out = await CQRR.forBrands(query, names.map((n) => n.brand_id), { from: req.query.from, to: req.query.to, period: req.query.period });
       const label = new Map(names.map((n) => [n.brand_id, n.name]));
       out.brands = out.brands.map((b) => ({ ...b, name: label.get(b.brand_id) || b.brand_id }));
       res.json(out);
