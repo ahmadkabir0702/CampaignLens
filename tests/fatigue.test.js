@@ -42,3 +42,22 @@ test('ungraded week or missing windows: not read', () => {
   assert.equal(assessFade({ last_7: win('Poor', 5000), lifetime: life(30) }).checked, false);
   assert.equal(assessFade(undefined).checked, false);
 });
+
+test('running comes from the shared rule when given, not from any active day in the window', () => {
+  const wins = { first_7: win('Good', 5000), last_7: win('Poor', 5000, { is_active: true, is_current: true }), lifetime: life(21) };
+  // Paused: the window still holds active days, but nothing active delivered in the last two days.
+  assert.equal(assessFade(wins, false).still_running, false);
+  assert.equal(assessFade(wins, true).still_running, true);
+  // Not given (older callers): the window's own flags.
+  assert.equal(assessFade(wins).still_running, true);
+});
+
+test('the running rule in Ask Lens needs recent delivery with an active status that day', () => {
+  const { runningExpr } = require('../server/chat/running');
+  const sql = runningExpr('v_paid_meta_creative', { isActive: 'is_active', creativeId: 'creative_id', brand: 'brand_id' });
+  assert.match(sql, /v_paid_meta_scored/);
+  assert.match(sql, /current_date - 2/);
+  assert.match(sql, /impressions, 0\) > 0/);
+  assert.match(sql, /ad_status/);
+  assert.doesNotMatch(sql, /\bis_active\b/);
+});

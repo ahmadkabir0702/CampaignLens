@@ -124,13 +124,17 @@ function trendOf(first, last, lastImpressions) {
  *   - both weeks had at least WINDOW_FLOOR impressions
  *   - both weeks have a grade
  * faded: graded worse in its last week than its first. still_running says
- * whether that last week is the current one and the creative is live.
+ * whether the creative is live on this platform. Callers pass `running`
+ * from the shared rule (delivered in the last two days with an active
+ * status that day: paidExtras in creatives.js, server/chat/running.js). The
+ * windowed view's own is_active is any active day in the window, which
+ * keeps a paused ad "running" for days, so it is only the fallback.
  */
-function assessFade(wins) {
+function assessFade(wins, running) {
   const first = wins && wins.first_7, last = wins && wins.last_7, life = wins && wins.lifetime;
   if (!first || !last || !life) return { checked: false, reason: 'no windows' };
   const runDays = Math.round((new Date(life.to_date) - new Date(life.from_date)) / 86400000) + 1;
-  const stillRunning = !!(last.is_active && last.is_current);
+  const stillRunning = running === undefined ? !!(last.is_active && last.is_current) : !!running;
   const base = { run_days: runDays, still_running: stillRunning };
   if (!(runDays >= MIN_RUN_DAYS)) return { ...base, checked: false, reason: 'too short' };
   const imp = (w) => (w.impressions === null || w.impressions === undefined ? null : Number(w.impressions));
@@ -174,6 +178,19 @@ async function fatigueFor(brandId, creativeId) {
   }
   if (!rows.length) return null;
 
+  // Running now, per platform, by the shared rule.
+  const runningOn = {};
+  try {
+    const r = await query(
+      `select platform, coalesce(bool_or(upper(coalesce(ad_status, '')) in ('ACTIVE', 'ENABLE'))
+                filter (where coalesce(impressions, 0) > 0 and date >= current_date - 2), false) as running
+         from (select 'meta' as platform, ad_status, impressions, date from v_paid_meta_scored where brand_id = $1 and creative_id = $2
+               union all
+               select 'tiktok' as platform, ad_status, impressions, date from v_paid_tiktok_scored where brand_id = $1 and creative_id = $2) x
+        group by platform`, [brandId, creativeId]);
+    for (const x of r.rows) runningOn[x.platform] = x.running === true;
+  } catch (err) { if (err.code !== '42P01') throw err; }
+
   const byPlatform = {};
   for (const r of rows) (byPlatform[r.platform] ||= {})[r.window_name] = r;
 
@@ -188,10 +205,11 @@ async function fatigueFor(brandId, creativeId) {
       : 0;
     const tooShort = runDays < MIN_RUN_DAYS;
 
-    const a = assessFade(wins);
+    const a = assessFade(wins, runningOn[platform]);
     const thin = a.reason === 'thin last week' || a.reason === 'thin first week';
     const trend = a.checked ? a.trend : null;
-    const stillRunning = !!(last && last.is_active && last.is_current);
+    const stillRunning = a.still_running !== undefined ? a.still_running
+      : runningOn[platform] !== undefined ? runningOn[platform] : !!(last && last.is_active && last.is_current);
 
     return {
       platform,
