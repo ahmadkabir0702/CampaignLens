@@ -9,8 +9,9 @@
  * uploaded file: send it to the scoring service, analyse it, run the checks,
  * delete the file.
  *
- * The funnel reads the Pre-test Score when there is one. That arrives about
- * five minutes after the analysis, so refreshFunnel runs again when it does.
+ * The objective scores are the Pre-test Score weighted for each objective,
+ * so they exist only once it is in. It arrives about five minutes after the
+ * analysis, so refreshFunnel runs again when it does.
  * Nothing here ever fails a creative or a pre-test: a problem is logged and
  * stored on the row.
  */

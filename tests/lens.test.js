@@ -10,7 +10,7 @@ const os = require('os');
 const path = require('path');
 const { spawnSync } = require('child_process');
 
-const { scoreSound, refreshSound, scoreFunnel, intentOf, kpiScore, SOUND_SHARE } = require('../server/lens/score');
+const { scoreSound, refreshSound, scoreFunnel, intentOf, kpiScore, SOUND_SHARE, MIX } = require('../server/lens/score');
 const lensStore = require('../server/lens/store');
 const ffmpeg = require('../server/lens/ffmpeg');
 
@@ -68,114 +68,98 @@ test('sound: the Pre-test Score sound-off check wins over the analysis', () => {
   assert.strictEqual(s.checks.find(c => c.id === 'sound_off').result, 'fail');
 });
 
-test('funnel: an offer with a direct action is built for conversion', () => {
-  const a = { ...strong, offer: '20% off this week', direct_action: true, urgency: true, reasons: [], content_intent: 'promote_offer' };
-  assert.strictEqual(intentOf(a).intent, 'Conversion');
-  const f = scoreFunnel({ a, meta: { duration: 8 } });
-  assert.strictEqual(f.intent, 'Conversion');
-  assert.ok(f.stages.Conversion.score >= 70, `conversion ${f.stages.Conversion.score}`);
-  assert.match(f.verdict, /Built for conversion/);
+// ── Objective scores: the Pre-test Score weighted for each objective ─────────
+// The categories from the pre-test in the review screenshot (TikTok, total 64).
+const cats = (o = {}) => [
+  { name: 'Attention', score: o.attention ?? 50 }, { name: 'Branding', score: o.branding ?? 75 },
+  { name: 'Additional Metrics', score: 33, unweighted: true }, { name: 'Processing Ease', score: o.processing ?? 70 },
+  { name: 'Strategic Fit', score: 50, unweighted: true }, { name: 'Emotional Engagement', score: o.emotion ?? 67 },
+  { name: 'Persuasion', score: o.persuasion ?? 100, unweighted: true }];
+const bsOf = (o = {}, kpis = []) => ({ total: { score: 64 }, categories: cats(o), kpis });
+const noAsk = { ...strong, cta: false, direct_action: false, offer: '', urgency: false };
+
+test('objective: every column of weights adds up to 100', () => {
+  for (const [k, mix] of Object.entries(MIX)) assert.strictEqual(mix.reduce((t, x) => t + x[1], 0), 100, k);
+  assert.strictEqual(SOUND_SHARE, 0.05);
 });
 
-test('funnel: reasons to buy read as consideration; nothing reads as awareness', () => {
-  assert.strictEqual(intentOf(strong).intent, 'Consideration');
-  assert.strictEqual(intentOf({ content_intent: 'inspire', reasons: [] }).intent, 'Awareness');
-});
-
-test('funnel: a late brand and no reasons is a weak fit everywhere', () => {
-  const a = { voiceover: true, music: true, logo_first_3s: false, opens_with_product: false, hook_pace: 'single_shot',
-    timeline_attrs: WINDOWS.map(w => ({ ...w, product_visible: false })), product_screen_pct: 10, reasons: [], offer: '',
-    cta: false, direct_action: false, urgency: false, brand_spoken_first_s: -1, content_intent: 'inspire' };
-  const f = scoreFunnel({ a, meta: { duration: 15 } });
-  for (const st of Object.values(f.stages)) assert.strictEqual(st.rag, 'red');
-  assert.match(f.verdict, /not a strong fit/);
-});
-
-test('funnel: scored checks replace the analysis and their tips are used', () => {
-  const bs = { total: { score: 30 }, kpis: [{ id: 'brandAvailableFirstNSeconds', rating: 'negative' }] };
-  const f = scoreFunnel({ a: strong, bs, meta: { duration: 15 } });
+test('objective: each score is the Pre-test Score categories weighted for it', () => {
+  const f = scoreFunnel({ a: noAsk, bs: bsOf(), sound: { score: 80, checks: [] }, meta: { duration: 15 }, objective: 'Awareness' });
+  // 0.35x50 + 0.35x75 + 0.10x70 + 0.15x67 + 0.05x80 = 64.8
+  assert.strictEqual(f.stages.Awareness.score, 65);
+  // 0.20x50 + 0.10x75 + 0.30x70 + 0.10x67 + 0.25x100 + 0.05x80 = 74.2
+  assert.strictEqual(f.stages.Consideration.score, 74);
+  // The ask is missed entirely: 0.20x50 + 0.10x75 + 0.15x70 + 0.20x100 + 0.30x0 + 0.05x80 = 52
+  assert.strictEqual(f.stages.Conversion.score, 52);
+  assert.strictEqual(f.base, 64);
   assert.strictEqual(f.basis, 'full');
-  const gap = f.stages.Awareness.gaps.find(g => g.name === 'Brand in the first seconds');
-  assert.ok(gap && /hotspot/.test(gap.fix), 'uses the Pre-test Score tip');
+  assert.strictEqual(f.soundShare, 5);
+  const parts = f.stages.Awareness.parts;
+  assert.deepStrictEqual(parts.map(p => p.share), [35, 35, 15, 10, 5]);
+  assert.strictEqual(parts.reduce((t, p) => t + p.share, 0), 100);
 });
 
-// ── Judged on the objective ──────────────────────────────────────────────────
+test('objective: the same score in every category gives that score for every objective', () => {
+  const even = { attention: 60, branding: 60, processing: 60, emotion: 60, persuasion: 60 };
+  const ask = { ...strong, cta: false, direct_action: false, offer: '20% off', urgency: false };
+  const f = scoreFunnel({ a: ask, bs: bsOf(even), meta: { duration: 15 } });
+  assert.strictEqual(f.stages.Awareness.score, 60);
+  assert.strictEqual(f.stages.Consideration.score, 60);
+});
+
+test('objective: without the Pre-test Score there is no score, only what it reads as', () => {
+  const f = scoreFunnel({ a: strong, sound: { score: 90, checks: [] }, meta: { duration: 15 }, objective: 'Awareness' });
+  for (const st of Object.values(f.stages)) { assert.strictEqual(st.score, null); assert.strictEqual(st.word, 'Needs the Pre-test Score'); }
+  assert.strictEqual(f.basis, 'none');
+  assert.strictEqual(f.soundShare, 0);
+  assert.match(f.verdict, /worked out from the Pre-test Score, which is not in yet/);
+  assert.strictEqual(lensStore.fitOf(f), null);
+  const creative = scoreFunnel({ a: strong, meta: { duration: 15 } });
+  assert.strictEqual(creative.intent, 'Consideration');
+  assert.match(creative.verdict, /^Reads as a consideration ad .*does not have\.$/);
+});
+
+test('objective: the call to action uses the scored check when there is one', () => {
+  const kpis = [{ id: 'conceptCallToActionAttention', name: 'CTA attention', category: 'Persuasion', rating: 'positive' }];
+  const f = scoreFunnel({ a: noAsk, bs: bsOf({}, kpis), meta: { duration: 15 } });
+  const ask = f.stages.Conversion.parts.find(p => p.key === 'ask');
+  assert.strictEqual(ask.score, 38);   // CTA passed (3 of 8); direct action, offer and urgency missed
+});
+
+test('objective: to fit better names the worst scored check in a weak category', () => {
+  const kpis = [{ id: 'engagingBeginning', name: 'Engaging Beginning', category: 'Attention', rating: 'negative', weighted: true },
+                { id: 'memorability', name: 'Memorability', category: 'Attention', rating: 'medium', weighted: true }];
+  const f = scoreFunnel({ a: noAsk, bs: bsOf({}, kpis), meta: { duration: 15 }, objective: 'Awareness' });
+  const gap = f.stages.Awareness.gaps[0];
+  assert.strictEqual(gap.name, 'Attention');
+  assert.ok(gap.fix && gap.fix.length > 10);
+  assert.match(f.verdict, /^A fair fit for awareness\. Biggest gain: /);
+  assert.deepStrictEqual(f.stages.Awareness.kpis.sort(), ['engagingBeginning', 'memorability']);
+});
+
 test('objective: the chosen objective is the headline, whatever the video reads as', () => {
   // `strong` reads as consideration (three reasons); the person says awareness.
-  const f = scoreFunnel({ a: strong, meta: { duration: 15 }, objective: 'Awareness' });
+  const f = scoreFunnel({ a: strong, bs: bsOf(), meta: { duration: 15 }, objective: 'Awareness' });
   assert.strictEqual(f.objective, 'Awareness');
   assert.strictEqual(f.focus, 'Awareness');
   assert.strictEqual(f.intent, 'Consideration');
-  assert.match(f.verdict, /fit for awareness\./);
   assert.strictEqual(lensStore.focusOf(f), 'Awareness');
   assert.strictEqual(lensStore.fitOf(f), f.stages.Awareness.score);
-});
-
-test('objective: none given falls back to what the video reads as', () => {
-  const f = scoreFunnel({ a: strong, meta: { duration: 15 } });
-  assert.strictEqual(f.objective, null);
-  assert.strictEqual(f.focus, f.intent);
-  assert.strictEqual(lensStore.focusOf(f), 'Consideration');
   // Anything that is not one of the three is ignored, never trusted.
-  assert.strictEqual(scoreFunnel({ a: strong, meta: {}, objective: 'Sales' }).objective, null);
+  assert.strictEqual(scoreFunnel({ a: strong, bs: bsOf(), meta: {}, objective: 'Sales' }).objective, null);
 });
 
-test('objective: a weak fit says what to fix and where it works better', () => {
-  // Brand early, short, strong opening, but no reasons, offer or ask.
-  const a = { voiceover: false, music: true, logo_first_3s: true, opens_with_product: false, hook_pace: 'fast_cut',
-    timeline_attrs: WINDOWS.map(w => ({ ...w, product_visible: false })), product_screen_pct: 5, reasons: [], offer: '',
-    cta: false, direct_action: false, urgency: false, content_intent: 'inspire' };
-  const f = scoreFunnel({ a, meta: { duration: 10 }, objective: 'Conversion' });
-  assert.strictEqual(f.stages.Conversion.rag, 'red');
-  assert.match(f.verdict, /^A weak fit for conversion\. Biggest gain: /);
-  assert.match(f.verdict, /works better as an awareness asset \(\d+\)\.$/);
+test('objective: where another objective is clearly stronger, the verdict says so', () => {
+  const f = scoreFunnel({ a: noAsk, bs: bsOf({ attention: 30, branding: 40, persuasion: 95, processing: 90 }), meta: { duration: 15 }, objective: 'Awareness' });
+  assert.strictEqual(f.stages.Awareness.rag, 'red');
+  assert.match(f.verdict, /works better as a consideration asset \(\d+\)\.$/);
 });
 
-test('objective: the overall score no longer moves the stage scores', () => {
-  const kpis = [{ id: 'brandAvailableFirstNSeconds', rating: 'positive' }];
-  const low = scoreFunnel({ a: strong, bs: { total: { score: 5 }, kpis }, meta: { duration: 15 } });
-  const high = scoreFunnel({ a: strong, bs: { total: { score: 95 }, kpis }, meta: { duration: 15 } });
-  for (const k of Object.keys(low.stages)) assert.strictEqual(low.stages[k].score, high.stages[k].score, k);
-});
-
-test('objective: Sound counts for its share of every stage score', () => {
-  const quiet = scoreFunnel({ a: strong, meta: { duration: 15 } });
-  assert.strictEqual(quiet.soundShare, 0);
-  const withSound = s => scoreFunnel({ a: strong, sound: { score: s, checks: [] }, meta: { duration: 15 } });
-  const bad = withSound(0), good = withSound(100);
-  assert.strictEqual(bad.soundShare, Math.round(SOUND_SHARE * 100));
-  for (const k of Object.keys(quiet.stages)) {
-    const own = quiet.stages[k].score;
-    // `own` is shown rounded, so allow a point either way.
-    assert.ok(Math.abs(bad.stages[k].score - (1 - SOUND_SHARE) * own) <= 1, `${k}: silent sound takes its share off`);
-    assert.ok(Math.abs(good.stages[k].score - ((1 - SOUND_SHARE) * own + SOUND_SHARE * 100)) <= 1, `${k}: perfect sound adds its share`);
-    assert.strictEqual(bad.stages[k].own, own, 'the stage checks themselves are unchanged');
-  }
-});
-
-test('objective: consideration carries one light branding check, awareness leads with it', () => {
-  const bs = { total: { score: 50 }, kpis: [{ id: 'brandAttention', rating: 'negative' }] };
-  const f = scoreFunnel({ a: strong, bs, meta: { duration: 15 } });
-  const inCons = f.stages.Consideration.checks.find(c => c.kpi === 'brandAttention');
-  const inAware = f.stages.Awareness.checks.find(c => c.kpi === 'brandAttention');
-  assert.ok(inCons && inCons.weight === 1 && inCons.result === 'fail');
-  assert.ok(inAware && inAware.weight === 3);
-  // No "brand in the first seconds" in consideration at all.
-  assert.ok(!f.stages.Consideration.checks.some(c => c.kpi === 'brandAvailableFirstNSeconds'));
-  // A missed light check costs consideration far less than it costs awareness.
-  const ok = scoreFunnel({ a: strong, bs: { kpis: [{ id: 'brandAttention', rating: 'positive' }] }, meta: { duration: 15 } });
-  const dropCons = ok.stages.Consideration.score - f.stages.Consideration.score;
-  const dropAware = ok.stages.Awareness.score - f.stages.Awareness.score;
-  assert.ok(dropCons > 0 && dropCons < dropAware, `consideration -${dropCons}, awareness -${dropAware}`);
-});
-
-test('objective: every check behind a score is listed, heaviest first', () => {
-  const f = scoreFunnel({ a: strong, meta: { duration: 15 }, objective: 'Consideration' });
-  const cs = f.stages.Consideration.checks;
-  assert.strictEqual(cs.length, f.stages.Consideration.checked);
-  assert.strictEqual(cs[0].name, 'Gives reasons to choose it');
-  for (let i = 1; i < cs.length; i++) assert.ok(cs[i - 1].weight >= cs[i].weight);
-  for (const c of cs) assert.ok(['pass', 'partial', 'fail'].includes(c.result));
+test('funnel: an offer with a direct action reads as conversion', () => {
+  const a = { ...strong, offer: '20% off this week', direct_action: true, urgency: true, reasons: [], content_intent: 'promote_offer' };
+  assert.strictEqual(intentOf(a).intent, 'Conversion');
+  assert.strictEqual(intentOf(strong).intent, 'Consideration');
+  assert.strictEqual(intentOf({ content_intent: 'inspire', reasons: [] }).intent, 'Awareness');
 });
 
 test('sound: the scored sound-off check replaces the analysis once it arrives', () => {
@@ -196,6 +180,7 @@ test('funnel: no em dashes in anything a user reads', () => {
   assert.ok(!/[—–]/.test(JSON.stringify(f)));
   for (const objective of ['Awareness', 'Consideration', 'Conversion']) {
     assert.ok(!/[—–]/.test(JSON.stringify(scoreFunnel({ a: strong, meta: { duration: 15 }, objective }))));
+    assert.ok(!/[—–]/.test(JSON.stringify(scoreFunnel({ a: strong, bs: bsOf(), meta: { duration: 15 }, objective }))));
   }
   const s = scoreSound({ a: strong, loud: { integrated: -30, truePeak: 1, series: series(WINDOWS, -20, -21) }, meta: {} });
   assert.ok(!/[—–]/.test(JSON.stringify(s)));

@@ -19,28 +19,43 @@ On tracked creatives the Pre-test Score stays the headline, with Funnel fit and 
 | Pre-test Score | As before, for brands on auto-scoring | The worker sends the file to the scoring service |
 | Video analysis | The analysis the worker already runs, with a few more fields | One analysis per pre-test |
 | Sound | ffmpeg on the file the worker already has | ffmpeg on the uploaded file |
-| Funnel fit | From the Pre-test Score checks when there is a score, else from the analysis alone | Same |
+| Funnel fit | The Pre-test Score weighted for each objective. No Pre-test Score, no fit score (what it is built for is still shown) | Same |
 
-The Pre-test Score arrives about five minutes after the analysis. When it does, Funnel fit is worked out again with the scored checks, which take over from the analysis' own reading where both exist. The same goes for the one Sound check they cover, "Works with the sound off".
+The Pre-test Score arrives about five minutes after the analysis. The objective scores are worked out when it does. The scored "Works with the sound off" check also takes over from the analysis' own reading in Sound.
 
-Funnel fit reads the scored checks (brand and product in the first seconds, attention on the brand, reading time, an engaging opening, sound-off, call to action) plus the analysis (reasons to buy, offer, call to action, direct action, urgency, length). It also says what the ad reads as: an offer with a direct ask reads as conversion, reasons to choose the product as consideration, anything else as awareness.
+What the ad reads as comes from the analysis: an offer with a direct ask reads as conversion, reasons to choose the product as consideration, anything else as awareness.
 
-How each stage score is made:
+### How each objective score is made
 
-- Its own checks, weighted (the lists are `STAGES` in `server/lens/score.js`). Awareness leads with branding. Consideration is about the product and the reasons to choose it, with one light branding check. Conversion is about the ask.
-- The Sound score counts for 15% of every stage (`SOUND_SHARE`) when the video has sound. Poor audio hurts whatever the video is for.
-- The overall Pre-test Score is not mixed in. It weighs every video the same way whatever it is for. Its individual checks still feed the stages they belong to.
+Each objective score **is the Pre-test Score, weighted for that objective**. It uses the same scored checks, the same pass marks and the same placement as the Pre-test Score. Only the weight given to each of its categories changes with what the video is for. It is never a separate number: without a Pre-test Score there is no objective score.
+
+| | Awareness | Consideration | Conversion |
+|---|---|---|---|
+| Attention | 35% | 20% | 20% |
+| Branding | 35% | 10% | 10% |
+| Processing Ease | 10% | 30% | 15% |
+| Emotional Engagement | 15% | 10% | |
+| Persuasion | | 25% | 20% |
+| The ask (offer, call to action, urgency) | | | 30% |
+| Sound | 5% | 5% | 5% |
+
+- Category scores are the tested placement's, as the scoring service reports them. Persuasion is not in the scoring service's own total, but it counts here for consideration and conversion.
+- **The ask** is the one part the Pre-test Score has no checks for: call to action (the scored check when there is one), a direct ask, an offer and urgency, from the video analysis.
+- **Sound** counts for 5%. A part that is missing (no sound track, nothing known about the ask) is left out and the rest are scaled to 100.
+- The weights are `MIX` in `server/lens/score.js`. Agreed November 2026.
+
+Example (TikTok, Pre-test Score 64; Attention 50, Branding 75, Processing Ease 70, Emotional Engagement 67, Sound 80): awareness = 0.35x50 + 0.35x75 + 0.10x70 + 0.15x67 + 0.05x80 = **65**.
 
 ## Pre-tests are judged on their objective
 
 The person uploading a pre-test picks its objective: Awareness, Consideration or Conversion. The report is built around that choice.
 
 - **Headline.** The score for the chosen objective, out of 100, with the other two objectives shown smaller beside it. If another objective scores clearly higher, the report says so.
-- **What went into it.** Every check behind the headline score is listed with its result and how much it counts.
+- **How it is worked out.** Under the headline: "Pre-test Score 64, weighted for awareness", and a table of each category's score and its share of the objective score.
 - **What to improve.** Scored checks to fix are split in two: the ones that count toward this objective, then the rest.
-- **Overall quality check.** The overall Pre-test Score, with its category and placement breakdown, is one line lower down that opens on demand. It is kept because it is the standard number, but it is not the headline.
+- **No second verdict.** The overall Pre-test Score appears only as the base of the objective score, not as a separate score lower down.
 - **One final report.** Nothing is shown while a pre-test is still being scored or analysed. The list says Queued, Analysing or Finishing, and the report opens once every part is in, so the numbers never move after someone has seen them.
-- **If scoring does not finish.** The report is built from the video analysis alone and says so at the top.
+- **If scoring does not finish.** There are no objective scores, since they are built from the Pre-test Score. The report says so at the top and shows Sound and the video analysis.
 
 The objective is kept in `brainsuite_jobs.objective` (migration 048) and is never sent to the scoring service. A pre-test with no objective (run before this) is scored for what the video reads as. Tracked creatives have no objective yet, so they keep "built for".
 

@@ -217,8 +217,6 @@ figcaption{font:400 12.5px/18px var(--font);color:var(--ink-600);margin-top:4px}
   background:var(--white);font:400 13px var(--font);color:var(--ink-600)}
 .bs-hero-other b{font-weight:600;color:var(--tone);font-variant-numeric:tabular-nums}
 .bs-all > .bs-sec-hint{margin:0 16px 14px}
-.bs-overall > .bs-cols{margin:0 16px 16px}
-.bs-overall .bs-sec{background:var(--white)}
 .lens-made .bs-table td:nth-child(2){color:var(--ink-900)}
 /* Shown instead of a report until every part of it is in. */
 .bs-wait{background:var(--canvas-2);border-radius:var(--r-card);padding:28px 24px;display:flex;flex-direction:column;
@@ -236,50 +234,56 @@ figcaption{font:400 12.5px/18px var(--font);color:var(--ink-600);margin-top:4px}
 .bs-detail-foot .bs-fine{margin-top:0}
 #pt-print{display:none}
 
-/* ---------- PDF (print) ------------------------------------------------
-   Only the report copy in #pt-print prints. Everything else on the page,
-   including the open modal, is hidden. Sections never split across pages,
-   and the colours print as they look on screen. */
+/* ---------- PDF ---------------------------------------------------------
+   #pt-print is the copy of a report that becomes the PDF. It exists only
+   while a download is being made: drawn off screen for the direct download
+   (.pt-pdf), or as the only thing printed in the print fallback. Sections
+   keep the colours they have on screen. */
+#pt-print{color:var(--ink-700);font:400 12.5px/18px var(--font);background:#fff}
+#pt-print *{animation:none!important;transition:none!important}
+#pt-print.pt-pdf{display:block;position:absolute;left:-10000px;top:0;width:794px;padding:0 4px}
+/* The PDF drawing fills inset shadows solid, so outlines become borders there. */
+#pt-print.pt-pdf *{box-shadow:none!important}
+#pt-print.pt-pdf .lens-stage{border:1px solid var(--line-soft)}
+#pt-print.pt-pdf .lens-stage.is-built{border:1.5px solid var(--navy)}
+.pt-head{border-bottom:2px solid var(--navy);padding-bottom:10px;margin-bottom:14px}
+.pt-kicker{font:500 12px/14px var(--font);color:var(--navy);text-transform:none;letter-spacing:.06em}
+.pt-title{font:500 22px/28px var(--font);color:var(--ink-900);margin:4px 0 4px}
+.pt-meta{font:400 12px/17px var(--font);color:var(--ink-600)}
+.pt-foot{margin-top:16px;padding-top:8px;border-top:1px solid var(--line);font:400 12px/15px var(--font);color:var(--ink-400)}
+#pt-print .bs-report{gap:10px}
+#pt-print .bs-hero,#pt-print .bs-sec,#pt-print .bs-all{background:#F4F6F8}
+/* Long sections flow across pages; only single items stay whole. */
+#pt-print .bs-hero,#pt-print .bs-cols,#pt-print .bs-chips{break-inside:avoid;page-break-inside:avoid}
+#pt-print .bs-h{break-after:avoid;page-break-after:avoid}
+#pt-print .bs-hero{padding:12px}
+#pt-print .bs-total{width:72px;height:72px;background:#fff}
+#pt-print .bs-total-num{font-size:26px;line-height:28px}
+#pt-print .bs-cols{grid-template-columns:1fr 1fr;gap:10px}
+#pt-print .bs-sec{padding:12px}
+#pt-print .bs-h{font-size:13.5px;margin-bottom:6px}
+#pt-print .bs-bar{padding:2px 0}
+#pt-print .bs-bar-track{background:#fff}
+#pt-print .bs-fix{background:#fff;break-inside:avoid;page-break-inside:avoid}
+#pt-print .bs-stills{grid-template-columns:repeat(4,1fr)}
+#pt-print .bs-stills img{aspect-ratio:9/16}
+#pt-print figure{break-inside:avoid;page-break-inside:avoid}
+#pt-print .bs-montage img{max-height:120mm;object-fit:contain;background:#fff}
+#pt-print .bs-all summary{cursor:default}
+#pt-print .bs-all summary::after{content:''}
+#pt-print .bs-table{margin-bottom:12px}
+#pt-print .bs-table tr{break-inside:avoid;page-break-inside:avoid}
+#pt-print .lens-stages{grid-template-columns:repeat(3,1fr);gap:8px;break-inside:avoid;page-break-inside:avoid}
+#pt-print .lens-stage{background:#fff}
+#pt-print .lens-loud{break-inside:avoid;page-break-inside:avoid}
+#pt-print .bs-hero-other{background:#fff}
+
 @media print{
   @page{size:A4;margin:14mm 12mm}
   body.pt-printing{background:#fff!important}
   body.pt-printing > *:not(#pt-print){display:none!important}
-  body.pt-printing #pt-print{display:block;color:var(--ink-700);font:400 12.5px/18px var(--font)}
+  body.pt-printing #pt-print{display:block}
   #pt-print *{-webkit-print-color-adjust:exact;print-color-adjust:exact}
-
-  .pt-head{border-bottom:2px solid var(--navy);padding-bottom:10px;margin-bottom:14px}
-  .pt-kicker{font:500 12px/14px var(--font);color:var(--navy);text-transform:none;letter-spacing:.06em}
-  .pt-title{font:500 22px/28px var(--font);color:var(--ink-900);margin:4px 0 4px}
-  .pt-meta{font:400 12px/17px var(--font);color:var(--ink-600)}
-  .pt-foot{margin-top:16px;padding-top:8px;border-top:1px solid var(--line);font:400 12px/15px var(--font);color:var(--ink-400)}
-
-  #pt-print .bs-report{gap:10px}
-  #pt-print .bs-hero,#pt-print .bs-sec,#pt-print .bs-all{background:#F4F6F8}
-  /* Long sections flow across pages; only single items stay whole. */
-  #pt-print .bs-hero,#pt-print .bs-cols,#pt-print .bs-chips{break-inside:avoid;page-break-inside:avoid}
-  #pt-print .bs-h{break-after:avoid;page-break-after:avoid}
-  #pt-print .bs-hero{padding:12px}
-  #pt-print .bs-total{width:72px;height:72px;background:#fff}
-  #pt-print .bs-total-num{font-size:26px;line-height:28px}
-  #pt-print .bs-cols{grid-template-columns:1fr 1fr;gap:10px}
-  #pt-print .bs-sec{padding:12px}
-  #pt-print .bs-h{font-size:13.5px;margin-bottom:6px}
-  #pt-print .bs-bar{padding:2px 0}
-  #pt-print .bs-bar-track{background:#fff}
-  #pt-print .bs-fix{background:#fff;break-inside:avoid;page-break-inside:avoid}
-  #pt-print .bs-stills{grid-template-columns:repeat(4,1fr)}
-  #pt-print .bs-stills img{aspect-ratio:9/16}
-  #pt-print figure{break-inside:avoid;page-break-inside:avoid}
-  #pt-print .bs-montage img{max-height:120mm;object-fit:contain;background:#fff}
-  #pt-print .bs-all summary{cursor:default}
-  #pt-print .bs-all summary::after{content:''}
-  #pt-print .bs-table{margin-bottom:12px}
-  #pt-print .bs-table tr{break-inside:avoid;page-break-inside:avoid}
-  #pt-print .lens-stages{grid-template-columns:repeat(3,1fr);gap:8px;break-inside:avoid;page-break-inside:avoid}
-  #pt-print .lens-stage{background:#fff}
-  #pt-print .lens-loud{break-inside:avoid;page-break-inside:avoid}
-  #pt-print .bs-hero-other{background:#fff}
-  #pt-print .bs-overall .bs-sec{background:#fff}
 }
 
 
