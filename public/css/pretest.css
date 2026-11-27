@@ -217,8 +217,6 @@ figcaption{font:400 12.5px/18px var(--font);color:var(--ink-600);margin-top:4px}
   background:var(--white);font:400 13px var(--font);color:var(--ink-600)}
 .bs-hero-other b{font-weight:600;color:var(--tone);font-variant-numeric:tabular-nums}
 .bs-all > .bs-sec-hint{margin:0 16px 14px}
-.bs-overall > .bs-cols{margin:0 16px 16px}
-.bs-overall .bs-sec{background:var(--white)}
 .lens-made .bs-table td:nth-child(2){color:var(--ink-900)}
 /* Shown instead of a report until every part of it is in. */
 .bs-wait{background:var(--canvas-2);border-radius:var(--r-card);padding:28px 24px;display:flex;flex-direction:column;
@@ -279,7 +277,6 @@ figcaption{font:400 12.5px/18px var(--font);color:var(--ink-600);margin-top:4px}
   #pt-print .lens-stage{background:#fff}
   #pt-print .lens-loud{break-inside:avoid;page-break-inside:avoid}
   #pt-print .bs-hero-other{background:#fff}
-  #pt-print .bs-overall .bs-sec{background:#fff}
 }
 
 

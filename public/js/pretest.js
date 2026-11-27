@@ -214,8 +214,9 @@
   // ── The pre-test report, judged on its objective ───────────────────────────
   // One final report. The headline is the score for the objective chosen at
   // upload (or, on a pre-test with none, for what the video reads as). The
-  // other two objectives sit beside it, Sound is part of every score, and the
-  // overall score that treats every video alike moves down into the detail.
+  // other two objectives sit beside it. Each is the Pre-test Score with its
+  // categories weighted for that objective, so the overall score appears only
+  // as their base, never as a second verdict.
   //   p.lensReport  Sound and the three objective scores (always present here)
   //   p.summary     the scored checks, or nothing when scoring did not finish
   function objectiveReportHTML(p) {
@@ -228,32 +229,22 @@
     const parts = s ? summaryParts(s, { jobId: p.id, kind: 'pretest' }) : null;
 
     // Scored checks to improve, split by whether they count toward this objective.
-    const mine = new Set((st.checks || []).map(c => c.kpi).filter(Boolean));
+    const mine = new Set(st.kpis || []);
     const fixesIn = parts ? parts.fixes.filter(k => mine.has(k.id)) : [];
     const fixesOut = parts ? parts.fixes.filter(k => !mine.has(k.id)) : [];
 
-    const RESULT = { pass: ['pos', 'Pass'], partial: ['warn', 'Partly'], fail: ['neg', 'Miss'] };
-    const made = (st.checks || []).length ? `<details class="bs-all lens-made"><summary>What went into the ${esc(low)} score</summary>
+    const made = (st.parts || []).length ? `<details class="bs-all lens-made"><summary>How the ${esc(low)} score is worked out</summary>
         <table class="bs-table"><tbody>
-          ${st.checks.map(c => `<tr><td><span class="bs-dot t-${(RESULT[c.result] || ['na'])[0]}"></span>${esc(c.name)}</td>
-            <td>${esc((RESULT[c.result] || ['', ''])[1])}</td><td class="bs-quiet">${c.weight >= 3 ? 'Counts most' : c.weight === 2 ? 'Counts more' : 'Counts'}</td></tr>`).join('')}
-          ${f.soundShare && f.soundScore != null ? `<tr><td><span class="bs-dot t-${ragTone(ragOf(f.soundScore))}"></span>Sound score</td>
-            <td>${esc(f.soundScore)}</td><td class="bs-quiet">${esc(f.soundShare)}% of the score</td></tr>` : ''}
+          ${st.parts.map(c => `<tr><td><span class="bs-dot t-${ragTone(ragOf(c.score))}"></span>${esc(c.name)}</td>
+            <td>${esc(c.score)}</td><td class="bs-quiet">${esc(c.share)}% of the score</td></tr>`).join('')}
         </tbody></table>
-        <div class="bs-sec-hint">${f.soundShare ? `These checks make up ${100 - f.soundShare}% of the score and Sound makes up ${f.soundShare}%.` : 'These checks make up the score.'}
-          The same video gets a different score for each objective because each one is judged on different checks.</div>
+        <div class="bs-sec-hint">The ${esc(low)} score is the Pre-test Score${f.base != null ? ` (${esc(f.base)})` : ''} with its categories counted for ${esc(low)}: the same checks and pass marks, weighted differently for each objective.
+          ${f.soundShare ? `Sound counts for ${esc(f.soundShare)}%.` : ''}${focus === 'Conversion' ? ' Conversion also counts the ask (offer, call to action, urgency), which the Pre-test Score has no checks for.' : ''}</div>
       </details>` : '';
 
-    const overall = s ? `<details class="bs-all bs-overall"><summary>Overall quality check: ${s.total.score == null ? 'not scored' : `${Math.round(s.total.score)} of 100`}${s.total.score == null ? '' : ` · ${esc(TONE_WORD[tone(s.total.rating)])}`}</summary>
-        <div class="bs-sec-hint">The general score for ${esc(PLACEMENT[parts.here] || parts.here)}. It weighs every video the same way whatever its objective, so it is not the headline here.</div>
-        <div class="bs-cols">
-          <section class="bs-sec"><h4 class="bs-h">By category</h4>${parts.catBars}${parts.messageHint}</section>
-          <section class="bs-sec"><h4 class="bs-h">By placement</h4>${parts.placeBars}</section>
-        </div>
-      </details>` : '';
 
     return `<div class="bs-report">
-      ${!s ? `<div class="bs-banner">The scored checks did not finish${p.error ? ` (${esc(String(p.error).replace(/\.$/, ''))})` : ''}. This report uses the video analysis alone, so it is a rougher read. Run the pre-test again for the full report.</div>` : ''}
+      ${!s ? `<div class="bs-banner">The scored checks did not finish${p.error ? ` (${esc(String(p.error).replace(/\.$/, ''))})` : ''}. The objective scores are the Pre-test Score weighted for each objective, so there are none without it. Run the pre-test again for the full report.</div>` : ''}
       <div class="bs-hero">
         <div class="bs-total t-${t}">
           <svg class="bs-ring" viewBox="0 0 96 96" aria-hidden="true">
@@ -266,6 +257,7 @@
         </div>
         <div class="bs-hero-text">
           <div class="bs-hero-title">${esc(focus)} score, out of 100</div>
+          ${f.base != null ? `<div class="bs-hero-line bs-quiet">Pre-test Score ${esc(f.base)}, weighted for ${esc(low)}</div>` : ''}
           <div class="bs-hero-line">${esc(f.verdict)}</div>
           ${!f.objective ? `<div class="bs-hero-line bs-quiet">No objective was set for this pre-test, so it is scored for what the video reads as.</div>` : ''}
           ${others.length ? `<div class="bs-hero-others">${others.map(k => `<span class="bs-hero-other">${esc(k)} <b class="t-${ragTone(f.stages[k].rag)}">${esc(f.stages[k].score)}</b></span>`).join('')}</div>` : ''}
@@ -288,8 +280,6 @@
         <div class="bs-chips">${parts.works.map(k => `<span class="bs-chip">${esc(k.name)}</span>`).join('')}</div></section>` : ''}
 
       ${parts ? parts.media : ''}
-
-      ${overall}
 
       ${parts ? parts.all : ''}
 
@@ -416,10 +406,9 @@
         <div class="lens-stages">${cards}</div>
         ${found ? `<div class="lens-founds">${found}</div>` : ''}
         <div class="bs-sec-hint">${f.basis === 'full'
-          ? (opts.kind === 'pretest' ? 'Uses the scored checks and the video analysis.' : 'Uses the Pre-test Score checks and the video analysis.')
-          : opts.kind === 'pretest' ? 'From the video analysis alone.'
-          : 'From the video analysis only. This creative has no Pre-test Score to add to it.'}
-          ${f.soundShare ? `Sound counts for ${esc(f.soundShare)}% of each score.` : ''}
+          ? `Each score is the Pre-test Score weighted for that objective.${f.soundShare ? ` Sound counts for ${esc(f.soundShare)}%.` : ''}`
+          : opts.kind === 'pretest' ? 'The scores are worked out from the Pre-test Score, which is not in.'
+          : 'Scores need the Pre-test Score, which this creative does not have. What it is built for comes from the video analysis.'}
           Green 70 and above, amber 50 to 69, red below 50.</div>
       </section>`;
     }

@@ -203,23 +203,31 @@ const SIG = {
   voice_clear: { name: 'Voice clear over the music', fromSound: 'voice_clear', fix: 'Lower the music under the voice.' },
 };
 
-// What each stage is judged on, and how much each check counts. Branding
-// leads awareness. Consideration is about the product and the reasons to
-// choose it, so it carries one light branding check: people still need to
-// know whose product it is. Conversion is about the ask.
-const STAGES = {
-  Awareness: [['brand_early', 3], ['brand_attention', 3], ['engaging_open', 2], ['memorable', 2], ['short', 2],
-              ['brand_end', 1], ['sound_off', 1], ['brand_said', 1]],
-  Consideration: [['reasons', 3], ['product_time', 2], ['message_fit', 2], ['product_early', 1], ['readable', 1],
-                  ['story_length', 1], ['sound_off', 1], ['voice_clear', 1], ['brand_attention', 1]],
-  Conversion: [['cta', 3], ['direct_action', 2], ['offer', 2], ['urgency', 1], ['product_end', 1], ['brand_end', 1],
-               ['product_early', 1], ['short', 1]],
+// ── The objective scores ─────────────────────────────────────────────────────
+// Each objective score is the Pre-test Score, weighted for that objective:
+// the same scored checks, the same pass marks and the same placement, with
+// its categories counted differently for what the video is for. Sound is a
+// small share of each. Conversion adds "the ask" (offer, call to action,
+// urgency), which the Pre-test Score has no checks for.
+// Each column adds up to 100. Agreed November 2026.
+const MIX = {
+  Awareness: [['attention', 35], ['branding', 35], ['processing', 10], ['emotion', 15], ['sound', 5]],
+  Consideration: [['attention', 20], ['branding', 10], ['processing', 30], ['emotion', 10], ['persuasion', 25], ['sound', 5]],
+  Conversion: [['attention', 20], ['branding', 10], ['processing', 15], ['persuasion', 20], ['ask', 30], ['sound', 5]],
 };
-const OBJECTIVES = Object.keys(STAGES);
-
-// The Sound score counts for this share of every stage score: poor audio
-// hurts whatever the video is for. The rest is the stage's own checks.
-const SOUND_SHARE = 0.15;
+const OBJECTIVES = Object.keys(MIX);
+const SOUND_SHARE = 0.05;
+const PART = {
+  attention: { name: 'Attention', match: /attention/i },
+  branding: { name: 'Branding', match: /brand/i },
+  processing: { name: 'Processing Ease', match: /process/i },
+  emotion: { name: 'Emotional Engagement', match: /emotion/i },
+  persuasion: { name: 'Persuasion', match: /persua/i },
+  ask: { name: 'The ask (offer, call to action, urgency)' },
+  sound: { name: 'Sound' },
+};
+// The ask, from the video analysis (the call to action uses the scored check when there is one).
+const ASK = [['cta', 3], ['direct_action', 2], ['offer', 2], ['urgency', 1]];
 
 function signal(key, { a, bs, sound, meta }) {
   const s = SIG[key];
@@ -246,8 +254,21 @@ function intentOf(a) {
   return { intent: 'Awareness', why: 'it builds the brand rather than making an offer' };
 }
 
+const BAD = new Set(['negative', 'veryNegative', 'negativeTooLow', 'negativeTooHigh', 'medium']);
+
+/** The tested placement's category scores, by part key. */
+function categoriesOf(bs) {
+  const out = {};
+  for (const c of (bs && Array.isArray(bs.categories) ? bs.categories : [])) {
+    for (const [key, p] of Object.entries(PART)) {
+      if (p.match && p.match.test(c.name || '') && out[key] === undefined && c.score != null) out[key] = { score: Number(c.score), cat: c.name };
+    }
+  }
+  return out;
+}
+
 /**
- * The three stage scores, and which one the video is judged on.
+ * The three objective scores, and which one the video is judged on.
  *
  *   objective  what the person running a pre-test said the video is for
  *              (Awareness, Consideration or Conversion), or null. When it is
@@ -255,40 +276,56 @@ function intentOf(a) {
  *              (tracked creatives, older pre-tests) the headline is what the
  *              video reads as (`intent`).
  *
- * Each stage score is its own checks, with the Sound score counting for
- * SOUND_SHARE when the video has sound. The overall Pre-test Score is not
- * mixed in: it weighs every video the same way whatever it is for, which is
- * the thing these scores exist to get away from. Its individual checks still
- * feed the stages they belong to.
+ * Without a Pre-test Score there are no objective scores: they are the
+ * Pre-test Score weighted for each objective, never a number of their own.
+ * The video analysis still says what the video reads as.
  */
 function scoreFunnel({ a = {}, bs = null, sound = null, meta = {}, objective = null }) {
   const ctx = { a, bs, sound, meta };
   const soundScore = sound && sound.score != null ? Number(sound.score) : null;
+  const cats = categoriesOf(bs);
+  const hasScore = Object.keys(cats).length > 0;
+  const base = bs && bs.total && bs.total.score != null ? Math.round(Number(bs.total.score)) : null;
+
+  // The ask, out of 100, and its first miss for the tip.
+  let askN = 0, askD = 0, askGap = null;
+  for (const [key, w] of ASK) {
+    const sg = signal(key, ctx);
+    if (!sg) continue;
+    askN += sg.v * w; askD += w;
+    if (sg.v < 1 && !askGap) askGap = sg.src === 'pretest' && TIPS[SIG[key].kpi] ? TIPS[SIG[key].kpi] : SIG[key].fix;
+  }
+  const askScore = askD ? Math.round((100 * askN) / askD) : null;
+  const soundGap = sound && (sound.checks || []).find(c => c.result === 'fail' || c.result === 'partial');
+
+  // The worst scored check in a category, for "to fit better".
+  const tipFor = (catName) => {
+    const k = (bs && bs.kpis || []).filter(x => x.category === catName && x.weighted !== false && BAD.has(x.rating))
+      .sort((x, y) => (x.rating === 'medium') - (y.rating === 'medium'))[0];
+    return k ? (k.tip || TIPS[k.id] || `Improve ${k.name.toLowerCase()}.`) : null;
+  };
+
   const stages = {};
-  for (const [stage, items] of Object.entries(STAGES)) {
-    let n = 0, d = 0;
+  for (const [stage, mix] of Object.entries(MIX)) {
     const parts = [];
-    for (const [key, w] of items) {
-      const sg = signal(key, ctx);
-      if (!sg) continue;
-      n += sg.v * w; d += w;
-      const kpi = SIG[key].kpi;
-      parts.push({ key, name: SIG[key].name, v: sg.v, w, kpi: kpi || null,
-        fix: sg.src === 'pretest' && TIPS[kpi] ? TIPS[kpi] : SIG[key].fix });
+    for (const [key, w] of mix) {
+      if (key === 'sound') { if (soundScore != null) parts.push({ key, name: PART.sound.name, score: soundScore, w, fix: soundGap ? soundGap.fix : null, src: 'sound' }); continue; }
+      if (key === 'ask') { if (askScore != null) parts.push({ key, name: PART.ask.name, score: askScore, w, fix: askGap, src: 'analysis' }); continue; }
+      const c = cats[key];
+      if (c) parts.push({ key, name: PART[key].name, cat: c.cat, score: c.score, w, fix: tipFor(c.cat), src: 'pretest' });
     }
-    const own = d ? (100 * n) / d : null;
-    const score = own == null ? null
-      : Math.round(soundScore == null ? own : (1 - SOUND_SHARE) * own + SOUND_SHARE * soundScore);
+    const d = parts.reduce((t, p) => t + p.w, 0);
+    const score = hasScore && d ? Math.round(parts.reduce((t, p) => t + p.score * p.w, 0) / d) : null;
+    const cat = new Set(parts.filter(p => p.cat).map(p => p.cat));
     stages[stage] = {
-      score, rag: rag(score), word: score == null ? 'Not enough to judge' : FIT_WORD[rag(score)],
-      helps: parts.filter(p => p.v >= 1).sort((x, y) => y.w - x.w).slice(0, 3).map(p => p.name),
-      gaps: parts.filter(p => p.v < 1).sort((x, y) => (1 - y.v) * y.w - (1 - x.v) * x.w).slice(0, 3)
+      score, rag: rag(score), word: score == null ? 'Needs the Pre-test Score' : FIT_WORD[rag(score)],
+      helps: score == null ? [] : parts.filter(p => p.score >= GREEN).sort((x, y) => y.w - x.w).slice(0, 3).map(p => p.name),
+      gaps: score == null ? [] : parts.filter(p => p.score < GREEN && p.fix).sort((x, y) => (100 - y.score) * y.w - (100 - x.score) * x.w).slice(0, 3)
         .map(p => ({ name: p.name, fix: p.fix })),
-      checked: parts.length,
-      // Everything that went into the score, heaviest first, so the number can be explained.
-      checks: [...parts].sort((x, y) => y.w - x.w).map(p => ({
-        name: p.name, weight: p.w, kpi: p.kpi, result: p.v >= 1 ? 'pass' : p.v > 0 ? 'partial' : 'fail' })),
-      own: own == null ? null : Math.round(own),
+      // What went into the score and how much each part counts, heaviest first.
+      parts: score == null ? [] : parts.sort((x, y) => y.w - x.w).map(p => ({ key: p.key, name: p.name, score: Math.round(p.score), share: Math.round((100 * p.w) / d), src: p.src })),
+      // The scored checks that sit in this objective's categories.
+      kpis: (bs && bs.kpis || []).filter(k => cat.has(k.category)).map(k => k.id),
     };
   }
   const { intent, why } = intentOf(a);
@@ -302,33 +339,34 @@ function scoreFunnel({ a = {}, bs = null, sound = null, meta = {}, objective = n
   const an = s => (s === 'Awareness' ? 'an' : 'a');
   const tip = g => (g && g.fix ? ` Biggest gain: ${g.fix.charAt(0).toLowerCase()}${g.fix.slice(1)}` : '');
   let verdict;
-  if (declared) {
-    if (mine.score == null) verdict = `Not enough information to judge the fit for ${lower(declared)} yet.`;
-    else {
-      const word = { green: 'A strong fit', amber: 'A fair fit', red: 'A weak fit' }[mine.rag];
-      verdict = `${word} for ${lower(declared)}.${mine.rag === 'green' ? '' : tip(mine.gaps[0])}`;
-      // Only said when another stage is clearly ahead and is itself at least fair.
-      if (best && best !== declared && top >= AMBER && top - mine.score >= 10) {
-        verdict += ` As it stands it works better as ${an(best)} ${lower(best)} asset (${top}).`;
-      }
+  if (!hasScore) {
+    verdict = declared
+      ? `The ${lower(declared)} score is worked out from the Pre-test Score, which is not in yet.`
+      : `Reads as ${an(intent)} ${lower(intent)} ad because ${why}. The fit is worked out from the Pre-test Score, which this creative does not have.`;
+  } else if (declared) {
+    const word = { green: 'A strong fit', amber: 'A fair fit', red: 'A weak fit' }[mine.rag];
+    verdict = `${word} for ${lower(declared)}.${mine.rag === 'green' ? '' : tip(mine.gaps[0])}`;
+    // Only said when another stage is clearly ahead and is itself at least fair.
+    if (best && best !== declared && top >= AMBER && top - mine.score >= 10) {
+      verdict += ` As it stands it works better as ${an(best)} ${lower(best)} asset (${top}).`;
     }
-  } else if (top == null) verdict = 'Not enough information to judge the funnel fit yet.';
-  else if (top < AMBER) verdict = `Reads as ${an(intent)} ${lower(intent)} ad because ${why}, but it is not a strong fit for any stage yet.${tip(mine.gaps[0])}`;
-  else if (mine.score != null && mine.score >= GREEN) verdict = `Built for ${lower(intent)} (${why}) and fits it well.`;
-  else if (mine.score != null && (best === intent || top - mine.score <= 5)) verdict = `Built for ${lower(intent)} (${why}), but only a fair fit.${tip(mine.gaps[0])}`;
+  } else if (top < AMBER) verdict = `Reads as ${an(intent)} ${lower(intent)} ad because ${why}, but it is not a strong fit for any stage yet.${tip(mine.gaps[0])}`;
+  else if (mine.score >= GREEN) verdict = `Built for ${lower(intent)} (${why}) and fits it well.`;
+  else if (best === intent || top - mine.score <= 5) verdict = `Built for ${lower(intent)} (${why}), but only a fair fit.${tip(mine.gaps[0])}`;
   else verdict = `Reads as ${an(intent)} ${lower(intent)} ad (${why}), but its strongest fit is ${lower(best)}.${tip(mine.gaps[0])}`;
 
   return {
-    version: 2,
+    version: 3,
     objective: declared, focus,
     intent, intentWhy: why, best, verdict, stages,
-    soundShare: soundScore == null ? 0 : Math.round(SOUND_SHARE * 100),
+    base,
+    soundShare: hasScore && soundScore != null ? Math.round(SOUND_SHARE * 100) : 0,
     soundScore,
-    basis: bs ? 'full' : 'analysis',
+    basis: hasScore ? 'full' : 'none',
     reasons: Array.isArray(a.reasons) ? a.reasons.slice(0, 6) : [],
     offer: String(a.offer || '').trim() || null,
     ctaText: String(a.cta_text || '').trim() || null,
   };
 }
 
-module.exports = { scoreSound, refreshSound, scoreFunnel, rag, voiceLift, kpiScore, intentOf, GREEN, AMBER, normName, OBJECTIVES, SOUND_SHARE };
+module.exports = { scoreSound, refreshSound, scoreFunnel, rag, voiceLift, kpiScore, intentOf, GREEN, AMBER, normName, OBJECTIVES, SOUND_SHARE, MIX };
