@@ -219,7 +219,7 @@
   // as their base, never as a second verdict.
   //   p.lensReport  Sound and the three objective scores (always present here)
   //   p.summary     the scored checks, or nothing when scoring did not finish
-  function objectiveReportHTML(p) {
+  function objectiveReportHTML(p, opts = {}) {
     const l = p.lensReport, f = l.funnel, s = p.summary && p.summary.total ? p.summary : null;
     const focus = f.focus || f.intent;
     const st = f.stages[focus] || {};
@@ -259,7 +259,7 @@
           <div class="bs-hero-title">${esc(focus)} score, out of 100</div>
           ${f.base != null ? `<div class="bs-hero-line bs-quiet">Pre-test Score ${esc(f.base)}, weighted for ${esc(low)}</div>` : ''}
           <div class="bs-hero-line">${esc(f.verdict)}</div>
-          ${!f.objective ? `<div class="bs-hero-line bs-quiet">No objective was set for this pre-test, so it is scored for what the video reads as.</div>` : ''}
+          ${!f.objective && opts.kind !== 'creative' ? `<div class="bs-hero-line bs-quiet">No objective was set for this pre-test, so it is scored for what the video reads as.</div>` : ''}
           ${others.length ? `<div class="bs-hero-others">${others.map(k => `<span class="bs-hero-other">${esc(k)} <b class="t-${ragTone(f.stages[k].rag)}">${esc(f.stages[k].score)}</b></span>`).join('')}</div>` : ''}
         </div>
       </div>
@@ -425,8 +425,11 @@
   }
 
   // A tracked creative's own section in the panel.
+  // Only for creatives with no pre-test: the Pre-test section carries the
+  // objective scores and Sound for the rest.
   function lensSection(d) {
     if (!d || (!d.lensIntent && d.lensSound == null)) return '';
+    if (d.bsStatus && d.bsStatus !== 'skipped') return '';
     const head = d.lensIntent
       ? `Built for ${d.lensIntent.toLowerCase()}${d.lensFit != null ? ` · fit ${d.lensFit}` : ''}${d.lensSound != null ? ` · sound ${d.lensSound}` : ''}`
       : `Sound ${d.lensSound}`;
@@ -1154,28 +1157,23 @@
   }
 
   // ── Creative cards and detail ──────────────────────────────────────────────
+  // The card shows one pre-test number: the score for what the video is
+  // built for. The Pre-test Score itself appears only as that score's base,
+  // inside the creative. While scoring, a Scoring badge instead.
   function cardBadge(d) {
-    const chip = lensChip(d);
-    const bs = bsBadge(d);
-    return chip || bs ? `<span class="card-badges">${chip}${bs}</span>` : '';
-  }
-
-  function bsBadge(d) {
-    if (!d || !d.bsStatus) return '';
-    if (d.bsStatus === 'succeeded' && d.bsScore != null) {
-      return `<span class="bs-badge t-${tone(d.bsRating)}" title="Pre-test Score: ${Math.round(d.bsScore)} of 100">Pre-test <b>${Math.round(d.bsScore)}</b></span>`;
-    }
-    if (RUNNING.has(d.bsStatus)) return '<span class="bs-badge is-running" title="This video is being pre-tested">Scoring</span>';
-    return '';
+    const running = d && RUNNING.has(d.bsStatus) ? '<span class="bs-badge is-running" title="This video is being pre-tested">Scoring</span>' : '';
+    const chip = running ? '' : lensChip(d);
+    return chip || running ? `<span class="card-badges">${chip}${running}</span>` : '';
   }
 
   function detailSection(d) {
     if (!d || !d.bsStatus || d.bsStatus === 'skipped') return '';
-    const head = d.bsStatus === 'succeeded' && d.bsScore != null
-      ? `${Math.round(d.bsScore)} of 100 · ${TONE_WORD[tone(d.bsRating)]}`
+    const head = d.bsStatus === 'succeeded' && d.lensIntent && d.lensFit != null
+      ? `${d.lensIntent} ${d.lensFit} of 100`
+      : d.bsStatus === 'succeeded' && d.bsScore != null ? `${Math.round(d.bsScore)} of 100`
       : RUNNING.has(d.bsStatus) ? 'Scoring now' : STATUS[d.bsStatus] || '';
     return `<details class="org-details bs-detail" style="margin-top:12px;" ontoggle="PreTest.loadCreative(this, ${jsq(d.id)})">
-      <summary class="org-summary">Pre-test Score <span style="color:var(--c-muted);font-size:10px;">${esc(head)} ▼</span></summary>
+      <summary class="org-summary">Pre-test <span style="color:var(--c-muted);font-size:10px;">${esc(head)} ▼</span></summary>
       <div class="org-content">${lineSkeleton(3)}</div>
     </details>`;
   }
@@ -1188,7 +1186,11 @@
     try {
       let r = creativeCache.get(id);
       if (!r) {
-        r = await api(`/api/pretest-scores/creative/${encodeURIComponent(id)}`);
+        const [score, lens] = await Promise.all([
+          api(`/api/pretest-scores/creative/${encodeURIComponent(id)}`),
+          api(`/api/lens/creative/${encodeURIComponent(id)}`).catch(() => null),
+        ]);
+        r = { ...score, lens };
         if (r.status === 'succeeded') creativeCache.set(id, r);
       }
       if (r.status === 'succeeded') {
@@ -1201,7 +1203,14 @@
         };
         box.dataset.pdfRoot = '';
         box.dataset.pdfMeta = JSON.stringify(pdf);
-        box.innerHTML = reportHTML(r.summary, { jobId: r.id, kind: 'creative' })
+        // The same report as a pre-test: the score for what it is built for,
+        // weighted from the Pre-test Score, with Sound and the checks.
+        const l = r.lens, f = l && l.status === 'succeeded' && l.funnel;
+        const focus = f && (f.focus || f.intent);
+        const weighted = !!(f && f.stages && focus && f.stages[focus] && f.stages[focus].parts && f.stages[focus].score != null);
+        box.innerHTML = (weighted
+          ? objectiveReportHTML({ id: r.id, summary: r.summary, lensReport: l }, { kind: 'creative' })
+          : reportHTML(r.summary, { jobId: r.id, kind: 'creative', lens: l && l.status === 'succeeded' ? l : null }))
           + `<div class="bs-detail-foot"><div class="bs-fine">Scored for ${esc(r.channelLabel)}${r.reused ? ', reusing the score of an identical video' : ''}, ${esc(when(r.completedAt))}.</div>${pdfButton()}</div>`;
         box.dataset.loadedFor = id;
         loadMedia(box);
