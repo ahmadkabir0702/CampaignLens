@@ -38,7 +38,7 @@ The person uploading a pre-test picks its objective: Awareness, Consideration or
 - **Headline.** The score for the chosen objective, out of 100, with the other two objectives shown smaller beside it. If another objective scores clearly higher, the report says so.
 - **What went into it.** Every check behind the headline score is listed with its result and how much it counts.
 - **What to improve.** Scored checks to fix are split in two: the ones that count toward this objective, then the rest.
-- **Overall quality check.** The overall Pre-test Score, with its category and placement breakdown, is one line lower down that opens on demand. It is kept because it is the standard number, but it is not the headline.
+- **No overall score.** The general Pre-test Score, which weighs every video the same way whatever its objective, is not shown on the report. Next to the objective score it read as a second, competing verdict. The individual checks are still listed under "All checks and their pass marks".
 - **One final report.** Nothing is shown while a pre-test is still being scored or analysed. The list says Queued, Analysing or Finishing, and the report opens once every part is in, so the numbers never move after someone has seen them.
 - **If scoring does not finish.** The report is built from the video analysis alone and says so at the top.
 

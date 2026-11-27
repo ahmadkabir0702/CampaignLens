@@ -214,8 +214,9 @@
   // ── The pre-test report, judged on its objective ───────────────────────────
   // One final report. The headline is the score for the objective chosen at
   // upload (or, on a pre-test with none, for what the video reads as). The
-  // other two objectives sit beside it, Sound is part of every score, and the
-  // overall score that treats every video alike moves down into the detail.
+  // other two objectives sit beside it and Sound is part of every score. The
+  // overall score, which treats every video alike, is not shown: next to the
+  // objective score it read as a second, competing verdict.
   //   p.lensReport  Sound and the three objective scores (always present here)
   //   p.summary     the scored checks, or nothing when scoring did not finish
   function objectiveReportHTML(p) {
@@ -244,13 +245,6 @@
           The same video gets a different score for each objective because each one is judged on different checks.</div>
       </details>` : '';
 
-    const overall = s ? `<details class="bs-all bs-overall"><summary>Overall quality check: ${s.total.score == null ? 'not scored' : `${Math.round(s.total.score)} of 100`}${s.total.score == null ? '' : ` · ${esc(TONE_WORD[tone(s.total.rating)])}`}</summary>
-        <div class="bs-sec-hint">The general score for ${esc(PLACEMENT[parts.here] || parts.here)}. It weighs every video the same way whatever its objective, so it is not the headline here.</div>
-        <div class="bs-cols">
-          <section class="bs-sec"><h4 class="bs-h">By category</h4>${parts.catBars}${parts.messageHint}</section>
-          <section class="bs-sec"><h4 class="bs-h">By placement</h4>${parts.placeBars}</section>
-        </div>
-      </details>` : '';
 
     return `<div class="bs-report">
       ${!s ? `<div class="bs-banner">The scored checks did not finish${p.error ? ` (${esc(String(p.error).replace(/\.$/, ''))})` : ''}. This report uses the video analysis alone, so it is a rougher read. Run the pre-test again for the full report.</div>` : ''}
@@ -288,8 +282,6 @@
         <div class="bs-chips">${parts.works.map(k => `<span class="bs-chip">${esc(k.name)}</span>`).join('')}</div></section>` : ''}
 
       ${parts ? parts.media : ''}
-
-      ${overall}
 
       ${parts ? parts.all : ''}
 
