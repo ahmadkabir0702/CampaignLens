@@ -11,6 +11,7 @@
  *   DELETE /api/pretests/:id             cancel an upload, or delete a report now
  *   GET    /api/pretest-scores/creative/:id    a creative's Pre-test Score
  *   GET    /api/pretest-scores/jobs/:id/media  fresh image and video links
+ *   GET    /api/pretest-scores/jobs/:id/media/file?k=  one heatmap image, through this site (for the PDF)
  *   GET    /api/pretest-scores/usage           this month's tests (internal users)
  *   GET    /api/lens/creative/:id              a creative's Sound and Funnel fit
  *
@@ -215,6 +216,30 @@ module.exports = function mountBrainsuite(app) {
       if (err.code === '42P01') return res.json({ status: 'none' });
       send(res, err, 'lens creative');
     }
+  });
+
+  // One heatmap image, fetched here and passed on, so the PDF can draw it:
+  // a browser will not let a page copy pixels from another site's image.
+  // Only the images of a test the person can open, by name, never a URL.
+  app.get('/api/pretest-scores/jobs/:id/media/file', async (req, res) => {
+    try {
+      const k = String(req.query.k || '');
+      if (!/^(montage|still[0-9])$/.test(k)) throw new HttpError(400, 'Unknown image.');
+      let row = await store.getJob(req.params.id);
+      if (!row) throw new HttpError(404, 'Test not found.');
+      assertBrandAllowed(req.session, row.brand_id);
+      if (row.status !== 'succeeded') throw new HttpError(409, 'This test has no report.');
+      if (!row.bs_job_id && row.reused_from) row = (await store.getJob(row.reused_from)) || row;
+      if (!row.bs_job_id) throw new HttpError(404, 'No images for this test.');
+      const m = await service.mediaFor(row);
+      const url = k === 'montage' ? m.montage : ((m.stills || [])[Number(k.slice(5))] || {}).url;
+      if (!url || !/^https:\/\//i.test(url)) throw new HttpError(404, 'Image not available.');
+      const r = await require('axios').get(url, { responseType: 'arraybuffer', timeout: 30000, maxContentLength: 15 * 1024 * 1024, maxRedirects: 2 });
+      const type = String(r.headers['content-type'] || '');
+      if (!/^image\/(png|jpe?g|webp|gif)/i.test(type)) throw new HttpError(502, 'Not an image.');
+      res.set({ 'Content-Type': type, 'Cache-Control': 'private, max-age=600', 'X-Content-Type-Options': 'nosniff' });
+      res.send(Buffer.from(r.data));
+    } catch (err) { send(res, err, 'media file'); }
   });
 
   app.get('/api/pretest-scores/jobs/:id/media', async (req, res) => {

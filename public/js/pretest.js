@@ -317,10 +317,10 @@
       body.innerHTML = `
         ${m.heatmovie && sec.dataset.video ? `<video class="bs-video" src="${esc(m.heatmovie)}" controls preload="none" playsinline></video>
           <div class="bs-cap">Attention heatmap over the whole video. Red is where most people look.</div>` : ''}
-        ${(m.stills || []).length ? `<div class="bs-stills">${m.stills.map(x => `
-          <figure><img src="${esc(x.url)}" alt="${esc(x.label)} heatmap" loading="lazy"
+        ${(m.stills || []).length ? `<div class="bs-stills">${m.stills.map((x, i) => `
+          <figure><img data-k="still${i}" src="${esc(x.url)}" alt="${esc(x.label)} heatmap" loading="lazy"
             onerror="this.closest('figure').remove()"><figcaption>${esc(x.label)}</figcaption></figure>`).join('')}</div>` : ''}
-        ${m.montage ? `<figure class="bs-montage"><img src="${esc(m.montage)}" alt="Scenes detected in the video" loading="lazy"
+        ${m.montage ? `<figure class="bs-montage"><img data-k="montage" src="${esc(m.montage)}" alt="Scenes detected in the video" loading="lazy"
             onerror="this.closest('figure').remove()"><figcaption>Every scene detected in the video</figcaption></figure>` : ''}`;
     } catch (e) {
       body.innerHTML = `<div class="bs-quiet">Could not load heatmaps: ${esc(e.message)}</div>`;
@@ -464,10 +464,13 @@
   }
 
   // ── Download PDF ───────────────────────────────────────────────────────────
-  // Builds a print-only copy of the report with its own header, then opens
-  // the browser's print dialog, where "Save as PDF" is the destination. No
-  // server work, and the PDF looks the same in every browser that prints.
+  // Builds a copy of the report with its own header and footer, draws each
+  // section as it looks on screen (colours, bars, heatmaps) and saves an A4
+  // PDF straight to the downloads folder. No print dialog. The two libraries
+  // are served from this site and load only on the first download. If they
+  // cannot load, the browser's print dialog is the fallback.
   const PDF_BTN = '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 4v11M7 10l5 5 5-5M5 19h14"/></svg>Download PDF';
+  const PDF_LIBS = ['/js/vendor/html2canvas-1.4.1.min.js', '/js/vendor/jspdf-2.5.2.umd.min.js'];
 
   function pdfButton() {
     return `<button type="button" class="modal-btn bs-pdf-btn" data-press onclick="PreTest.downloadPdf(this)">${PDF_BTN}</button>`;
@@ -484,64 +487,171 @@
     return Promise.race([Promise.all(each), new Promise(r => setTimeout(r, ms))]);
   }
 
+  const scriptLoads = {};
+  function loadScript(src) {
+    if (!scriptLoads[src]) {
+      scriptLoads[src] = new Promise((resolve, reject) => {
+        const s = document.createElement('script');
+        s.src = src; s.async = true;
+        s.onload = resolve;
+        s.onerror = () => { delete scriptLoads[src]; reject(new Error('Could not load ' + src)); };
+        document.head.appendChild(s);
+      });
+    }
+    return scriptLoads[src];
+  }
+
+  // The copy of the report that becomes the PDF (also used by the print fallback).
+  async function buildPdfCopy(host, report, meta) {
+    let box = document.getElementById('pt-print');
+    if (!box) {
+      box = document.createElement('div');
+      box.id = 'pt-print';
+      document.body.appendChild(box);
+    }
+    const clone = report.cloneNode(true);
+    // A PDF cannot play video; the stills carry the heatmap instead.
+    clone.querySelectorAll('video, .bs-cap, .bs-pdf-btn').forEach(el => el.remove());
+    clone.querySelectorAll('details').forEach(d => { d.open = true; });
+    // Heatmaps come through this site, so they can be drawn into the PDF.
+    const job = (host.querySelector('.bs-media') || {}).dataset ? host.querySelector('.bs-media').dataset.job : null;
+    clone.querySelectorAll('img[data-k]').forEach(img => {
+      img.removeAttribute('loading');
+      if (job) img.src = `/api/pretest-scores/jobs/${encodeURIComponent(job)}/media/file?k=${encodeURIComponent(img.dataset.k)}`;
+    });
+    clone.querySelectorAll('.bs-media').forEach(sec => { if (!sec.querySelector('img')) sec.remove(); });
+    box.innerHTML = `<header class="pt-head">
+        <div class="pt-kicker">CampaignLens Pre-testing report</div>
+        <h1 class="pt-title">${esc(meta.title || 'Pre-test')}</h1>
+        ${(meta.lines || []).length ? `<div class="pt-meta">${meta.lines.map(esc).join(' · ')}</div>` : ''}
+        ${meta.keyMessage ? `<div class="pt-meta">Key message: ${esc(meta.keyMessage)}</div>` : ''}
+      </header>`;
+    box.appendChild(clone);
+    box.insertAdjacentHTML('beforeend', `<footer class="pt-foot">Downloaded ${esc(when(new Date().toISOString()))} from Campaign Lens.
+      The Pre-test Score predicts how well the creative will work before any media spend. It is not a performance result.</footer>`);
+    return box;
+  }
+
+  // SVG drawn into a canvas loses the page's stylesheet, so the colours of
+  // the score ring and the sound chart are written onto each shape first.
+  function inlineSvgStyles(root) {
+    const PROPS = ['fill', 'stroke', 'stroke-width', 'stroke-dasharray', 'stroke-dashoffset', 'stroke-linecap', 'stroke-opacity', 'fill-opacity', 'opacity', 'font-size', 'font-family', 'font-weight'];
+    root.querySelectorAll('svg, svg *').forEach(n => {
+      const cs = getComputedStyle(n);
+      n.setAttribute('style', (n.getAttribute('style') || '') + ';' + PROPS.map(p => `${p}:${cs.getPropertyValue(p)}`).join(';'));
+    });
+  }
+
+  // Where a tall section may be cut between pages: between rows, never through one.
+  function cutPoints(el) {
+    const top = el.getBoundingClientRect().top;
+    const pts = [...el.querySelectorAll('tr, li, .bs-fix, figure, .lens-stage, .bs-bar, .bs-sec, p')]
+      .map(n => n.getBoundingClientRect().top - top).filter(v => v > 0);
+    return [...new Set(pts.map(Math.round))].sort((a, b) => a - b);
+  }
+
+  async function savePdf(box, fileName) {
+    for (const src of PDF_LIBS) await loadScript(src);
+    const { jsPDF } = window.jspdf;
+    box.classList.add('pt-pdf');
+    try {
+      if (document.fonts && document.fonts.ready) await document.fonts.ready;
+      await imagesReady(box, 15000);
+      box.querySelectorAll('.bs-media').forEach(sec => { if (!sec.querySelector('img')) sec.remove(); });
+      inlineSvgStyles(box);
+
+      const pdf = new jsPDF({ unit: 'mm', format: 'a4', orientation: 'portrait', compress: true });
+      const PW = 210, PH = 297, M = 12, CW = PW - 2 * M, GAP = 3, BOTTOM = PH - M - 6;
+      let y = M;
+      const report = box.querySelector('.bs-report');
+      const blocks = [box.querySelector('.pt-head'), ...(report ? report.children : []), box.querySelector('.pt-foot')]
+        .filter(el => el && el.offsetHeight > 0);
+      for (const el of blocks) {
+        const canvas = await window.html2canvas(el, { scale: 2, backgroundColor: '#ffffff', useCORS: true, logging: false });
+        const pxPerMm = canvas.width / CW;
+        const hMm = canvas.height / pxPerMm;
+        if (hMm <= BOTTOM - M) {
+          if (y + hMm > BOTTOM) { pdf.addPage(); y = M; }
+          pdf.addImage(canvas.toDataURL('image/jpeg', 0.92), 'JPEG', M, y, CW, hMm);
+          y += hMm + GAP;
+          continue;
+        }
+        // Taller than a page: cut it between rows.
+        const scale = canvas.height / el.offsetHeight;
+        const cuts = cutPoints(el).map(v => v * scale);
+        let from = 0;
+        while (from < canvas.height - 1) {
+          if (BOTTOM - y < 30) { pdf.addPage(); y = M; }
+          const room = (BOTTOM - y) * pxPerMm;
+          let to = Math.min(canvas.height, from + room);
+          if (to < canvas.height) {
+            const ok = cuts.filter(c => c > from + 40 && c <= to);
+            if (ok.length) to = ok[ok.length - 1];
+          }
+          const part = document.createElement('canvas');
+          part.width = canvas.width; part.height = Math.ceil(to - from);
+          const ctx = part.getContext('2d');
+          ctx.fillStyle = '#ffffff'; ctx.fillRect(0, 0, part.width, part.height);
+          ctx.drawImage(canvas, 0, from, canvas.width, to - from, 0, 0, canvas.width, to - from);
+          const h = (to - from) / pxPerMm;
+          pdf.addImage(part.toDataURL('image/jpeg', 0.92), 'JPEG', M, y, CW, h);
+          y += h + GAP;
+          from = to;
+          if (from < canvas.height - 1) { pdf.addPage(); y = M; }
+        }
+      }
+      const n = pdf.getNumberOfPages();
+      for (let i = 1; i <= n; i++) {
+        pdf.setPage(i);
+        pdf.setFontSize(8); pdf.setTextColor(140);
+        pdf.text(`Campaign Lens · Page ${i} of ${n}`, PW - M, PH - 6, { align: 'right' });
+      }
+      pdf.save(`${fileName}.pdf`);
+    } finally {
+      box.classList.remove('pt-pdf');
+    }
+  }
+
+  // The browser's print dialog, kept for when the PDF libraries cannot load.
+  function printFallback(box, fileName) {
+    const oldTitle = document.title;
+    let done = false;
+    const finish = () => {
+      if (done) return;
+      done = true;
+      document.body.classList.remove('pt-printing');
+      document.title = oldTitle;
+      box.innerHTML = '';
+      window.removeEventListener('afterprint', finish);
+    };
+    document.title = fileName;
+    document.body.classList.add('pt-printing');
+    window.addEventListener('afterprint', finish);
+    window.print();
+    setTimeout(() => { if (!window.matchMedia('print').matches) finish(); }, 1000);
+  }
+
   async function downloadPdf(btn) {
-    const host = btn.closest('[data-pdf-root]');
+    const host = btn.closest('[data-pdf-root]') || btn.closest('.org-content, .bs-detail') || document;
     const report = host && host.querySelector('.bs-report');
-    // A report with only Sound and Funnel fit (the Pre-test Score failed) still prints.
     if (!report) return;
     btn.disabled = true;
-    btn.textContent = 'Preparing…';
+    btn.textContent = 'Preparing PDF…';
+    let box = null;
     try {
-      await loadMedia(host);
+      await loadMedia(host.querySelector ? host : document);
       let meta = {};
-      try { meta = JSON.parse(host.dataset.pdfMeta || '{}'); } catch (e) { /* plain header */ }
-
-      let box = document.getElementById('pt-print');
-      if (!box) {
-        box = document.createElement('div');
-        box.id = 'pt-print';
-        document.body.appendChild(box);
-      }
-      const clone = report.cloneNode(true);
-      // A PDF cannot play video; the stills carry the heatmap instead.
-      clone.querySelectorAll('video, .bs-cap').forEach(el => el.remove());
-      clone.querySelectorAll('details').forEach(d => { d.open = true; });
-      // Heatmaps that never arrived (or whose links lapsed) leave nothing to
-      // show, so the section goes rather than printing an empty box.
-      clone.querySelectorAll('.bs-media').forEach(sec => {
-        if (!sec.querySelector('img')) sec.remove();
-      });
-
-      box.innerHTML = `<header class="pt-head">
-          <div class="pt-kicker">CampaignLens Pre-testing report</div>
-          <h1 class="pt-title">${esc(meta.title || 'Pre-test')}</h1>
-          ${(meta.lines || []).length ? `<div class="pt-meta">${meta.lines.map(esc).join(' · ')}</div>` : ''}
-          ${meta.keyMessage ? `<div class="pt-meta">Key message: ${esc(meta.keyMessage)}</div>` : ''}
-        </header>`;
-      box.appendChild(clone);
-      box.insertAdjacentHTML('beforeend', `<footer class="pt-foot">Downloaded ${esc(when(new Date().toISOString()))} from Campaign Lens.
-        The Pre-test Score predicts how well the creative will work before any media spend. It is not a performance result.</footer>`);
-      await imagesReady(box, 6000);
-      // Images that failed to load removed their own figure; drop a section left empty.
-      box.querySelectorAll('.bs-media').forEach(sec => { if (!sec.querySelector('img')) sec.remove(); });
-
-      const oldTitle = document.title;
-      let done = false;
-      const finish = () => {
-        if (done) return;
-        done = true;
-        document.body.classList.remove('pt-printing');
-        document.title = oldTitle;
+      try { meta = JSON.parse((host.dataset && host.dataset.pdfMeta) || '{}'); } catch (e) { /* plain header */ }
+      const fileName = meta.fileName || 'Pre-test report';
+      box = await buildPdfCopy(host, report, meta);
+      try {
+        await savePdf(box, fileName);
         box.innerHTML = '';
-        window.removeEventListener('afterprint', finish);
-      };
-      // The browser suggests the document title as the file name.
-      document.title = meta.fileName || 'Pre-test report';
-      document.body.classList.add('pt-printing');
-      window.addEventListener('afterprint', finish);
-      window.print();
-      // Some browsers return from print() before the dialog closes.
-      setTimeout(() => { if (!window.matchMedia('print').matches) finish(); }, 1000);
+      } catch (e) {
+        console.warn('PDF download fell back to print:', e);
+        await imagesReady(box, 6000);
+        printFallback(box, fileName);
+      }
     } finally {
       btn.disabled = false;
       btn.innerHTML = PDF_BTN;
