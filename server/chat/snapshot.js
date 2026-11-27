@@ -108,18 +108,8 @@ async function qCreatives(pool, brand) {
   return new Map(rows.map((r) => [r.id, r]));
 }
 
-// Running = an active ad that delivered in the last two days. The ad status
-// on file is from the last day the ad delivered, so once an ad is paused it
-// stays ACTIVE for ever; the delivery check is what notices the pause.
-// Same rule as boostState in creatives.js.
-const DAILY_FOR = { v_paid_meta_creative: 'v_paid_meta_scored', v_paid_tiktok_creative: 'v_paid_tiktok_scored' };
-function runningExpr(view) {
-  const daily = DAILY_FOR[view];
-  if (!daily) return `${P.isActive}`;
-  return `(${P.isActive} and exists (select 1 from ${daily} d
-             where d.creative_id = ${view}.${P.creativeId} and d.brand_id = ${view}.${P.brand}
-               and d.date >= current_date - 2 and coalesce(d.impressions, 0) > 0))`;
-}
+// Running: see server/chat/running.js (same rule as the Creative Hub).
+const runningExpr = (view) => require('./running').runningExpr(view, P);
 
 async function qPaid(pool, view, brand, platform) {
   const { rows } = await pool.query(
@@ -797,9 +787,12 @@ async function buildSnapshot(brand, _r, opts = {}) {
     if (!byCreativePlat.has(k)) byCreativePlat.set(k, {});
     byCreativePlat.get(k)[w.window_name] = w;
   }
+  // Running per creative and platform, by the shared rule (paid rows above).
+  const liveOn = new Map();
+  for (const c of paid || []) for (const [pl, x] of Object.entries(c.per_platform || {})) liveOn.set(`${c.id}|${pl}`, !!(x && x.is_active));
   const fatiguing = [];
   for (const [k, wins] of byCreativePlat) {
-    const a = assessFade(wins);
+    const a = assessFade(wins, liveOn.has(k) ? liveOn.get(k) : undefined);
     if (!a.checked || !a.faded || !a.still_running) continue;
     const [id, platform] = k.split('|');
     fatiguing.push({ id, platform, from: a.from, to: a.to, spend: a.spend_last });

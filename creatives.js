@@ -80,7 +80,7 @@ function paidBlock(row, platform) {
     vtr: r1(row.vtr),
     watchTime: r1(row.avg_watch_time),
     cqr: row.cqr || '',
-    adStatus: row.is_active ? 'ACTIVE' : 'STOPPED',
+    adStatus: null,   // set per platform from recent delivery when the creative is built
     duration: row.duration_s === null ? null : Number(row.duration_s),
     // w25..w100 are already percentages, averaged in SQL. No divisor,
     // no reconstruction — this is what killed the Video Plays hack.
@@ -105,30 +105,38 @@ function paidBlock(row, platform) {
   };
 }
 
-// An ad counts as running only if it delivered within this window: the last
-// two calendar days, the same as is_current in v_paid_windowed (the fatigue
-// panel). Measured from midnight of the last delivery date, so 3 days.
-const RUNNING_WINDOW_MS = 3 * 24 * 60 * 60 * 1000;
-
+// Running, per platform: an ad that delivered in the last two days (the
+// same window as is_current in v_paid_windowed and Ask Lens) and whose
+// status on that day was active. The status on file is the one recorded the
+// day the ad delivered; once an ad is paused no new rows arrive, so an older
+// "active" must never count. Worked out in SQL on dates, not in JavaScript
+// on time stamps, so every screen draws the line on the same day.
 // Views and the run's end date per creative, which the summary bar needs
 // and the lifetime views do not carry. Optional: a brand with no paid
 // history, or a database without migration 011, simply gets nothing.
 async function paidExtras(brandId) {
-  const out = { views: {}, window: {} };
+  const out = { views: {}, window: {}, running: {} };
   try {
     const { rows } = await query(
-      `select creative_id, sum(video_plays) as video_plays, max(date) as last_day,
-              max(date) filter (where coalesce(impressions, 0) > 0) as last_delivery
+      `select creative_id, platform, sum(video_plays) as video_plays, max(date) as last_day,
+              max(date) filter (where coalesce(impressions, 0) > 0) as last_delivery,
+              coalesce(bool_or(upper(coalesce(ad_status, '')) in ('ACTIVE', 'ENABLE'))
+                filter (where coalesce(impressions, 0) > 0 and date >= current_date - 2), false) as running
          from (
-           select creative_id, video_plays, date, impressions from v_paid_meta_scored where brand_id = $1
+           select creative_id, 'meta' as platform, video_plays, date, impressions, ad_status from v_paid_meta_scored where brand_id = $1
            union all
-           select creative_id, video_plays, date, impressions from v_paid_tiktok_scored where brand_id = $1
+           select creative_id, 'tiktok' as platform, video_plays, date, impressions, ad_status from v_paid_tiktok_scored where brand_id = $1
          ) x
         where creative_id is not null
-        group by creative_id`, [brandId]);
+        group by creative_id, platform`, [brandId]);
     for (const r of rows) {
-      out.views[r.creative_id] = Number(r.video_plays) || 0;
-      out.window[r.creative_id] = { last_day: r.last_day, last_delivery: r.last_delivery };
+      const id = r.creative_id;
+      out.views[id] = (out.views[id] || 0) + (Number(r.video_plays) || 0);
+      const w = (out.window[id] ||= { last_day: null, last_delivery: null });
+      const later = (a, b) => (!a ? b : !b ? a : (new Date(a) > new Date(b) ? a : b));
+      w.last_day = later(w.last_day, r.last_day);
+      w.last_delivery = later(w.last_delivery, r.last_delivery);
+      (out.running[id] ||= {})[r.platform] = r.running === true;
     }
   } catch (err) { if (err.code !== '42P01') throw err; }
 
@@ -151,10 +159,11 @@ async function paidExtras(brandId) {
       // "fatiguing on TikTok", and this loop already knows.
       const fadedOn = [];
       for (const [plat, w] of Object.entries(plats)) {
-        const a = assessFade(w);
+        const a = assessFade(w, !!(out.running[id] || {})[plat]);
         if (!a.checked) continue;
         checked = true;
-        if (a.faded) { faded = true; from = a.from; to = a.to; fadedOn.push(plat); }
+        // Fatiguing is about money still going in: a stopped ad is not.
+        if (a.faded && a.still_running) { faded = true; from = a.from; to = a.to; fadedOn.push(plat); }
       }
       out.window[id] = { ...(out.window[id] || {}), faded, fadedFrom: from, fadedTo: to, fadedOn, checked };
     }
@@ -312,15 +321,14 @@ async function buildPayload(brandId) {
       .sort((a, b) => (cqrRank[a] ?? 9) - (cqrRank[b] ?? 9))[0] || 'Invalid');
 
     const isBoosted = !!boostBy[id];
-    // Running means an active ad AND delivery in the last 2 days. The ad
-    // status on file is the one from the last day the ad delivered: once an
-    // ad is paused no new rows arrive, so that status stays ACTIVE for ever.
-    // Without the delivery check a paused ad read as running, and showed in
-    // the fatiguing list, indefinitely.
-    const lastDelivery = (extras.window[id] || {}).last_delivery;
-    const deliveredRecently = !!lastDelivery &&
-      (Date.now() - new Date(lastDelivery).getTime()) <= RUNNING_WINDOW_MS;
-    const isRunning = deliveredRecently && both.some(x => x.adStatus === 'ACTIVE');
+    // Running, per platform, from paidExtras: delivered in the last two days
+    // with an active status that day. The per-platform status on the card,
+    // the summary row and the filters all read these, so a paused ad cannot
+    // read as running in one place and ended in another.
+    const run = extras.running[id] || {};
+    if (m) m.adStatus = run.meta ? 'ACTIVE' : 'STOPPED';
+    if (t) t.adStatus = run.tiktok ? 'ACTIVE' : 'STOPPED';
+    const isRunning = !!((m && run.meta) || (t && run.tiktok));
 
     // Needs "now", so it is computed per request rather than in SQL.
     let needsBoostWarning = false;

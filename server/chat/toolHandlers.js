@@ -33,18 +33,8 @@ function validMetric(m) {
   return m;
 }
 
-// Running = an active ad that delivered in the last two days. The ad status
-// on file is from the last day the ad delivered, so once an ad is paused it
-// stays ACTIVE for ever; the delivery check is what notices the pause.
-// Same rule as boostState in creatives.js.
-const DAILY_FOR = { v_paid_meta_creative: 'v_paid_meta_scored', v_paid_tiktok_creative: 'v_paid_tiktok_scored' };
-function runningExpr(view) {
-  const daily = DAILY_FOR[view];
-  if (!daily) return `${P.isActive}`;
-  return `(${P.isActive} and exists (select 1 from ${daily} d
-             where d.creative_id = ${view}.${P.creativeId} and d.brand_id = ${view}.${P.brand}
-               and d.date >= current_date - 2 and coalesce(d.impressions, 0) > 0))`;
-}
+// Running: see server/chat/running.js (same rule as the Creative Hub).
+const runningExpr = (view) => require('./running').runningExpr(view, P);
 
 /** Load and merge every boosted creative for a brand, with creative metadata. */
 /**
