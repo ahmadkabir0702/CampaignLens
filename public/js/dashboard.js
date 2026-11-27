@@ -1497,12 +1497,18 @@ function detailSummaryHTML(d) {
     ${paidSplit ? `<div class="dsum-cell"><div class="dsum-label">Paid CQR</div>${paidSplit}</div>`
       : cell('Paid CQR', paid || (paidNote ? stateShort(paidNote) : (d.boostState === 'never' ? 'No spend yet' : 'Not rated')),
            paid ? 'dsum-' + cqrClass(paid) : 'dsum-quiet')}
-    ${cell('Pre-test Score', d.bsScore === null || d.bsScore === undefined ? 'Not scored' : d.bsScore,
-           d.bsScore === null || d.bsScore === undefined ? 'dsum-quiet' : '',
-           d.bsRating || (d.bsScore === null || d.bsScore === undefined ? '' : 'of 100'))}
-    ${cell('Built for', d.lensIntent || 'Not checked',
-           d.lensIntent ? (d.lensFit == null ? '' : d.lensFit >= 70 ? 'dsum-fit-green' : d.lensFit >= 50 ? 'dsum-fit-amber' : 'dsum-fit-red') : 'dsum-quiet',
-           d.lensIntent && d.lensFit != null ? `fit ${d.lensFit} of 100` : '')}
+    ${(() => {
+      // One pre-test number: the score for what the video is built for, which
+      // is the Pre-test Score weighted for that objective.
+      const has = v => v !== null && v !== undefined;
+      if (d.lensIntent && has(d.lensFit)) {
+        return cell(`Pre-test, ${d.lensIntent.toLowerCase()}`, d.lensFit,
+          d.lensFit >= 70 ? 'dsum-fit-green' : d.lensFit >= 50 ? 'dsum-fit-amber' : 'dsum-fit-red',
+          has(d.bsScore) ? `Pre-test Score ${Math.round(d.bsScore)}, weighted` : 'of 100');
+      }
+      if (has(d.bsScore)) return cell('Pre-test Score', Math.round(d.bsScore), '', d.bsRating || 'of 100');
+      return cell('Pre-test', 'Not scored', 'dsum-quiet', d.lensIntent ? `Reads as ${d.lensIntent.toLowerCase()}` : '');
+    })()}
     ${cell('Paid status', status, statusCls, statusSub)}
   </div>`;
 }
